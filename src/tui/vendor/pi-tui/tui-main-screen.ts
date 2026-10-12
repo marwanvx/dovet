@@ -121,6 +121,12 @@ export interface TuiMainScreenRenderState {
 }
 
 /** TUI implementation that renders into the terminal's main screen and scrollback. */
+// Dovet: frames are drawn with auto-wrap off (DECAWM), as TuiAltScreen already does. A terminal that draws a
+// character wider than visibleWidth() measures it (GNOME Terminal: 👍🏽 as two glyphs) would otherwise wrap a padded
+// full-width line onto the next row, and every later frame would land one row lower (SPIKE-4).
+const BEGIN_FRAME = "\x1b[?2026h\x1b[?7l";
+const END_FRAME = "\x1b[?7h\x1b[?2026l";
+
 export class TuiMainScreen extends TuiBase implements TUI {
 	readonly mode = "regular" as const;
 	private previousLines: string[] = [];
@@ -277,7 +283,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-			output.append("\x1b[?2026h"); // Begin synchronized output
+			output.append(BEGIN_FRAME); // Begin synchronized output
 			if (clear) {
 				output.append(this.deleteKittyImages(this.previousKittyImageIds));
 				output.append("\x1b[2J\x1b[H\x1b[3J"); // Clear screen, home, then clear scrollback
@@ -299,7 +305,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				}
 				output.append(line);
 			}
-			output.append("\x1b[?2026l"); // End synchronized output
+			output.append(END_FRAME); // End synchronized output
 			output.flush();
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
@@ -400,7 +406,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		if (firstChanged >= newLines.length) {
 			if (this.previousLines.length > newLines.length) {
 				const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-				output.append("\x1b[?2026h");
+				output.append(BEGIN_FRAME);
 				output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 				// Move to end of new content (clamp to 0 for empty content)
 				const targetRow = Math.max(0, newLines.length - 1);
@@ -432,7 +438,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 				if (moveBack > 0) {
 					output.append(`\x1b[${moveBack}A`);
 				}
-				output.append("\x1b[?2026l");
+				output.append(END_FRAME);
 				output.flush();
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
@@ -457,7 +463,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 		// Render from first changed line to end
 		// Keep updates wrapped in synchronized output while writing bounded chunks.
 		const output = new BoundedTerminalWriter((data) => this.terminal.write(data));
-		output.append("\x1b[?2026h"); // Begin synchronized output
+		output.append(BEGIN_FRAME); // Begin synchronized output
 		output.append(this.deleteChangedKittyImages(firstChanged, lastChanged));
 		const prevViewportBottom = prevViewportTop + height - 1;
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
@@ -564,7 +570,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
 			output.append(`\x1b[${extraLines}A`);
 		}
 
-		output.append("\x1b[?2026l"); // End synchronized output
+		output.append(END_FRAME); // End synchronized output
 
 		if (process.env.PI_TUI_DEBUG === "1") {
 			const debugDir = "/tmp/tui";

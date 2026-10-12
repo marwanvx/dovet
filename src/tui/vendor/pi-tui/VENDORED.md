@@ -10,6 +10,7 @@ Every change is marked with a `Dovet:` comment, or is a whole file listed here, 
 
 - Removed `native-modifiers.ts`, `native-module-path.ts` and `native-platform.ts` (the clipboard and modifier `.node` addons, ADR-5) and the `getNativeClipboard` export from `index.ts`.
 - `terminal.ts`: Shift+Enter is no longer detected from the OS modifier state on Apple Terminal and Windows (the addon did that); on Windows, `ENABLE_VIRTUAL_TERMINAL_INPUT` is set through `windows-console.ts`.
+- `tui-main-screen.ts`: inline frames are drawn with auto-wrap off (`BEGIN_FRAME`/`END_FRAME`), as `TuiAltScreen` already does. On GNOME Terminal, 👍🏽 is drawn wider than `visibleWidth()` measures it, so a padded full-width line wrapped and every later frame landed one row lower, leaving stale copies (SPIKE-4, owner's run).
 - Added `windows-console.ts` (kernel32 through `bun:ffi`, replacing the Windows part of the addon).
 - Added `tsconfig.json`: type-checked as its own project with upstream's strictness (QUESTIONS Q7).
 

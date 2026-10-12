@@ -134,6 +134,8 @@ function describeColors(colors: TerminalColors): string {
 type Demo = {
   tui: TUI;
   editor: Editor;
+  /** Start rendering, then ask the terminal for its colors. */
+  start(): void;
   /** Start streaming `text` as a new reply; calls `onDone` when it's complete. */
   stream(text: string, onDone?: () => void): void;
   toggleOverlay(): void;
@@ -158,19 +160,20 @@ function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; int
     if (streaming) clearInterval(streaming);
     const reply = new Markdown("", 1, 1, markdownTheme);
     transcript.addChild(reply);
+    const chars = Array.from(text); // whole code points, like a model's text deltas
     let shown = 0;
     const step = () => {
-      shown = Math.min(text.length, shown + opts.chunk);
-      reply.setText(text.slice(0, shown));
+      shown = Math.min(chars.length, shown + opts.chunk);
+      reply.setText(chars.slice(0, shown).join(""));
       tui.requestRender();
-      if (shown === text.length) {
+      if (shown === chars.length) {
         if (streaming) clearInterval(streaming);
         streaming = undefined;
         onDone?.();
       }
     };
     if (opts.intervalMs <= 0) {
-      while (shown < text.length) {
+      while (shown < chars.length) {
         step();
         tui.renderNow();
       }
@@ -219,17 +222,22 @@ function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; int
     return undefined;
   });
 
-  tui
-    .queryTerminalColors({ timeoutMs: 500, onLateReply: (c) => (probe.colors = `${describeColors(c)} (late)`) })
-    .then((c) => {
-      probe.colors = describeColors(c);
-      tui.requestRender();
-    })
-    .catch((error: unknown) => {
-      probe.colors = `query failed: ${String(error)}`;
-    });
+  // Ask for the theme colors only once pi-tui owns the terminal (raw mode, its input parser): asked earlier, the
+  // terminal's reply is echoed onto the screen (owner's GNOME Terminal run, SPIKE-4).
+  const start = () => {
+    tui.start();
+    tui
+      .queryTerminalColors({ timeoutMs: 500, onLateReply: (c) => (probe.colors = `${describeColors(c)} (late)`) })
+      .then((c) => {
+        probe.colors = describeColors(c);
+        tui.requestRender();
+      })
+      .catch((error: unknown) => {
+        probe.colors = `query failed: ${String(error)}`;
+      });
+  };
 
-  return { tui, editor, stream, toggleOverlay };
+  return { tui, editor, start, stream, toggleOverlay };
 }
 
 /** A terminal that records what pi-tui writes, for `--self-test` (no TTY in CI). */
@@ -261,7 +269,7 @@ class MemoryTerminal implements Terminal {
 async function selfTest(): Promise<void> {
   const terminal = new MemoryTerminal();
   const demo = createDemo(terminal, { alt: false, chunk: 40, intervalMs: 0 });
-  demo.tui.start();
+  demo.start();
   demo.stream(SAMPLE_REPLY);
   demo.editor.setText("typed into the editor");
   demo.toggleOverlay();
@@ -288,7 +296,7 @@ async function interactive(alt: boolean): Promise<void> {
     void quit();
     return { consume: true };
   });
-  demo.tui.start();
+  demo.start();
   demo.stream(SAMPLE_REPLY);
 }
 
