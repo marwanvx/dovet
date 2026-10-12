@@ -125,3 +125,13 @@ Learned:
 - Changing a git config override is only caught if the trap would actually fire: `core.fsmonitor=true` is not a command, so use another key to remove the override when breaking it by hand.
 - No new feature code and no new criterion IDs.
 Next: M0-14 (CI installs and updates the real test release).
+
+## 2026-10-12 — M0-14 CI installs and updates the real test release
+Done: a pull request's `build` job makes a throwaway Ed25519 key, compiles its public half and the loopback update URL into the test binaries only (`define`), signs the release and a next-patch release for the three CI targets, and drops the key. A new `install` job on Linux, macOS and Windows installs the built archive with `install.sh` / `install.ps1`, runs `dovet --version`, then `dovet update` and `--rollback` twice (`test/platform/release-install`). A tag build embeds nothing extra; its `install` job installs with the embedded keys and runs it, and `publish` waits for it. CI green on all three OSes. PR: #26 (merged after green CI).
+Learned:
+- `compileDovet` always defines `DOVET_TEST_UPDATE` as `undefined`; without that a normal binary still reads the global at run time and a `BUN_OPTIONS` preload could set it. A test checks the normal binary doesn't contain the identifier.
+- A job skipped by `if` makes an implicit `success()` skip every job that needs it, so `publish` states `!cancelled()` and the results it needs.
+- Local Bun is 1.4.2 (CI pins 1.4.3): building archives locally needs a temporary copy of `scripts/licenses/bun-1.4.3-LICENSE.md` as `bun-1.4.2-LICENSE.md`, and `bun run check` loops (no `bun check` subcommand); run tsc, biome, depcruise and `bun test` by hand.
+- `BUN_OPTIONS --preload` runs in a compiled binary (reproduced); Bun has no opt-out, which permissions §0 already records, with its mitigations owned by later tasks.
+- W1 (release key) is still the only owner item; the tag path of the `install` job is untested until the first tag.
+Next: M0 is complete (14/14); the next session plans M1 (build loop step 4).

@@ -4,6 +4,10 @@ import pkg from "../../package.json";
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
+// Set by `define` in a pull request's test release only; a normal build has no such identifier (architecture "Distribution").
+declare const DOVET_TEST_UPDATE: { publicKey: string; baseUrl: string } | undefined;
+const testUpdate = typeof DOVET_TEST_UPDATE === "undefined" ? undefined : DOVET_TEST_UPDATE;
+
 async function runUpdate(rollingBack: boolean): Promise<void> {
   const root = installRootFor(realpathSync(process.execPath));
   const os = process.platform;
@@ -14,10 +18,10 @@ async function runUpdate(rollingBack: boolean): Promise<void> {
   }
   const result = await update({
     root,
-    baseUrl: LATEST_RELEASE_URL,
+    baseUrl: testUpdate?.baseUrl ?? LATEST_RELEASE_URL,
     targetId: hostTargetId(os, process.arch, detectMusl()),
     os,
-    publicKeys: RELEASE_PUBLIC_KEYS,
+    publicKeys: testUpdate ? [testUpdate.publicKey] : RELEASE_PUBLIC_KEYS,
   });
   if (result.status === "current") console.log(`dovet ${result.version} is up to date.`);
   else console.log(`Updated dovet ${result.from} to ${result.to}. The next dovet you start is the new one.`);

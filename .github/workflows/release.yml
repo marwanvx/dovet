@@ -1,4 +1,5 @@
 # A `v*` tag builds, signs, attests and publishes a release; a pull request builds an unpublished test release.
+# Both are installed with the install scripts on Linux, macOS and Windows before anything is published; the test release is also updated and rolled back.
 name: release
 
 on:
@@ -9,9 +10,14 @@ on:
       - .github/workflows/release.yml
       - scripts/build-release.ts
       - scripts/gen-notices.ts
+      - scripts/build.ts
       - scripts/sign-release.ts
+      - install/**
+      - src/cli/main.ts
       - src/cli/release-signature.ts
+      - src/cli/update.ts
       - test/platform/release/**
+      - test/platform/release-install/**
 
 permissions:
   contents: read
@@ -24,6 +30,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      test_public_key: ${{ steps.build.outputs.test_public_key }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,11 +43,27 @@ jobs:
       - name: the tag matches package.json's version
         if: github.event_name == 'push'
         run: test "$GITHUB_REF_NAME" = "v$(bun -e 'console.log(require("./package.json").version)')"
-      - run: bun run release
+      # A pull request's build embeds a throwaway key and signs with it here, so the private key never leaves this job.
+      - id: build
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            bun scripts/build-release.ts --all --test-release | tee build.log
+            grep '^test_public_key=' build.log >> "$GITHUB_OUTPUT"
+          else
+            bun run release
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: unsigned
+          name: built
           path: dist/release/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'pull_request'
+        with:
+          name: next-release
+          path: dist/release-next/
           if-no-files-found: error
           retention-days: 7
 
@@ -63,7 +87,7 @@ jobs:
           bun-version: 1.4.3
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: unsigned
+          name: built
           path: dist/release
       - run: bun scripts/sign-release.ts dist/release
         env:
@@ -88,20 +112,12 @@ jobs:
       id-token: write
       attestations: write
     outputs:
-      test_public_key: ${{ steps.sign.outputs.test_public_key }}
+      test_public_key: ${{ needs.build.outputs.test_public_key }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version: 1.4.3
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: unsigned
+          name: built
           path: dist/release
-      - id: sign
-        run: bun scripts/sign-release.ts dist/release --test-key >> "$GITHUB_OUTPUT"
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/*.tar.gz
@@ -135,9 +151,45 @@ jobs:
           DOVET_RELEASE_TEST_PUBLIC_KEY: ${{ needs.sign-test.outputs.test_public_key }}
           GH_TOKEN: ${{ github.token }}
 
+  # The install scripts and `dovet update` on the archives the workflow just built. A test release (pull request) is
+  # updated to a second release served on the loopback port compiled into its binaries; a tag release is installed
+  # with the embedded keys and only run.
+  install:
+    needs: [build, sign, sign-test]
+    if: ${{ !cancelled() && (needs.sign.result == 'success' || needs.sign-test.result == 'success') }}
+    name: install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: dist/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: github.event_name == 'pull_request'
+        with:
+          name: next-release
+          path: dist/release-next
+      - run: bun test test/platform/release-install
+        env:
+          DOVET_RELEASE_DIR: dist/release
+          DOVET_NEXT_RELEASE_DIR: ${{ github.event_name == 'pull_request' && 'dist/release-next' || '' }}
+          DOVET_RELEASE_TEST_PUBLIC_KEY: ${{ needs.build.outputs.test_public_key }}
+
   publish:
-    if: github.event_name == 'push'
-    needs: verify
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.verify.result == 'success' && needs.install.result == 'success' }}
+    needs: [verify, install]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
