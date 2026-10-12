@@ -1,6 +1,9 @@
 // The criterion-to-test check (docs/specs/testing.md "Coverage targets"), run on small inputs.
-import { describe, expect, test } from "bun:test";
-import { coverageProblems, tagsIn } from "./spec-coverage.ts";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { coverageProblems, repoInput, tagsIn } from "./spec-coverage.ts";
 
 const known = new Set(["AC-TOOLS-01", "AC-TOOLS-02", "AC-ARCH-04"]);
 
@@ -32,5 +35,56 @@ describe("spec coverage", () => {
 
   test("criteria of tasks not done yet are not required", () => {
     expect(coverageProblems({ known, done: [], tags: new Map() })).toEqual([]);
+  });
+});
+
+describe("spec coverage on a repository tree", () => {
+  const tag = ["/", "/ spec:"].join("");
+  let dir = "";
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = "";
+  });
+
+  function repo(status: string, tests: Record<string, string>): string[] {
+    dir = mkdtempSync(join(tmpdir(), "dovet-coverage-"));
+    const files: Record<string, string> = {
+      "AGENTS.md": "# Agents\n",
+      "docs/specs/demo.md": "# Demo\n\n- [ ] **AC-DEMO-01** one\n- [ ] **AC-DEMO-02** two\n",
+      "docs/plan/tasks/M0.md": `# M0\n\n### M0-01 Demo\n- **Status:** ${status}\n- **Depends on:** —\n- **Done when:** AC-DEMO-01 and AC-DEMO-02 pass.\n`,
+      ...tests,
+    };
+    for (const [path, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    }
+    return coverageProblems(repoInput(dir));
+  }
+
+  test("a done task whose criterion has no tagged test fails", () => {
+    expect(repo("done (#1)", { "src/demo/a.test.ts": `${tag} AC-DEMO-01\n` })).toEqual([
+      "criterion of done task M0-01 has no tagged test: AC-DEMO-02",
+    ]);
+  });
+
+  test("a tag naming several criteria covers each of them", () => {
+    expect(repo("done (#1)", { "test/integration/a.test.ts": `${tag} AC-DEMO-01, AC-DEMO-02\n` })).toEqual([]);
+  });
+
+  test("tags in src/, test/ and scripts/ test files all count", () => {
+    expect(
+      repo("done (#1)", { "src/demo/a.test.ts": `${tag} AC-DEMO-01\n`, "scripts/b.test.ts": `${tag} AC-DEMO-02\n` }),
+    ).toEqual([]);
+    expect(repo("done (#1)", { "scripts/b.test.ts": `${tag} AC-DEMO-02\n` })).toEqual([
+      "criterion of done task M0-01 has no tagged test: AC-DEMO-01",
+    ]);
+  });
+
+  test("a tag in a file that is not a test does not count", () => {
+    expect(repo("done (#1)", { "src/demo/a.ts": `${tag} AC-DEMO-01, AC-DEMO-02\n` })).toHaveLength(2);
+  });
+
+  test("a task that is not done yet needs no tests", () => {
+    expect(repo("in-progress", {})).toEqual([]);
   });
 });

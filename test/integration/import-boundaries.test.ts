@@ -52,6 +52,16 @@ describe("import boundaries", () => {
     expect(r.code).toBe(0);
   });
 
+  test("a module importing its own internal files passes", () => {
+    tree({
+      "src/tools/read.ts": "export const read = 1;\n",
+      "src/tools/index.ts": 'export { read } from "./read.ts";\n',
+    });
+    const r = cruise();
+    expect(r.out).toContain("no dependency violations found");
+    expect(r.code).toBe(0);
+  });
+
   test("importing another module's internal file instead of its index.ts fails", () => {
     tree({
       "src/tools/read.ts": "export const read = 1;\n",

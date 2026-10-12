@@ -18,11 +18,12 @@ const read = (path: string): string => readFileSync(path, "utf8");
 export type Task = { id: string; title: string; body: string; status: string; deps: string };
 
 /** Task files in roadmap order (M0, M1, ...). */
-export function milestones(): [string, string][] {
-  return readdirSync(TASKS)
+export function milestones(root = ROOT): [string, string][] {
+  const tasks = join(root, "docs", "plan", "tasks");
+  return readdirSync(tasks)
     .filter((f) => /^M\d+\.md$/.test(f))
     .sort((a, b) => Number(a.slice(1, -3)) - Number(b.slice(1, -3)))
-    .map((f) => [f.slice(0, -3), read(join(TASKS, f))]);
+    .map((f) => [f.slice(0, -3), read(join(tasks, f))]);
 }
 
 export function parseTasks(text: string): Task[] {

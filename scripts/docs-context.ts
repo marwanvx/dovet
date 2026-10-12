@@ -132,14 +132,14 @@ function boxFor(spec: string, adrs: Adrs, spikes: Spikes, journeys: Map<string, 
   return `${lines.join("\n")}\n\n`;
 }
 
-/** Brings every box up to date (or only reports, with `check`); returns the stale specs and how many specs exist. */
-export function updateBoxes(check: boolean): { stale: string[]; count: number } {
+/** Brings every box up to date (or only reports, with `check`). A spec with no milestone entry stops it before any box is checked. */
+export function updateBoxes(check: boolean): { stale: string[]; count: number; missing: string[] } {
   const specs = readdirSync(SPEC_DIR)
     .filter((f) => f.endsWith(".md"))
     .map((f) => f.slice(0, -3))
     .sort();
   const missing = specs.filter((s) => !(s in MILESTONES));
-  if (missing.length) throw new Error(`No milestone entry for: ${missing.join(", ")}`);
+  if (missing.length) return { stale: [], count: specs.length, missing };
   const adrs = parseAdrs();
   const spikes = parseSpikes();
   const journeys = parseJourneys();
@@ -156,12 +156,16 @@ export function updateBoxes(check: boolean): { stale: string[]; count: number } 
       if (!check) writeFileSync(join(SPEC_DIR, `${spec}.md`), updated);
     }
   }
-  return { stale, count: specs.length };
+  return { stale, count: specs.length, missing };
 }
 
 if (import.meta.main) {
   const check = Bun.argv.includes("--check");
-  const { stale, count } = updateBoxes(check);
+  const { stale, count, missing } = updateBoxes(check);
+  if (missing.length) {
+    console.log(`No milestone entry for: ${missing.join(", ")}`);
+    process.exit(1);
+  }
   if (check && stale.length) {
     console.log(`Out-of-date 'Before you build' boxes: ${stale.join(", ")}`);
     process.exit(1);

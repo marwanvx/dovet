@@ -41,9 +41,10 @@ export function coverageProblems({ known, done, tags }: CoverageInput): string[]
   return problems;
 }
 
-function repoInput(): CoverageInput {
-  const { defined } = criteria();
-  const done = allTasks()
+/** Reads the criteria, the done tasks and the test tags of the repository at `root`. */
+export function repoInput(root = ROOT): CoverageInput {
+  const { defined } = criteria(root);
+  const done = allTasks(root)
     .filter((t) => isDone(t.status))
     .map((t) => {
       const line = /\*\*Done when:\*\*(.+)/.exec(t.body)?.[1] ?? "";
@@ -51,8 +52,8 @@ function repoInput(): CoverageInput {
     });
   const tags = new Map<string, Set<string>>();
   for (const pattern of TEST_FILES) {
-    for (const file of new Bun.Glob(pattern).scanSync({ cwd: ROOT })) {
-      const ids = tagsIn(readFileSync(join(ROOT, file), "utf8"));
+    for (const file of new Bun.Glob(pattern).scanSync({ cwd: root })) {
+      const ids = tagsIn(readFileSync(join(root, file), "utf8"));
       if (ids.size) tags.set(file.replaceAll("\\", "/"), ids);
     }
   }

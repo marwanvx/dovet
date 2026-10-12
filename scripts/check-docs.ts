@@ -11,7 +11,6 @@ import { updateBoxes } from "./docs-context.ts";
 import { milestones, NOT_FOUND, parseTasks, report } from "./next.ts";
 
 const ROOT = join(import.meta.dir, "..");
-const read = (rel: string): string => readFileSync(join(ROOT, rel), "utf8");
 const count = <T>(items: T[]): Map<T, number> => {
   const m = new Map<T, number>();
   for (const i of items) m.set(i, (m.get(i) ?? 0) + 1);
@@ -19,8 +18,8 @@ const count = <T>(items: T[]): Map<T, number> => {
 };
 
 /** Every acceptance criterion defined in the docs, and the struck-through (removed) ones. */
-export function criteria(): { defined: Map<string, number>; struck: Set<string>; referenced: Set<string> } {
-  const texts = markdownFiles().map(read);
+export function criteria(root = ROOT): { defined: Map<string, number>; struck: Set<string>; referenced: Set<string> } {
+  const texts = markdownFiles(root).map((p) => readFileSync(join(root, p), "utf8"));
   const struck = new Set([...texts.join("").matchAll(/~~\*\*(AC-[A-Z]+-\d+)\*\*~~/g)].map((m) => m[1] ?? ""));
   const defined = count(
     texts.flatMap((t) => [...t.matchAll(/(?<!~~)\*\*(AC-[A-Z]+-\d+)\*\*/g)].map((m) => m[1] ?? "")),
@@ -29,8 +28,8 @@ export function criteria(): { defined: Map<string, number>; struck: Set<string>;
   return { defined, struck, referenced };
 }
 
-function markdownFiles(): string[] {
-  return [...new Bun.Glob("docs/**/*.md").scanSync({ cwd: ROOT })]
+function markdownFiles(root: string): string[] {
+  return [...new Bun.Glob("docs/**/*.md").scanSync({ cwd: root })]
     .map((p) => p.replaceAll("\\", "/"))
     .concat("AGENTS.md");
 }
@@ -38,11 +37,12 @@ function markdownFiles(): string[] {
 export function checkDocs(): string[] {
   const problems: string[] = [];
 
-  const { stale } = updateBoxes(true);
+  const { stale, missing } = updateBoxes(true);
+  if (missing.length) problems.push(`No milestone entry for: ${missing.join(", ")}`);
   if (stale.length) problems.push(`Out-of-date 'Before you build' boxes: ${stale.join(", ")}`);
 
-  for (const p of markdownFiles()) {
-    const text = read(p).replace(/```.*?```/gs, ""); // ignore code blocks
+  for (const p of markdownFiles(ROOT)) {
+    const text = readFileSync(join(ROOT, p), "utf8").replace(/```.*?```/gs, ""); // ignore code blocks
     for (const m of text.matchAll(/\]\(([^)#\s]+)(#[^)]*)?\)/g)) {
       const target = m[1] ?? "";
       if (/^[a-z]+:/.test(target)) continue;
@@ -81,8 +81,8 @@ export function checkDocs(): string[] {
 }
 
 /** Task statuses across every milestone file, for scripts/spec-coverage.ts. */
-export function allTasks(): ReturnType<typeof parseTasks> {
-  return milestones().flatMap(([, text]) => parseTasks(text));
+export function allTasks(root = ROOT): ReturnType<typeof parseTasks> {
+  return milestones(root).flatMap(([, text]) => parseTasks(text));
 }
 
 if (import.meta.main) {
