@@ -67,7 +67,7 @@ Nothing is implemented. "Milestone" is where each v0.1 feature is built ([roadma
 | Folder | What's in it | Who reads it |
 |---|---|---|
 | [workflow/](workflow/) | [Build loop](workflow/build-loop.md) (what "continue" means, step by step), [dev workflow](workflow/dev-workflow.md) (rules for every change), [playbook](workflow/playbook.md) (the owner's guide) | Agents every session; the owner |
-| [plan/](plan/) | [Roadmap](plan/roadmap.md) (milestones), [decisions](plan/decisions.md) (ADRs), [open questions](plan/open-questions.md) (spikes and product decisions), [tasks/](plan/tasks/) (task lists, progress log, questions for the owner) | Agents when choosing and planning work |
+| [plan/](plan/) | [Roadmap](plan/roadmap.md) (milestones), [decisions](plan/decisions.md) (ADRs), [open questions](plan/open-questions.md) (spikes and product decisions), [tasks/](plan/tasks/) (task lists, progress log, decided questions) | Agents when choosing and planning work |
 | [specs/](specs/) | What to build, one file per area (below) | Agents for the sections their task names |
 | [product/](product/) | [Vision](product/vision.md), [principles](product/principles.md), [user journeys](product/user-journeys.md) | Anyone deciding what the product should do |
 | [prompts/](prompts/README.md) | The system prompt, mode texts, tool descriptions and fixed harness texts, one set for every model (normative, embedded in the binary) | Agents building prompts and tools |

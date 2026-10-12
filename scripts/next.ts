@@ -115,6 +115,16 @@ function tailEntries(text: string, n: number): string {
 }
 
 /** The session-start report: for the next task, or for `want` (a task id). */
+/** Answered questions where the owner added an `**Override (owner…` line that has no `**Override applied` yet. */
+export function unappliedOverrides(questions: string): string {
+  const answered = questions.split("## Answered")[1] ?? "";
+  return answered
+    .split(/^(?=### )/m)
+    .filter((block) => block.includes("**Override (owner") && !block.includes("**Override applied"))
+    .map((block) => block.trim())
+    .join("\n\n");
+}
+
 export function report(want?: string): string {
   const lines: string[] = [];
   const print = (s = ""): void => {
@@ -126,7 +136,8 @@ export function report(want?: string): string {
   const waiting = q.includes("## Waiting for the owner")
     ? (q.split("## Waiting for the owner")[1]?.split("## Answered")[0]?.trim() ?? "")
     : "";
-  print(`## Questions waiting for the owner\n${waiting || "(none)"}\n`);
+  print(`## Waiting for the owner (only what no agent can do)\n${waiting || "(none)"}\n`);
+  print(`## Owner overrides to apply\n${unappliedOverrides(q) || "(none)"}\n`);
   print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 3).trim()}\n`);
 
   for (const [name, text] of ms) {
@@ -147,7 +158,9 @@ export function report(want?: string): string {
     );
     if (!task) {
       const blocked = tasks.filter((t) => t.status.startsWith("blocked")).map((t) => t.id);
-      print(`No task can start now.${blocked.length ? ` Blocked: ${blocked.join(", ")} (see QUESTIONS.md).` : ""}`);
+      print(
+        `No task can start now.${blocked.length ? ` Blocked: ${blocked.join(", ")} (waiting for the owner, see QUESTIONS.md).` : ""}`,
+      );
       return lines.join("\n");
     }
     print(`## Task ${task.id} ${task.title}\n\n${task.body}\n`);

@@ -12,11 +12,11 @@ Continue building Dovet.
 
 That's all, every time. The agent reads where things stand from the repository (task lists, progress log, open PRs), finishes or fixes anything left over, picks the next task itself, builds it, has it reviewed by a fresh reviewer, merges it when CI is green, logs what it did, and tells you in three sentences. Then you start a new session with the same prompt.
 
-**Want it to do several tasks in a row?** Send `Continue building Dovet. Keep going.` With a tool that supports subagents (Claude Code does), the session hands each task to a fresh subagent and stops at a question for you, a step that needs you, the end of a milestone, or after 5 tasks.
+**Want it to do several tasks in a row?** Send `Continue building Dovet. Keep going.` With a tool that supports subagents (Claude Code does), the session hands each task to a fresh subagent and stops at a step that needs you, the end of a milestone, or after 5 tasks.
 
 ## Your job
 
-1. **Answer questions** in [tasks/QUESTIONS.md](../plan/tasks/QUESTIONS.md). The agent writes a question there only when the specs don't decide something; each comes with its recommended answer, so "yes, do what you recommend" is a fine answer. The next session picks it up.
+1. **Nothing to answer.** When the specs don't decide something, the agent decides it and records question and answer in [tasks/QUESTIONS.md](../plan/tasks/QUESTIONS.md). Read them if you like; to change one, tell the agent (or add an `Override (owner)` line to the entry) and the next session applies it.
 2. **Do the owner steps** the agent asks for (create the GitHub repository, run the TUI demo on your terminals, create the release key). It tells you exactly what to click or type.
 3. **Read the three-sentence summary** at the end of each session. Nothing else is required. [tasks/PROGRESS.md](../plan/tasks/PROGRESS.md) has the full history if you want it.
 4. **Approve plan changes:** PRs that change decisions (ADRs, roadmap, product decisions) wait for you. Everything else merges itself after review and green CI on all three OSes.
@@ -63,7 +63,7 @@ These come from the systems that already do this well: Anthropic's guide to long
 - **"Build the whole thing" in one session.** It runs out of context mid-way and leaves a mess the next session has to clean up.
 - **Pasting docs into the chat**, or asking it to "read all the docs" or "explore the codebase". The task list already names the 2–3 sections each task needs.
 - **Continuing a long session that keeps failing.** Start a new one; the repository has everything it needs.
-- **Answering questions in the chat only.** Put the answer in `QUESTIONS.md` (or ask the agent to), or the next session asks again.
+- **Overriding an agent's answer in the chat only.** Ask the agent to record it in `QUESTIONS.md` (or add the `Override (owner)` line yourself), or the next session follows the old answer.
 - **Adding ideas mid-milestone directly to the code.** Use the change prompt; otherwise the plan and the code drift apart and agents start chasing things the specs don't say.
 - **Letting an agent "fix" a test or a spec so its code passes.** The build loop forbids it; if you see it in a summary, reject the PR.
 - **Running several agents on the same task or files at once.** They overwrite each other. One session at a time until the project is further along.
