@@ -1,0 +1,42 @@
+# Dovet — instructions for AI agents working on this repo
+
+Dovet is a terminal coding agent for Windows, macOS and Linux, written in TypeScript on Bun, that works with any model provider. Its promise: the agent can't hide what it did, what it cost, or what it was told.
+
+**Current state:** planning is complete; building starts at milestone M0. The owner is not technical: never ask them to choose tasks, read code or run commands (except a task's listed "Owner step"); ask only through `docs/plan/tasks/QUESTIONS.md`.
+
+## Start every session with this
+
+```
+python3 scripts/next.py
+```
+
+It prints where the project stands (questions waiting for the owner, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `python3 scripts/next.py M0-03`.
+
+## Where things are
+
+| Folder | What it is |
+|---|---|
+| `docs/workflow/` | How you work: the build loop (every session), the dev-workflow rules (every change) |
+| `docs/plan/` | Roadmap, decisions (ADRs), open questions (spikes), `tasks/` (task lists, progress log, questions for the owner) |
+| `docs/specs/` | What to build. **Normative.** Each spec starts with a generated "Before you build" box: milestone, decisions, open questions with fallbacks, user journeys |
+| `docs/product/` | Vision, principles, user journeys |
+| `docs/prompts/` | System prompts and tool descriptions. **Normative**, embedded in the binary; changing them is a spec change |
+| `docs/background/` | Research and history. Never requirements; if it disagrees with a spec, the spec wins |
+
+Code, tests and files go where `docs/specs/architecture.md` "Repository layout" says.
+
+## Rules that always apply
+
+- **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: write the question in `docs/plan/tasks/QUESTIONS.md` with your recommended answer and move on (build loop step 6).
+- **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `python3 scripts/docs-context.py`. After any docs change, `python3 scripts/check-docs.py` must pass.
+- **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
+- **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
+- **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).
+- TypeScript strict; no `any`; zod-parse every external input; no floating promises; no catch-and-ignore.
+- **Module boundaries and state ownership** (`docs/specs/architecture.md`): tools return effects and never change session state; no module-level mutable state, no `process.chdir`, no `process.env` writes; only `cli/main.ts` touches `process.*`.
+- **Provider-neutral:** provider differences are registry data or a provider module (`docs/specs/providers.md`), never branches in core logic.
+- A new user-visible feature updates `docs/product/user-journeys.md`.
+- Copied code keeps its license notice (e.g. vendored pi-tui; listed in `THIRD_PARTY_NOTICES`) and the PR says so.
+- No abstraction until three real uses exist. PRs under ~400 changed lines (tests excluded). One task per session.
+- `bun run check` must pass before you report done.
+- Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question for the owner.

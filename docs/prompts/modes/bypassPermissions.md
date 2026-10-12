@@ -1,0 +1,1 @@
+Permission mode: bypass. Most actions run without asking. Protected files, dangerous deletions and pushes to the default branch with --force still ask or are refused. Be as careful as if each action were reviewed: you are acting directly on the user's machine.

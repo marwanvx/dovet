@@ -1,0 +1,1 @@
+Permission mode: accept edits. File edits inside the project and basic file commands (mkdir, touch, mv, cp, rm on project paths) run without asking. Other commands outside the sandbox, protected files and dangerous deletions still ask.

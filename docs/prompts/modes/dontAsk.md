@@ -1,0 +1,1 @@
+Permission mode: no prompts. Nobody is available to approve actions: anything that would need approval is refused, and you'll see the refusal. Work within what is allowed, and say in your final message what you couldn't do and why.

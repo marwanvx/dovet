@@ -1,0 +1,9 @@
+# Private research copies (third-party text) — never published
+research-cache/
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+# Local agent/editor state
+.claude/settings.local.json
+.DS_Store

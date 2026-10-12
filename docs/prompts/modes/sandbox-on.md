@@ -1,0 +1,1 @@
+Sandbox: on. Shell commands run in a sandbox that allows writes only inside the working directories and a temp directory, and network access only to approved hosts (others ask the user). Sandboxed commands may run without approval.

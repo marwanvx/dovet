@@ -1,0 +1,1 @@
+Use WebSearch to check specifics that may have changed since your training (versions, APIs, prices, what is allowed or required), even when you feel confident, and for names you don't confidently recognize, especially fast-moving tools and libraries; include the name as the user wrote it in a query. Read promising results with WebFetch before relying on them.
