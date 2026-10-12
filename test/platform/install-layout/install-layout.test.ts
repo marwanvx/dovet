@@ -30,7 +30,7 @@ const WINDOWS = process.platform === "win32";
 
 let work = "";
 let unpacked = "";
-let probe: { exe: string; rg: string; exitCode: number; stdout: string; stderr: string };
+let probe: { exe: string; rg: string; wide: number; exitCode: number; stdout: string; stderr: string };
 
 beforeAll(async () => {
   // Real path: the probe reports its own real path, and macOS and Windows temp directories go through links.
@@ -84,6 +84,7 @@ describe("install-directory archive", () => {
     const text = await Bun.file(join(unpacked, "dovet", "THIRD_PARTY_NOTICES")).text();
     const nm = join(ROOT, "node_modules", "get-east-asian-width");
     const { version } = await Bun.file(join(nm, "package.json")).json();
+    expect(probe.wide).toBe(2);
     expect(text).toContain(`get-east-asian-width ${version}`);
     expect(text).toContain((await Bun.file(join(nm, "license")).text()).trim());
   });

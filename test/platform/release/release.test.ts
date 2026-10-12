@@ -9,6 +9,7 @@ import { RELEASE_PUBLIC_KEYS, verifiedSha256Sums } from "../../../src/cli/releas
 const dir = process.env.DOVET_RELEASE_DIR;
 const repo = process.env.GITHUB_REPOSITORY ?? "marwanvx/dovet";
 const ref = process.env.GITHUB_REF ?? "";
+if (dir && !ref) throw new Error("GITHUB_REF is required with DOVET_RELEASE_DIR");
 // Test releases (pull requests) are signed with a throwaway key; real ones with an embedded key.
 const testKey = process.env.DOVET_RELEASE_TEST_PUBLIC_KEY;
 const archives = dir ? readdirSync(dir).filter((f) => f.endsWith(".tar.gz")) : [];
