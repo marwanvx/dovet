@@ -7,7 +7,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # ASSUMPTION: architecture says "npm"; the `bun` ecosystem is the one that updates bun.lock (QUESTIONS.md).
+  # The `bun` ecosystem is the one that updates bun.lock (architecture "Repository layout"; QUESTIONS.md Q1).
   - package-ecosystem: bun
     directory: /
     schedule:

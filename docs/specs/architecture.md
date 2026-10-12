@@ -92,11 +92,11 @@ dovet/
 │  ├─ ISSUE_TEMPLATE/         bug.yml (the fields `dovet bug` fills in, cli-config), feature.yml
 │  ├─ PULL_REQUEST_TEMPLATE.md  task id, spec sections, acceptance criteria covered, spec ambiguities found
 │  ├─ CODEOWNERS              owner must approve changes to docs/plan/ decisions, roadmap and open questions; other PRs merge after review + green CI
-│  └─ dependabot.yml          GitHub Actions SHA pins and npm (grouped, weekly)
+│  └─ dependabot.yml          GitHub Actions SHA pins and Bun packages (grouped, weekly)
 ├─ docs/                      the specs, prompts/, background/, playbook.md (owner), build-loop.md (agents), tasks/ (task lists, PROGRESS.md, QUESTIONS.md)
 ├─ schema/                    published JSON Schemas generated from zod (settings.schema.json, stream.schema.json); CI checks they're current
 ├─ install/                   install.sh, install.ps1 (cli-config)
-├─ scripts/                   docs-context.ts, check-docs.ts, next.ts, spec-coverage.ts, build-release.ts, gen-schemas.ts, gen-notices.ts, record.ts
+├─ scripts/                   build.ts (compile options, used by `build` and the compile tests), docs-context.ts, check-docs.ts, next.ts, spec-coverage.ts, build-release.ts, gen-schemas.ts, gen-notices.ts, record.ts
 ├─ src/
 │  ├─ schema/                 zod schemas + inferred types: events, parts, settings, tool I/O (interfaces)
 │  ├─ platform/               dirs, shells, processes, paths, terminal detection, per-OS files (platforms)
