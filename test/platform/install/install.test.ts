@@ -387,7 +387,6 @@ const REGISTRY = {
     "[Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment')",
 };
 
-/** The unexpanded Path value, as stored. */
 function registryPath(scope: "User" | "Machine"): string {
   const r = Bun.spawnSync([
     POWERSHELL,
