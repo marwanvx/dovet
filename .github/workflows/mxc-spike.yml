@@ -1,6 +1,4 @@
-# SPIKE-42 first look (M0-08): does @microsoft/mxc-sdk run a command from a Bun-compiled executable on Windows 11?
-# A record, not a gate: the results are in each job's summary and written under SPIKE-42 in open questions.
-# The SDK is installed for this job only (`--no-save`); it is not a Dovet dependency yet.
+# SPIKE-42 (M0-08): @microsoft/mxc-sdk from a compiled executable. A record, not a gate; the SDK is not a dependency.
 name: mxc-spike
 
 on:
@@ -23,7 +21,6 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # windows-11-arm: Windows 11 24H2 (the platform MXC targets); windows-2025: Server 2025, same 26100 build line.
         os: [windows-11-arm, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20

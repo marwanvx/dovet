@@ -1,11 +1,4 @@
-// SPIKE-42 first look (M0-08): runs mxc-probe.ts three ways on a Windows runner and prints each report, so the
-// result (works / doesn't / needs X) can be written under SPIKE-42 in docs/plan/open-questions.md:
-//   1. `bun mxc-probe.ts`: the SDK under Bun, from node_modules (does it work in Bun at all?)
-//   2. the compiled executable alone, run from a folder with no node_modules (what Dovet would ship as-is)
-//   3. the compiled executable with the SDK's native files beside it, found through the SDK's and koffi's own
-//      override points (MXC_BIN_DIR, MXC_FFI_DIR, process.resourcesPath)
-// A record, not a gate: it fails only if a probe printed no report. Run by .github/workflows/mxc-spike.yml after
-// `bun add --no-save @microsoft/mxc-sdk@1.0.0`.
+// SPIKE-42 (M0-08): runs mxc-probe.ts under bun, compiled alone, and compiled with the SDK's native files beside it.
 import { appendFileSync, cpSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,7 +33,7 @@ function probe(label: string, cmd: string[], env: Record<string, string> = {}): 
   mkdirSync(allowed, { recursive: true });
   mkdirSync(outside, { recursive: true });
   const started = performance.now();
-  // cwd outside the checkout: the compiled executable must not find the repository's node_modules.
+  // cwd outside the checkout, so the compiled probe can't reach node_modules.
   const r = Bun.spawnSync([...cmd, allowed, outside], {
     cwd: dirs,
     env: { ...process.env, ...env },

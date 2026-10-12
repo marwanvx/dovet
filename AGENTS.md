@@ -38,6 +38,7 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 - **Provider-neutral:** provider differences are registry data or a provider module (`docs/specs/providers.md`), never branches in core logic.
 - A new user-visible feature updates `docs/product/user-journeys.md`.
 - Copied code keeps its license notice (e.g. vendored pi-tui; listed in `THIRD_PARTY_NOTICES`) and the PR says so.
+- **Few comments.** Comments only where the code can't say it: a non-obvious *why*, a workaround, a security-critical line, a `// spec:` tag. Never restate the code, narrate steps, or repeat what a name or type says; a file header is one line at most. Comments cost tokens in every later session (owner rule).
 - No abstraction until three real uses exist. PRs under ~400 changed lines (tests excluded). One task per session.
 - `bun run check` must pass before you report done.
 - Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question you decided yourself (with your answer).

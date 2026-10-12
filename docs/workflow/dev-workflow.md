@@ -22,6 +22,7 @@ Agents run this loop through [build-loop.md](build-loop.md), which also covers p
 - No new dependency without an ADR entry in `docs/plan/decisions.md`.
 - No `any`, no `as` casts except at zod-validated boundaries, no `@ts-ignore` (`@ts-expect-error` with a reason only for SDK typing lag, as Anthropic's docs suggest for new beta blocks).
 - No catch-and-ignore. Every caught error is handled, rethrown, or logged with context.
+- **Few comments.** Comments only where the code can't say it: a non-obvious *why*, a workaround, a security-critical line, a `// spec:` tag. Never restate the code, narrate steps, or repeat what a name or type says; a file header is one line at most. Comments cost tokens in every later session (owner rule).
 - No new abstraction until three real uses exist. Prefer a plain function.
 - Don't modify tests to make them pass unless the test contradicts the spec, and say so explicitly.
 - Every bug fix includes a regression test.
