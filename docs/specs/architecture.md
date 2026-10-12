@@ -69,7 +69,7 @@ The v0.2 rows are listed now so v0.1 code leaves room for them: `agent` wires th
 
 ## Repository layout
 
-The GitHub repository `marwanvx/dovet` (MIT; private until the owner opens it). Created in M0 exactly like this; a new top-level folder or a new module is a spec change to this section.
+The public GitHub repository `marwanvx/dovet` (MIT). Created in M0 exactly like this; a new top-level folder or a new module is a spec change to this section.
 
 ```
 dovet/

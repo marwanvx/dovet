@@ -45,7 +45,7 @@ That's all, every time. The agent reads where things stand from the repository (
 | M5-01 / M5-02 | Install Docker; approve the eval budget | ~$40 per full eval run |
 | M5-05 / M5-06 | Follow the docs on a fresh setup; approve the release | — |
 
-The repository is private for now. GitHub Actions on a private repository gets 2,000 free minutes a month, and macOS minutes count ×10 and Windows ×2, so tests on all three systems for every PR can use that up. Making the repository public when you're ready to open-source it makes Actions free.
+GitHub Actions (tests on Linux, macOS and Windows for every PR) is free for public repositories.
 
 ## The right way to work
 
