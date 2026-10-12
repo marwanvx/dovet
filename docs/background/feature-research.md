@@ -1323,3 +1323,12 @@ What the review and the measurements changed (details in QUESTIONS Q3 and Q4): (
 
 How the CI timings were found: the first benchmark printed only totals, hit the 30-minute job limit on Windows, and could not say why. Progress lines per phase showed that `git add` and `git commit` in the benchmark's own setup (20,000 files: 150 s and 70 s) were slow, not the snapshot; a diagnostic workflow then compared C: and D: drives, Defender on and off, and the object-writing methods. Per-phase timings are now part of `SnapshotResult`.
 
+## SPIKE-4 pi-tui on real terminals (M0-06, 2026-10-12)
+
+- Source: `@earendil-works/pi-tui` 1.1.0 on npm has only compiled JS and no LICENSE; the TypeScript source is `packages/tui/src` at tag `v1.1.0` of github.com/earendil-works/pi (commit `abe508e1`), the MIT LICENSE is at that repository's root.
+- GNOME Terminal (VTE) draws 👍🏽 (thumbs up + skin-tone modifier) as two glyphs, wider than `visibleWidth()` says; with auto-wrap on, a padded full-width line then wraps and pi-tui's inline cursor math drifts one row per frame. DECAWM off (`CSI ?7l`) during each frame clips instead. Reproduced in `@xterm/headless` 5.5.0 by making the emulator narrower than pi-tui's width.
+- An OSC 10/11 query sent before raw mode is echoed by the tty; replies seen in GNOME Terminal: `OSC 10/11/4` colors and DA1 `CSI ?61;1;21;22;28c`.
+- OSC 11/10 set the terminal's default background and text colors for the whole window (padding included); OSC 110/111 reset them to the profile's colors (xterm control sequences; VTE, iTerm2, kitty, WezTerm, Windows Terminal support them).
+- `import.meta.main` is false inside a Bun-compiled Windows executable (Bun 1.4.3): an entry file must run unconditionally.
+- Size: a Bun 1.4.3 compiled one-line program is 86.6 MB (Linux x64), 91.9 MB (Windows x64); Dovet's own code is about 0.3 MB minified.
+

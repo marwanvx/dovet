@@ -5,7 +5,6 @@
 > - **Milestone:** M1 (headless `-p`, output formats, exit codes); M3 (TUI).
 > - **Decisions that apply** ([decisions](../plan/decisions.md)): ADR-5 Vendored pi-tui for the terminal UI; ADR-24 The Vercel / AI SDK ecosystem: what Dovet uses.
 > - **Open questions** ([open questions](../plan/open-questions.md)); build the part that depends on one only after it's resolved, or use its fallback:
->   - **SPIKE-4** (M0): Does pi-tui's **TypeScript core without its native addons** (clipboard/modifier `.node` modules) render correctly on Windows Terminal, conhost, tmux, VS Code's terminal, iTerm2, Ghostty (synchronized output, VT mode, keys incl. Shift+Enter, IME, OSC 11 theme detection)? Can the vendored copy re-render only the live region on width change and render in ≤ 8 ms slices between input events ([tui](../specs/tui.md))? *If no:* Patch the vendored copy; worst case a Windows-specific render path (ADR)
 >   - **SPIKE-6** (M2): Binary size and startup impact of shiki grammars; image resize/re-encode without native modules (e.g. photon WASM); a maintained pure-JS PDF library for page counting, page-range splitting and text extraction (pdfjs-dist vs alternatives) *If no:* highlight.js for code; reject oversize images with a clear error; PDFs: whole-document only, ranges need `pdftotext`
 >   - **SPIKE-25** (M2): Clipboard image paste per OS (`osascript`, `wl-paste`, `xclip`, PowerShell `Get-Clipboard -Format Image`) from inside the TUI, including over SSH (expected: unavailable) *If no:* Drag-and-drop file paths only
 > - **User journeys served** ([user journeys](../product/user-journeys.md)): steps 5, 6, 9, 9b, 11, 15, 18, 20, 23, 27. A change here must keep those steps working.
@@ -51,6 +50,13 @@ pi-tui's inline renderer clears and fully re-renders when content **above the vi
 - Diffs: unified diff with line numbers, red/green, word-level highlights for changed lines.
 - Long tool output in expanded view is capped at 200 lines with "… N more lines (o to open in pager)"; the pager uses the alt screen temporarily.
 - Colors: a theme with light and dark variants, auto-detected via `COLORFGBG`/OSC 11 query where supported [SPIKE-4]; `NO_COLOR` respected (monochrome, symbols only).
+- **Dovet paints its own background** (owner decision, QUESTIONS Q8): the theme sets both the background and the default text color, so Dovet looks the same whatever the terminal's colors are. The detected light/dark only picks which variant starts (`ui.theme` overrides it).
+  - While Dovet runs, the terminal's own default background and text colors are set to the theme's (OSC 11 and OSC 10, after the OSC 10/11 query has read the terminal's colors), so the whole window matches: rows Dovet hasn't drawn, the edges and the window padding too. The terminal's configured colors come back (OSC 110/111) on every path out, like the rest of the terminal state (see "Terminal I/O robustness"). Terminals that ignore OSC 10/11 still get the painted lines below.
+  - Fullscreen mode paints the whole screen.
+  - Inline mode also paints every line Dovet draws across the full width, including blank lines between blocks. After exit, the shell prompt is in the terminal's own colors again.
+  - Every reset inside a line (`SGR 0`, `39`, `49`) is followed by the theme's colors again, so no text falls back to the terminal's colors mid-line; overlays use a slightly different shade of the background.
+  - With `NO_COLOR`, or a terminal limited to 16 colors, no background is painted.
+  - Lines already in the scrollback are not repainted when the terminal is resized (append-only screen); the terminal reflows them.
 
 ## Permission prompt
 
@@ -177,7 +183,7 @@ Text Dovet didn't author (model output, tool output, file contents, fetched page
   - paste blocks survive history recall, stash, Ctrl+C-clear (↑ restores the draft) and external-editor round trips without leaking markers.
 - **Hardware cursor at the caret:** the terminal's real cursor is placed at the input caret (hidden when the caret is hidden), so IME composition windows for Chinese, Japanese and Korean input appear in place, and screen readers and magnifiers can follow. Completion triggers (`/`, `@`) also work after CJK punctuation without a space, and full-width digits are accepted in numbered choices.
 - **Pasted images** are read without blocking, saved to the session's attachments directory (the model is given the path, so tools can use the file), resized like Read images, and turned into a placeholder instead of an error if corrupt.
-- **Restoring the terminal:** raw mode, bracketed paste, the keyboard protocol, mouse tracking, focus reporting, the alternate screen, cursor visibility and the window title are restored on **every** path out:
+- **Restoring the terminal:** raw mode, bracketed paste, the keyboard protocol, mouse tracking, focus reporting, the alternate screen, cursor visibility, the window title and the terminal's default colors are restored on **every** path out:
   - exit, Ctrl+C/Ctrl+D, and SIGINT from outside (an IDE stop button);
   - SIGTERM/SIGHUP, and a crash (before the crash report);
   - suspend (Ctrl+Z, including when launched through a wrapper such as `bunx`, by signalling the whole process group);
@@ -290,3 +296,4 @@ Custom slash commands from `.claude/commands/*.md` / `.dovet/commands/*.md` (pro
 - [ ] **AC-TUI-16** Sanitization: model output containing OSC 0 (title), OSC 52 (clipboard), OSC 8 with a hidden target, CSI cursor moves and a BEL changes neither title nor clipboard nor screen layout and shows the escapes visibly; colored test output keeps its colors.
 - [ ] **AC-TUI-17** Terminal state: after exit, Ctrl+Z/fg, SIGTERM, an uncaught exception and killing a suspended session, `stty -a` and a probe of bracketed paste, the Kitty keyboard protocol, mouse and focus reporting show the terminal as it was before Dovet started.
 - [ ] **AC-TUI-18** Input: a paste without an end marker ends after 1 s and input keeps working; two overlapping pastes reach the model as two `<pasted_content>` blocks; a delayed DA1 reply over a simulated slow link never appears in the prompt; with an IME composition the hardware cursor is at the caret.
+- [ ] **AC-TUI-19** Dovet's own background: with a dark and with a light terminal theme, every cell of every line Dovet draws (inline and fullscreen; including blank lines, overlays, code blocks and text after a color reset) has the theme's background and no text has the terminal's default color (VirtualTerminal); Dovet sets the terminal's default colors (OSC 10/11) only after reading them and resets them (OSC 110/111) on exit; with `NO_COLOR` no background is painted and the terminal's colors are not changed.

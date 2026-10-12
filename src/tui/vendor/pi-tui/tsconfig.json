@@ -1,0 +1,16 @@
+{
+  // Vendored pi-tui keeps upstream's strictness ("strict"), not Dovet's extra index, optional-property and override
+  // checks: patching ~220 upstream lines would make every re-sync with pi-tui a merge (QUESTIONS Q7).
+  "extends": "../../../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "outDir": "../../../../node_modules/.cache/pi-tui-types",
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": false
+  },
+  "include": ["."],
+  "exclude": []
+}

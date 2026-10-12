@@ -19,5 +19,11 @@
     "resolveJsonModule": true,
     "isolatedModules": true
   },
-  "include": ["src", "test", "scripts"]
+  "include": ["src", "test", "scripts"],
+  "exclude": ["src/tui/vendor"],
+  "references": [
+    {
+      "path": "src/tui/vendor/pi-tui"
+    }
+  ]
 }
