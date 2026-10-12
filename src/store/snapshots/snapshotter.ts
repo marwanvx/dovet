@@ -1,7 +1,22 @@
 // Git tree snapshots (docs/specs/checkpoints.md "Git tree snapshots", ADR-19): a tree object per checkpoint, built in a
-// private object directory with a private index, from the raw bytes on disk. Nothing is written into the user's `.git`,
-// and `git add` / `checkout` (which run clean/smudge/process filters) are never used.
-import { chmodSync, lstatSync, mkdirSync, readlinkSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+// private object directory with a private index, from the raw bytes on disk. Nothing is written into the user's `.git`
+// (not even a timestamp: the private store holds every blob itself and no alternate is configured), and `git add` /
+// `checkout` (which run clean/smudge/process filters) are never used.
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  renameSync,
+  rmdirSync,
+  rmSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type Env, emptyDir, type GitContext, lines, runGit, scrubbedEnv, splitNul } from "./git.ts";
 import { loadStatCache, type StatCache, saveStatCache } from "./stat-cache.ts";
@@ -10,6 +25,9 @@ const UNTRACKED_LIMIT = 2n * 1024n * 1024n;
 const FILE_LIMIT = 50_000_000n;
 /** A file modified this recently may change again within the filesystem's timestamp granularity. */
 const RACY_NS = 2_000_000_000n;
+/** Nested repositories inside nested repositories; deeper ones are not walked. */
+const MAX_NESTING = 10;
+const OBJECT_ID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 export interface SnapshotterOptions {
   /** Any directory inside the repository; snapshots cover the repository's top level. */
@@ -19,9 +37,11 @@ export interface SnapshotterOptions {
   session: string;
   /** The caller's environment (only `cli/main.ts` reads `process.env`); `GIT_*` variables are dropped. */
   env: Env;
+  /** The caller's `process.platform`: Windows has no execute bit. */
+  platform: NodeJS.Platform;
 }
 
-export type SkipReason = "too-large" | "nested-repo" | "gitlink" | "unsupported" | "link" | "blocked";
+export type SkipReason = "too-large" | "gitlink" | "unsupported" | "link" | "blocked";
 export interface SkippedPath {
   path: string;
   reason: SkipReason;
@@ -32,7 +52,7 @@ export interface SnapshotResult {
   tree: string;
   /** Files whose bytes were read and hashed this time (the rest came from the stat cache). */
   hashed: number;
-  /** Paths left out of the tree; the receipt lists them as not restorable. */
+  /** Paths left out of the tree; the receipt lists them as not restorable, and `restore` must be given them. */
   skipped: SkippedPath[];
 }
 
@@ -45,8 +65,19 @@ export interface RestoreResult {
 
 export interface Snapshotter {
   snapshot(): Promise<SnapshotResult>;
-  /** Makes the workspace match `tree`: rewrites changed files, deletes files created since. */
-  restore(tree: string): Promise<RestoreResult>;
+  /**
+   * Makes the workspace match `tree`: rewrites changed files, deletes files created since. `checkpointSkipped` is the
+   * `skipped` list of the snapshot that made `tree`: those paths existed then but are not in the tree, so they are
+   * never deleted.
+   */
+  restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult>;
+}
+
+interface Listed {
+  path: string;
+  tracked: boolean;
+  /** Commit id of a submodule, from the user's index. */
+  gitlink?: string;
 }
 
 interface Planned {
@@ -61,8 +92,10 @@ interface Planned {
 }
 
 const encode = (text: string): Uint8Array<ArrayBuffer> => new TextEncoder().encode(text);
+const byPath = (a: { path: string }, b: { path: string }): number => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
 export async function openSnapshotter(options: SnapshotterOptions): Promise<Snapshotter> {
+  const posix = options.platform !== "win32";
   const env = scrubbedEnv(options.env);
   const objectsDir = emptyDir(join(options.projectDir, "objects"));
   const sessionsDir = emptyDir(join(options.projectDir, "sessions"));
@@ -71,39 +104,67 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
   const indexPath = join(sessionsDir, `${options.session}.snap.index`);
   const statPath = join(sessionsDir, `${options.session}.snap.stat`);
 
-  const [top, common] = lines(
-    await runGit({ cwd: options.workspace, env, hooksDir }, [
-      "rev-parse",
-      "--path-format=absolute",
-      "--show-toplevel",
-      "--git-common-dir",
-    ]),
-  );
-  if (top === undefined || common === undefined) throw new Error(`${options.workspace} is not in a git repository`);
+  const top = lines(
+    await runGit({ cwd: options.workspace, env, hooksDir }, ["rev-parse", "--path-format=absolute", "--show-toplevel"]),
+  )[0];
+  if (top === undefined) throw new Error(`${options.workspace} is not in a git repository`);
   const root = resolve(top);
   const ctx: GitContext = { cwd: root, env, hooksDir };
-  // Linked worktrees keep their objects in the main repository: `--git-common-dir` finds them.
-  const privateEnv = {
-    GIT_INDEX_FILE: indexPath,
-    GIT_OBJECT_DIRECTORY: objectsDir,
-    GIT_ALTERNATE_OBJECT_DIRECTORIES: join(resolve(common), "objects"),
-  };
+  // Only the private store is configured: every blob a tree needs is written there, so a checkpoint stays restorable
+  // however the user's repository is pruned, and git never touches the user's objects (it would freshen their
+  // timestamps if they were an alternate).
+  const privateEnv = { GIT_INDEX_FILE: indexPath, GIT_OBJECT_DIRECTORY: objectsDir };
 
+  // A new session starts from the most recent session's stat cache, so its first snapshot hashes only what changed.
+  if (!existsSync(statPath)) seedStatCache(sessionsDir, statPath);
   let cache = loadStatCache(statPath);
+
+  /** Files of the repository at `dir` (relative to the top level; "" for the top), nested repositories included. */
+  async function list(dir: string, depth: number): Promise<{ files: Listed[]; skipped: SkippedPath[] }> {
+    const here: GitContext = { ...ctx, cwd: join(root, dir) };
+    const files: Listed[] = [];
+    const skipped: SkippedPath[] = [];
+    const seen = new Set<string>();
+    const found: Listed[] = [];
+    if (dir === "") {
+      // The user's real index, read-only: no GIT_INDEX_FILE override, no filters, .gitignore respected.
+      for (const record of splitNul(await runGit(here, ["ls-files", "-z", "--cached", "--stage"]))) {
+        const m = /^(\d+) ([0-9a-f]+) \d\t(.*)$/s.exec(record);
+        if (m?.[1] === undefined || m[2] === undefined || m[3] === undefined)
+          throw new Error("unexpected ls-files output");
+        found.push(m[1] === "160000" ? { path: m[3], tracked: true, gitlink: m[2] } : { path: m[3], tracked: true });
+      }
+      for (const path of splitNul(await runGit(here, ["ls-files", "-z", "--others", "--exclude-standard"]))) {
+        found.push({ path, tracked: false });
+      }
+    } else {
+      // A nested repository counts as untracked content of its parent; its own `.git` is never listed.
+      const args = ["ls-files", "-z", "--cached", "--others", "--exclude-standard"];
+      for (const path of splitNul(await runGit(here, args))) found.push({ path, tracked: false });
+    }
+    for (const item of found) {
+      if (seen.has(item.path)) continue;
+      seen.add(item.path);
+      const path = dir === "" ? item.path : `${dir}/${item.path}`;
+      if (item.path.endsWith("/")) {
+        if (depth >= MAX_NESTING) skipped.push({ path, reason: "unsupported" });
+        else {
+          const inner = await list(path.slice(0, -1), depth + 1);
+          files.push(...inner.files);
+          skipped.push(...inner.skipped);
+        }
+      } else files.push({ ...item, path });
+    }
+    return { files, skipped };
+  }
 
   async function snapshot(): Promise<SnapshotResult> {
     const startNs = BigInt(Date.now()) * 1_000_000n;
-    const skipped: SkippedPath[] = [];
+    const listing = await list("", 0);
+    const skipped: SkippedPath[] = listing.skipped;
     const planned: Planned[] = [];
 
-    // The user's real index, read-only: no GIT_INDEX_FILE override, no filters, .gitignore respected.
-    const tracked = new Set(splitNul(await runGit(ctx, ["ls-files", "-z", "--cached"])));
-    const untracked = splitNul(await runGit(ctx, ["ls-files", "-z", "--others", "--exclude-standard"]));
-    for (const path of [...tracked, ...untracked]) {
-      if (path.endsWith("/")) {
-        skipped.push({ path, reason: "nested-repo" });
-        continue;
-      }
+    for (const { path, tracked, gitlink } of listing.files) {
       if (path.includes("\n")) {
         skipped.push({ path, reason: "unsupported" }); // `--stdin-paths` is newline-separated
         continue;
@@ -113,15 +174,17 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       if (st === undefined) continue; // tracked, but deleted on disk
       const base = { path, size: st.size, mtimeNs: st.mtimeNs, ino: st.ino, source: full };
       if (st.isDirectory()) {
+        // A submodule: recorded as a gitlink (its commit id), not restorable.
+        if (gitlink !== undefined) planned.push({ ...base, mode: "160000", blob: gitlink });
         skipped.push({ path, reason: "gitlink" });
       } else if (st.isSymbolicLink()) {
         planned.push({ ...base, mode: "120000" });
       } else if (st.isFile()) {
-        if (st.size > FILE_LIMIT || (!tracked.has(path) && st.size > UNTRACKED_LIMIT)) {
+        if (st.size > FILE_LIMIT || (!tracked && st.size > UNTRACKED_LIMIT)) {
           skipped.push({ path, reason: "too-large" });
           continue;
         }
-        const exec = process.platform !== "win32" && (st.mode & 0o111n) !== 0n;
+        const exec = posix && (st.mode & 0o111n) !== 0n;
         planned.push({ ...base, mode: exec ? "100755" : "100644" });
       } else {
         skipped.push({ path, reason: "unsupported" });
@@ -131,6 +194,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     // Unchanged files take their blob id from the stat cache; the rest are hashed in one git process.
     const toHash: Planned[] = [];
     for (const p of planned) {
+      if (p.blob !== undefined) continue;
       const hit = cache.get(p.path);
       if (hit && hit.mode === p.mode && hit.size === p.size && hit.mtimeNs === p.mtimeNs && hit.ino === p.ino) {
         p.blob = hit.blob;
@@ -148,9 +212,8 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       }
       if (toHash.length > 0) {
         const input = encode(`${toHash.map((p) => p.source).join("\n")}\n`);
-        const ids = lines(
-          await runGit(ctx, ["hash-object", "--no-filters", "-w", "--stdin-paths"], { env: privateEnv, input }),
-        );
+        const args = ["hash-object", "--no-filters", "-w", "--stdin-paths"];
+        const ids = lines(await runGit(ctx, args, { env: privateEnv, input }));
         if (ids.length !== toHash.length)
           throw new Error(`hash-object gave ${ids.length} ids for ${toHash.length} files`);
         for (const [i, p] of toHash.entries()) {
@@ -163,14 +226,14 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       for (const tmp of scratch) rmSync(tmp, { force: true });
     }
 
-    planned.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+    planned.sort(byPath);
     const next: StatCache = new Map();
     const entries: string[] = [];
     for (const p of planned) {
       if (p.blob === undefined) throw new Error(`no blob id for ${p.path}`);
       entries.push(`${p.mode} ${p.blob}\t${p.path}\0`);
       // Don't trust a timestamp that is too recent: the file could change again without its mtime moving.
-      if (p.mtimeNs < startNs - RACY_NS) {
+      if (p.mode !== "160000" && p.mtimeNs < startNs - RACY_NS) {
         next.set(p.path, { mode: p.mode, size: p.size, mtimeNs: p.mtimeNs, ino: p.ino, blob: p.blob });
       }
     }
@@ -188,7 +251,9 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     return { tree, hashed: toHash.length, skipped };
   }
 
-  async function restore(tree: string): Promise<RestoreResult> {
+  async function restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult> {
+    if (!OBJECT_ID.test(tree)) throw new Error(`not a tree id: ${tree}`);
+    const keep = new Set(checkpointSkipped.map((s) => s.path));
     const current = (await snapshot()).tree;
     // Raw records: `:<mode in tree> <mode now> <blob in tree> <blob now> <status>` NUL path NUL.
     const diff = splitNul(
@@ -197,20 +262,29 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     const result: RestoreResult = { written: 0, deleted: 0, skipped: [] };
     const writes: { path: string; blob: string; mode: string }[] = [];
     for (let i = 0; i + 1 < diff.length; i += 2) {
-      const [srcMode, , srcBlob, , status] = (diff[i] ?? "").slice(1).split(" ");
+      const [srcMode, dstMode, srcBlob, , status] = (diff[i] ?? "").slice(1).split(" ");
       const path = diff[i + 1];
-      if (srcMode === undefined || srcBlob === undefined || status === undefined || path === undefined) {
+      if (
+        srcMode === undefined ||
+        dstMode === undefined ||
+        srcBlob === undefined ||
+        status === undefined ||
+        path === undefined
+      ) {
         throw new Error("unexpected diff-tree output");
       }
       if (path.split("/").some((part) => part === ".." || part.toLowerCase() === ".git")) {
         throw new Error(`refusing to restore ${path}`);
       }
+      if (srcMode === "160000" || dstMode === "160000") continue; // submodules are not restorable
       if (status === "A") {
-        // Created after the checkpoint: delete it, unless a link is in the way.
+        // Created after the checkpoint: delete it, unless it existed then but was left out of the tree.
+        if (keep.has(path)) continue;
         const blocked = pathBlock(root, path, false);
         if (blocked) result.skipped.push({ path, reason: blocked });
         else {
           unlinkSync(join(root, path));
+          removeEmptyParents(root, path);
           result.deleted++;
         }
       } else if (srcMode === "120000") {
@@ -231,13 +305,25 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
         result.skipped.push({ path: w.path, reason: blocked });
         continue;
       }
-      writeAtomic(join(root, w.path), bytes, w.mode === "100755");
+      writeAtomic(join(root, w.path), bytes, w.mode === "100755", posix);
       result.written++;
     }
     return result;
   }
 
   return { snapshot, restore };
+}
+
+/** Starts a new session's stat cache from the newest other session's (they share one object store). */
+function seedStatCache(sessionsDir: string, statPath: string): void {
+  let newest: { file: string; mtime: number } | undefined;
+  for (const name of readdirSync(sessionsDir)) {
+    if (!name.endsWith(".snap.stat")) continue;
+    const file = join(sessionsDir, name);
+    const mtime = statSync(file).mtimeMs;
+    if (newest === undefined || mtime > newest.mtime) newest = { file, mtime };
+  }
+  if (newest) copyFileSync(newest.file, statPath);
 }
 
 /**
@@ -262,11 +348,27 @@ function pathBlock(root: string, path: string, create: boolean): SkipReason | un
   return st.isFile() ? undefined : "blocked";
 }
 
-/** Replaces `file` with `bytes` through a temp file in the same directory and a rename. */
-function writeAtomic(file: string, bytes: Uint8Array, executable: boolean): void {
+/** After a delete, removes the directories it emptied (never the workspace root). */
+function removeEmptyParents(root: string, path: string): void {
+  let dir = dirname(join(root, path));
+  while (dir !== root && dir.startsWith(root) && readdirSync(dir).length === 0) {
+    rmdirSync(dir);
+    dir = dirname(dir);
+  }
+}
+
+/**
+ * Replaces `file` with `bytes` through a temp file in the same directory and a rename. An existing file keeps its
+ * permissions (only the execute bits follow the checkpoint); a new one gets the process umask's default.
+ */
+function writeAtomic(file: string, bytes: Uint8Array, executable: boolean, posix: boolean): void {
   const tmp = join(dirname(file), `.dovet-restore-${crypto.randomUUID()}`);
-  writeFileSync(tmp, bytes);
-  if (process.platform !== "win32") chmodSync(tmp, executable ? 0o755 : 0o644);
+  const existing = lstatSync(file, { throwIfNoEntry: false });
+  writeFileSync(tmp, bytes, { mode: executable && posix ? 0o777 : 0o666 });
+  if (posix && existing?.isFile()) {
+    const readBits = existing.mode & 0o444;
+    chmodSync(tmp, (existing.mode & 0o666) | (executable ? readBits >> 2 : 0));
+  }
   renameSync(tmp, file);
 }
 

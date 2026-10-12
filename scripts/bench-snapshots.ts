@@ -1,10 +1,20 @@
 // SPIKE-22 benchmark: how long git tree snapshots take on a large repository (default 100,000 files).
 // Usage: bun scripts/bench-snapshots.ts [fileCount]
 // Prints a Markdown table; in CI it also goes to the job summary.
-import { appendFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openSnapshotter } from "../src/store/snapshots/index.ts";
+import { openSnapshotter } from "../src/store/index.ts";
 
 const count = Number(Bun.argv[2] ?? 100_000);
 const perDir = 100;
@@ -23,6 +33,15 @@ function git(...args: string[]): void {
     env,
   });
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+}
+
+function dirBytes(dir: string): number {
+  let total = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    total += entry.isDirectory() ? dirBytes(p) : statSync(p).size;
+  }
+  return total;
 }
 
 async function time<T>(run: () => Promise<T>): Promise<{ ms: number; value: T }> {
@@ -49,7 +68,14 @@ try {
     for (let i = 0; i < perDir && d * perDir + i < count; i++) files.push(join(repo, "src", `d${d}`, `f${i}.ts`));
   for (const f of files) utimesSync(f, past, past);
 
-  const snap = await openSnapshotter({ workspace: repo, projectDir: join(root, "data", "p1"), session: "bench", env });
+  const sourceBytes = dirBytes(join(repo, "src"));
+  const snap = await openSnapshotter({
+    workspace: repo,
+    projectDir: join(root, "data", "p1"),
+    session: "bench",
+    env,
+    platform: process.platform,
+  });
   const first = await time(() => snap.snapshot());
   const second = await time(() => snap.snapshot());
   for (const f of files.slice(0, 100)) writeFileSync(f, "changed\n");
@@ -68,6 +94,8 @@ try {
     "| step | ms | files hashed |",
     "|---|---:|---:|",
     ...rows.map(([name, ms, hashed]) => `| ${name} | ${ms} | ${hashed} |`),
+    "",
+    `Private object store after the three snapshots: ${(dirBytes(join(root, "data", "p1", "objects")) / 1e6).toFixed(1)} MB, for ${(sourceBytes / 1e6).toFixed(1)} MB of source files.`,
     "",
   ].join("\n");
   console.log(table);
