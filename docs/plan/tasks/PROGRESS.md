@@ -50,3 +50,14 @@ Learned (for the next session):
 - For M2 (checkpoints): `restore(tree, skipped)` needs the checkpoint's `skipped` list (store it with the checkpoint event); a file left out of a snapshot is never deleted by a restore. `fast-import` writes loose objects when it gets fewer than 100 objects and a pack above that, so `dovet gc` should repack. AC-CKPT-05's 200 ms budget needs an answer for Windows (Q6). The 2 s notice from checkpoints "Limits" can be built from `SnapshotResult.timings.total`.
 Next: M0-06 (needs the owner at real terminals), M0-08 (independent); M0-09 needs the owner's release key.
 
+
+## 2026-10-12 — M0-06 SPIKE-4: vendored pi-tui on real terminals
+Done: pi-tui 1.1.0's TypeScript source vendored in `src/tui/vendor/pi-tui/` with its LICENSE (`VENDORED.md` lists Dovet's changes: native addons removed, Windows VT input through `bun:ffi` in `windows-console.ts`), listed in `THIRD_PARTY_NOTICES`; `scripts/tui-demo.ts` (streaming markdown, editor, overlay, a status line with the last key, colors and full-redraw count) compiled per OS by CI and attached to the run; `--self-test` checked by `test/platform/tui-demo` on all 3 OSes. PR: #17 (waiting for owner: the terminal checklist is in the PR; task stays `in-progress`).
+Learned:
+- The npm package ships only compiled JS and no LICENSE: the TypeScript source comes from the GitHub tag (`earendil-works/pi`, `packages/tui/src`), the LICENSE from the repository root.
+- Under Dovet's tsconfig pi-tui has 221 errors (the three checks beyond `strict`), so the vendored copy is its own TypeScript project (a project reference, `bun check -b`), QUESTIONS Q7. Biome already skipped `src/tui/vendor`.
+- **`import.meta.main` is false in a compiled Windows executable** (the demo printed nothing there, exit 0). A file compiled as an entry point must run its code unconditionally; `compileTuiDemo` lives in `scripts/build.ts` (`bun scripts/build.ts --tui-demo <out>`).
+- `bun check` in this repo runs the package's `check` script first (it has the same name), so `bun run check` runs every step twice; a separate fix was suggested to the owner. Local Bun here was 1.4.2: install 1.4.3 (`curl -fsSL https://bun.sh/install | bash -s bun-v1.4.3`), otherwise `bun check` recurses.
+- `actions/upload-artifact` zips and drops the execute bit: upload one file with `archive: false` (a `.tar.gz` on macOS/Linux).
+- Not done (SPIKE-4's second half, M3): width changes re-render only the live region; ≤ 8 ms render slices. The owner's results for items G/H and F tell how far upstream is.
+Next: when the owner posts results on #17, record them under SPIKE-4 in open questions, patch the vendored copy where needed, then merge and mark M0-06 done. Meanwhile M0-08 (independent); M0-09 needs the owner's release key.
