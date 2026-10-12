@@ -77,6 +77,7 @@ dovet/
 ├─ LICENSE                    MIT
 ├─ AGENTS.md  CLAUDE.md       instructions for AI agents (CLAUDE.md contains only `@AGENTS.md`)
 ├─ .claude/settings.json      allowlist for building Dovet with Claude Code (routine bun, git and gh commands; force-push and pushes to main denied)
+├─ .claude/agents/reviewer.md the build loop's step-7 reviewer for Claude Code, pinned to the strongest model
 ├─ CONTRIBUTING.md            how to contribute: the spec-first loop (dev-workflow), PR rules, AI-written PRs welcome under the same rules
 ├─ SECURITY.md                report vulnerabilities privately (GitHub private vulnerability reporting); sandbox escapes count
 ├─ CODE_OF_CONDUCT.md         Contributor Covenant
