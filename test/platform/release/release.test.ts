@@ -1,7 +1,7 @@
 // The release workflow's own check of a built release (release.yml, job `verify`): DOVET_RELEASE_DIR holds the
 // downloaded release files. Skipped elsewhere: attestations exist only for archives a release run built.
 import { describe, expect, test } from "bun:test";
-import { copyFileSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TARGETS } from "../../../scripts/build-release.ts";
@@ -15,7 +15,18 @@ const archives = dir ? readdirSync(dir).filter((f) => f.endsWith(".tar.gz")) : [
 
 function ghVerify(file: string) {
   return Bun.spawnSync(
-    ["gh", "attestation", "verify", file, "--repo", repo, "--signer-workflow", `${repo}/.github/workflows/release.yml`],
+    [
+      "gh",
+      "attestation",
+      "verify",
+      file,
+      "--repo",
+      repo,
+      "--signer-workflow",
+      `${repo}/.github/workflows/release.yml`,
+      "--format",
+      "json",
+    ],
     { stdout: "pipe", stderr: "pipe" },
   );
 }
@@ -49,7 +60,8 @@ describe.skipIf(!dir)("a built release", () => {
     for (const f of archives) {
       const r = ghVerify(join(dir, f));
       if (r.exitCode !== 0) throw new Error(`${f}: gh attestation verify failed: ${r.stderr.toString()}`);
-      expect(r.stdout.toString()).toContain(f);
+      const sha256 = new Bun.CryptoHasher("sha256").update(readFileSync(join(dir, f))).digest("hex");
+      expect(JSON.stringify(JSON.parse(r.stdout.toString()))).toContain(`"sha256":"${sha256}"`);
     }
   }, 120_000);
 
