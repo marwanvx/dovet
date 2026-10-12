@@ -15,6 +15,7 @@ import {
   type Color,
   type Component,
   Container,
+  colorToHex,
   Editor,
   type EditorTheme,
   foregroundAnsi,
@@ -189,8 +190,10 @@ function describeColors(colors: TerminalColors): string {
 type Demo = {
   tui: TUI;
   editor: Editor;
-  /** Start rendering, then ask the terminal for its colors. */
+  /** Start rendering, ask the terminal for its colors, then make Dovet's colors the terminal's defaults. */
   start(): void;
+  /** Give the terminal its own default colors back (every way out). */
+  restoreTerminalDefaults(): void;
   /** Start streaming `text` as a new reply; calls `onDone` when it's complete. */
   stream(text: string, onDone?: () => void): void;
   toggleOverlay(): void;
@@ -290,8 +293,19 @@ function createDemo(
     return undefined;
   });
 
+  // While Dovet runs, the terminal's own default colors are Dovet's (OSC 11 background, OSC 10 text), so the whole
+  // window matches: empty rows, the right edge and the window padding too, not only the lines Dovet draws (owner's
+  // second GNOME Terminal run). OSC 110/111 give the terminal its configured colors back.
+  const setTerminalDefaults = () => {
+    if (palette) terminal.write(`\x1b]11;${colorToHex(palette.bg)}\x07\x1b]10;${colorToHex(palette.fg)}\x07`);
+  };
+  const restoreTerminalDefaults = () => {
+    if (painting) terminal.write("\x1b]110\x07\x1b]111\x07");
+  };
+
   // Ask for the theme colors only once pi-tui owns the terminal (raw mode, its input parser): asked earlier, the
-  // terminal's reply is echoed onto the screen (owner's GNOME Terminal run, SPIKE-4).
+  // terminal's reply is echoed onto the screen (owner's GNOME Terminal run, SPIKE-4). Dovet's defaults are set only
+  // after the reply, or the question would return Dovet's own colors.
   const start = () => {
     tui.start();
     tui
@@ -301,14 +315,17 @@ function createDemo(
         // The terminal's light/dark only picks which of Dovet's variants starts.
         if (painting && describeColors(c).startsWith("light")) palette = LIGHT;
         probe.theme = palette?.name ?? probe.theme;
-        tui.requestRender(true);
       })
       .catch((error: unknown) => {
         probe.colors = `query failed: ${String(error)}`;
+      })
+      .finally(() => {
+        setTerminalDefaults();
+        tui.requestRender(true);
       });
   };
 
-  return { tui, editor, start, stream, toggleOverlay };
+  return { tui, editor, start, restoreTerminalDefaults, stream, toggleOverlay };
 }
 
 /** A terminal that records what pi-tui writes, for `--self-test` (no TTY in CI). */
@@ -357,7 +374,11 @@ async function selfTest(): Promise<void> {
 async function interactive(alt: boolean): Promise<void> {
   const terminal = new ProcessTerminal();
   const demo = createDemo(terminal, { alt, chunk: 6, intervalMs: 16, noColor: Boolean(process.env.NO_COLOR) });
+  // The terminal's own colors come back on every way out, a crash included.
+  process.on("exit", () => demo.restoreTerminalDefaults());
+  for (const signal of ["SIGTERM", "SIGHUP"] as const) process.on(signal, () => void quit());
   const quit = async () => {
+    demo.restoreTerminalDefaults();
     demo.tui.stop();
     await terminal.drainInput();
     process.exit(0);
