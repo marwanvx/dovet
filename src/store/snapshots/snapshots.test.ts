@@ -207,6 +207,8 @@ describe("snapshot", () => {
   test("works from a linked worktree, where .git is a file", async () => {
     const f = fixture({ "a.txt": "a\n" });
     const linked = join(f.repo, "..", "linked");
+    // Git for Windows checks out CRLF by default; snapshots store the bytes on disk, so keep this about worktrees.
+    f.git("config", "core.autocrlf", "false");
     f.git("worktree", "add", "-q", linked, "-b", "side");
     age(linked);
     const snap = await openSnapshotter({
