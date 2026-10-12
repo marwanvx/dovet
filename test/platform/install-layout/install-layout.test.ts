@@ -61,8 +61,22 @@ afterAll(() => {
 
 describe("install-directory archive", () => {
   test("unpacks to dovet/ holding the executable and libexec/rg", () => {
-    expect(readdirSync(join(unpacked, "dovet")).sort()).toEqual([`dovet${WINDOWS ? ".exe" : ""}`, "libexec"]);
+    expect(readdirSync(join(unpacked, "dovet")).sort()).toEqual([
+      "THIRD_PARTY_NOTICES",
+      `dovet${WINDOWS ? ".exe" : ""}`,
+      "libexec",
+    ]);
     expect(existsSync(join(unpacked, "dovet", "libexec", WINDOWS ? "rg.exe" : "rg"))).toBe(true);
+  });
+
+  // spec: AC-ARCH-05
+  test("THIRD_PARTY_NOTICES in the archive carries the licenses of Bun, ripgrep and the sandbox helpers", async () => {
+    const text = await Bun.file(join(unpacked, "dovet", "THIRD_PARTY_NOTICES")).text();
+    expect(text).toContain(`Bun ${Bun.version}`);
+    expect(text).toContain(`ripgrep ${RIPGREP_VERSION}`);
+    expect(text).toContain("Permission is hereby granted");
+    expect(text).toContain("@anthropic-ai/sandbox-runtime");
+    expect(text).toContain("Apache License");
   });
 
   test("the unpacked binary runs the bundled ripgrep and gets its version", () => {
