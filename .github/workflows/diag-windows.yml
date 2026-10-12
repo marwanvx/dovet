@@ -1,0 +1,28 @@
+name: diag-windows
+on:
+  push:
+    branches: ["diag/windows-write"]
+permissions:
+  contents: read
+jobs:
+  diag:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - name: git config that affects writes
+        shell: pwsh
+        run: |
+          git config --show-origin --get-regexp "core\.(fsync|fsyncmethod|fscache|longpaths|preloadindex|compression|loosecompression|autocrlf)" 
+          git --version
+      - name: object write cost, C (os temp)
+        shell: pwsh
+        run: bun scripts/diag-write.ts "$env:TEMP" 3000
+      - name: object write cost, D (runner temp)
+        shell: pwsh
+        run: bun scripts/diag-write.ts "$env:RUNNER_TEMP" 3000
