@@ -18,7 +18,8 @@ import { openSnapshotter } from "../src/store/index.ts";
 
 const count = Number(Bun.argv[2] ?? 100_000);
 const perDir = 100;
-const root = realpathSync.native(mkdtempSync(join(tmpdir(), "dovet-bench-")));
+// Optional second argument: where to create the repository (CI uses its faster D: drive on Windows).
+const root = realpathSync.native(mkdtempSync(join(Bun.argv[3] ?? tmpdir(), "dovet-bench-")));
 const repo = join(root, "repo");
 const env: Record<string, string | undefined> = {
   ...process.env,
@@ -70,8 +71,7 @@ try {
   log(`${count} files written`);
   git("add", "-A");
   log("git add done");
-  git("commit", "-q", "-m", "bench");
-  log("committed");
+  // No commit needed: files in the index count as tracked, and a commit only costs time on a slow disk.
   const files: string[] = [];
   for (let d = 0; d * perDir < count; d++)
     for (let i = 0; i < perDir && d * perDir + i < count; i++) files.push(join(repo, "src", `d${d}`, `f${i}.ts`));
