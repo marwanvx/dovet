@@ -1,5 +1,4 @@
-// Built by snapshots.test.ts with Dovet's own compile options (scripts/build.ts). Takes a snapshot of the repository in
-// argv[2], edits, deletes and adds files, takes a second snapshot, restores the first, and prints what it saw as JSON.
+// Built by snapshots.test.ts with Dovet's compile options: snapshot, edit, snapshot, restore the first; prints JSON.
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openSnapshotter } from "../../../src/store/snapshots/index.ts";

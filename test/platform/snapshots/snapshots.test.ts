@@ -1,6 +1,4 @@
 // M0 exit evidence: the compiled binary takes and restores a filter-safe snapshot (checkpoints "Git tree snapshots").
-// The unit tests of src/store/snapshots prove the behavior from source; this builds a probe with Dovet's real compile
-// options and runs it from a temp directory, where `git` is the only thing it can reach outside itself.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   existsSync,
@@ -11,7 +9,6 @@ import {
   realpathSync,
   rmSync,
   statSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -41,10 +38,12 @@ let gitBefore = new Map<string, string>();
 let gitAfter = new Map<string, string>();
 let out: ProbeOut;
 let connections = 0;
+const FILTER_MARKERS = ["local-clean", "local-smudge", "local-process", "local-fsmonitor", "global-clean"];
+let ranDuringProbe: string[] = [];
+let connectionsDuringProbe = -1;
 let port = 0;
 let stopServer = (): void => {};
 
-/** The caller's environment with HOME pointing at a throwaway home and no GIT_* variables. */
 function envFor(home: string): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = { ...process.env, HOME: home, USERPROFILE: home };
   for (const key of Object.keys(env)) if (key.toUpperCase().startsWith("GIT_")) delete env[key];
@@ -117,20 +116,16 @@ beforeAll(async () => {
   writeFileSync(join(repo, "a.txt"), "a\n");
   writeFileSync(join(repo, "b.dat"), "b\n");
   writeFileSync(join(repo, "src", "keep.txt"), "kept\n");
-  writeFileSync(join(repo, ".gitattributes"), "*.txt filter=cleaner\n*.dat filter=proc\n");
+  writeFileSync(join(repo, "notes.md"), "notes\n");
+  writeFileSync(join(repo, ".gitattributes"), "*.txt filter=cleaner\n*.dat filter=proc\n*.md filter=globalonly\n");
   git(repo, home, "add", "-A");
   git(repo, home, "commit", "-q", "-m", "init");
   git(repo, home, "config", "filter.cleaner.clean", command("local-clean"));
   git(repo, home, "config", "filter.cleaner.smudge", command("local-smudge"));
   git(repo, home, "config", "filter.proc.process", command("local-process"));
   git(repo, home, "config", "core.fsmonitor", command("local-fsmonitor"));
-  writeFileSync(
-    join(home, ".gitconfig"),
-    `[filter "cleaner"]\n\tclean = ${command("global-clean")}\n[filter "proc"]\n\tprocess = ${command("global-process")}\n`,
-  );
-  // An old mtime, so the racy-timestamp guard doesn't hide the stat cache.
-  const past = new Date(Date.now() - 3_600_000);
-  for (const f of ["a.txt", "b.dat", ".gitattributes", join("src", "keep.txt")]) utimesSync(join(repo, f), past, past);
+  const quoted = command("global-clean").replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  writeFileSync(join(home, ".gitconfig"), `[filter "globalonly"]\n\tclean = "${quoted}"\n`);
 
   const probe = join(dir, `probe${EXE}`);
   await compileDovet({ entry: join(import.meta.dir, "snapshot-probe.ts"), outfile: probe });
@@ -141,6 +136,14 @@ beforeAll(async () => {
   gitAfter = dump(join(repo, ".git"));
   out = JSON.parse(r.stdout.toString()) as ProbeOut;
   await Bun.sleep(500); // a filter that had been started would have written its marker by now
+  ranDuringProbe = FILTER_MARKERS.filter((name) => existsSync(join(tools, name)));
+  connectionsDuringProbe = connections;
+
+  // Control: plain git does run these filters here, so the checks above cannot pass vacuously on this OS.
+  for (const file of ["a.txt", "notes.md"]) {
+    Bun.spawnSync(["git", "hash-object", `--path=${file}`, file], { cwd: repo, env: envFor(home) });
+  }
+  await Bun.sleep(500);
 }, 180_000);
 
 afterAll(() => {
@@ -166,7 +169,7 @@ describe("compiled binary takes and restores a filter-safe snapshot", () => {
     expect(out.restored.keep).toBe("kept\n");
     expect(out.restored.created).toBeNull();
     expect(out.restored.madeDirExists).toBe(false);
-    expect(out.restored.result.skipped).toEqual([]);
+    expect(out.restored.result).toEqual({ written: 3, deleted: 1, skipped: [] });
   });
 
   test("the user's .git is byte-identical, timestamps included, after snapshots and a restore", () => {
@@ -175,16 +178,12 @@ describe("compiled binary takes and restores a filter-safe snapshot", () => {
   });
 
   test("no configured filter, fsmonitor or process filter ran, and nothing opened a connection", () => {
-    for (const name of [
-      "local-clean",
-      "local-smudge",
-      "local-process",
-      "local-fsmonitor",
-      "global-clean",
-      "global-process",
-    ]) {
-      expect(existsSync(join(tools, name))).toBe(false);
-    }
-    expect(connections).toBe(0);
+    expect(ranDuringProbe).toEqual([]);
+    expect(connectionsDuringProbe).toBe(0);
+  });
+
+  test("control: git hash-object runs the local and the global clean filter on this machine", () => {
+    for (const name of ["local-clean", "global-clean"]) expect(existsSync(join(tools, name))).toBe(true);
+    expect(connections).toBeGreaterThan(0);
   });
 });
