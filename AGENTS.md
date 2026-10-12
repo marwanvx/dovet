@@ -26,6 +26,16 @@ It prints where the project stands (owner overrides to apply, the last progress 
 
 Code, tests and files go where `docs/specs/architecture.md` "Repository layout" says.
 
+## antislop skills
+
+Six antislop skills (MIT, https://github.com/miqdadbadjuber/anti-slop, v3.2.20; license in `.claude/skills/ANTISLOP-LICENSE`) are installed in `.claude/skills/`. Read the skill file directly when the work matches:
+- Core filter, read first: `.claude/skills/antislop/SKILL.md`
+- Code comments: `.claude/skills/antislop-code/SKILL.md` (use it with the "Few comments" rule below)
+- Copy and text (docs, CLI messages, README): `.claude/skills/antislop-copywriting/SKILL.md`
+- People, UI, mobile layout (docs site, install page): `antislop-human`, `antislop-ui`, `antislop-layoutmobile` in the same folder
+
+Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `antislop active: during (project instruction).` once. If antislop conflicts with a spec or this file, the spec and this file win.
+
 ## Rules that always apply
 
 - **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
