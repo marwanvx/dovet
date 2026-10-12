@@ -35,7 +35,7 @@ export function emptyDir(path: string): string {
 export async function runGit(
   ctx: GitContext,
   args: readonly string[],
-  options: { env?: Readonly<Record<string, string>>; input?: Uint8Array } = {},
+  options: { env?: Readonly<Record<string, string>>; input?: Uint8Array | ReadableStream<Uint8Array> } = {},
 ): Promise<Uint8Array> {
   const argv = [
     "git",

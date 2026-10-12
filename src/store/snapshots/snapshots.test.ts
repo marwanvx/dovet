@@ -238,6 +238,37 @@ describe("snapshot", () => {
     expect(entry).toStartWith("120000 blob ");
   });
 
+  test("many new files are stored in one pack, not one object file each", async () => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 300; i++) files[`d${i % 10}/f${i}.txt`] = `file number ${i}\n`;
+    const f = fixture(files);
+    const { hashed } = await (await f.open()).snapshot();
+    expect(hashed).toBe(300);
+    const stored = readdirSync(join(f.project, "objects"), { recursive: true, withFileTypes: true }).filter((e) =>
+      e.isFile(),
+    );
+    expect(stored.some((e) => e.name.endsWith(".pack"))).toBe(true);
+    expect(stored.length).toBeLessThan(50); // the pack, its index and a few tree objects; loose blobs would be 300 files
+  });
+
+  test("a file's bytes are stored as they are, even when they look like fast-import commands", async () => {
+    const forged = "blob\nmark :1\ndata 3\nabc\n\ncommit refs/heads/evil\ndata 0\n";
+    const f = fixture({
+      "empty.txt": "",
+      "binary.bin": new Uint8Array([0, 255, 254, 0, 10, 13, 10, 0]),
+      "forged.txt": forged,
+    });
+    const snap = await f.open();
+    const { tree } = await snap.snapshot();
+    expect(tree).toBe(f.git("rev-parse", "HEAD^{tree}").trim());
+    for (const name of ["empty.txt", "binary.bin", "forged.txt"]) rmSync(join(f.repo, name));
+    await snap.restore(tree, []);
+    expect(readFileSync(join(f.repo, "empty.txt")).length).toBe(0);
+    expect([...readFileSync(join(f.repo, "binary.bin"))]).toEqual([0, 255, 254, 0, 10, 13, 10, 0]);
+    expect(readFileSync(join(f.repo, "forged.txt"), "utf8")).toBe(forged);
+    expect(f.git("for-each-ref").trim()).not.toContain("evil"); // nothing was created in the user's repository
+  });
+
   test("works from a linked worktree, where .git is a file", async () => {
     const f = fixture({ "a.txt": "a\n" });
     const linked = join(f.repo, "..", "linked");

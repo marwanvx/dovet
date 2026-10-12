@@ -9,6 +9,7 @@ import {
   lstatSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   renameSync,
   rmdirSync,
@@ -64,7 +65,7 @@ export interface SnapshotTimings {
   list: number;
   /** `lstat` of every listed path, and the stat-cache lookups. */
   stat: number;
-  /** Reading and hashing the changed files (`git hash-object`). */
+  /** Reading the changed files and storing them as blobs (`git fast-import`). */
   hash: number;
   /** Rebuilding the private index and `git write-tree`. */
   index: number;
@@ -101,8 +102,6 @@ interface Planned {
   size: bigint;
   mtimeNs: bigint;
   ino: bigint;
-  /** What to hash: the file itself, or for a symlink a scratch file holding the link target. */
-  source: string;
   blob?: string;
 }
 
@@ -116,6 +115,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
   const sessionsDir = emptyDir(join(options.projectDir, "sessions"));
   const scratchDir = emptyDir(join(options.projectDir, "scratch"));
   const hooksDir = emptyDir(join(options.projectDir, "empty-hooks"));
+  const gitDir = join(options.projectDir, "git");
   const indexPath = join(sessionsDir, `${options.session}.snap.index`);
   const statPath = join(sessionsDir, `${options.session}.snap.stat`);
 
@@ -125,6 +125,11 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
   if (top === undefined) throw new Error(`${options.workspace} is not in a git repository`);
   const root = resolve(top);
   const ctx: GitContext = { cwd: root, env, hooksDir };
+  // An empty bare repository of Dovet's own. `git fast-import` writes a crash report into the top level of the
+  // repository it runs in, so it runs here and never in the user's `.git`.
+  if (!existsSync(join(gitDir, "HEAD"))) {
+    await runGit({ cwd: options.projectDir, env, hooksDir }, ["init", "--bare", "-q", gitDir]);
+  }
   // ASSUMPTION (QUESTIONS Q3, spec PR #14): only the private store is configured: every blob a tree needs is written there, so a checkpoint stays restorable
   // however the user's repository is pruned, and git never touches the user's objects (it would freshen their
   // timestamps if they were an alternate).
@@ -173,6 +178,48 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     return { files, skipped };
   }
 
+  /**
+   * Stores the raw bytes of each file (a link's target text for a symlink) as a blob in the private object store, with
+   * one `git fast-import` process that streams them into a single pack. One loose object per file would cost about
+   * 8 ms each on a Windows runner's C: drive (80 times more than the pack); fast-import never runs filters.
+   */
+  async function importBlobs(items: Planned[]): Promise<void> {
+    const marks = join(scratchDir, `marks-${options.session}`);
+    let next = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const p = items[next];
+        if (p === undefined) {
+          controller.close();
+          return;
+        }
+        next++;
+        const full = join(root, p.path);
+        const bytes = p.mode === "120000" ? encode(readlinkSync(full)) : new Uint8Array(readFileSync(full));
+        controller.enqueue(encode(`blob\nmark :${next}\ndata ${bytes.length}\n`));
+        controller.enqueue(bytes);
+        controller.enqueue(encode("\n"));
+      },
+    });
+    const args = ["fast-import", "--quiet", `--export-marks=${marks}`];
+    const gitEnv = { GIT_DIR: gitDir, GIT_OBJECT_DIRECTORY: objectsDir };
+    try {
+      await runGit({ cwd: gitDir, env, hooksDir }, args, { env: gitEnv, input: stream });
+      const ids = new Map<number, string>();
+      for (const line of readFileSync(marks, "utf8").split("\n")) {
+        const m = /^:(\d+) ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(line);
+        if (m?.[1] !== undefined && m[2] !== undefined) ids.set(Number(m[1]), m[2]);
+      }
+      for (const [i, p] of items.entries()) {
+        const id = ids.get(i + 1);
+        if (id === undefined) throw new Error(`fast-import gave no id for ${p.path}`);
+        p.blob = id;
+      }
+    } finally {
+      rmSync(marks, { force: true });
+    }
+  }
+
   async function snapshot(): Promise<SnapshotResult> {
     const startNs = BigInt(Date.now()) * 1_000_000n;
     const t0 = performance.now();
@@ -189,7 +236,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       const full = join(root, path);
       const st = lstatSync(full, { bigint: true, throwIfNoEntry: false });
       if (st === undefined) continue; // tracked, but deleted on disk
-      const base = { path, size: st.size, mtimeNs: st.mtimeNs, ino: st.ino, source: full };
+      const base = { path, size: st.size, mtimeNs: st.mtimeNs, ino: st.ino };
       if (st.isDirectory()) {
         // A submodule: recorded as a gitlink (its commit id), not restorable.
         if (gitlink !== undefined) planned.push({ ...base, mode: "160000", blob: gitlink });
@@ -218,32 +265,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       } else toHash.push(p);
     }
     const t2 = performance.now();
-    const scratch: string[] = [];
-    try {
-      for (const [i, p] of toHash.entries()) {
-        if (p.mode !== "120000") continue;
-        // `hash-object` follows links, so a link's blob is its target text, written to a scratch file first.
-        const tmp = join(scratchDir, `link-${options.session}-${i}`);
-        writeFileSync(tmp, readlinkSync(join(root, p.path)));
-        scratch.push(tmp);
-        p.source = tmp;
-      }
-      if (toHash.length > 0) {
-        const input = encode(`${toHash.map((p) => p.source).join("\n")}\n`);
-        const args = ["hash-object", "--no-filters", "-w", "--stdin-paths"];
-        const ids = lines(await runGit(ctx, args, { env: privateEnv, input }));
-        if (ids.length !== toHash.length)
-          throw new Error(`hash-object gave ${ids.length} ids for ${toHash.length} files`);
-        for (const [i, p] of toHash.entries()) {
-          const id = ids[i];
-          if (id === undefined) throw new Error(`no hash for ${p.path}`);
-          p.blob = id;
-        }
-      }
-    } finally {
-      for (const tmp of scratch) rmSync(tmp, { force: true });
-    }
-
+    if (toHash.length > 0) await importBlobs(toHash);
     const t3 = performance.now();
     planned.sort(byPath);
     const next: StatCache = new Map();
