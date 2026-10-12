@@ -21,6 +21,8 @@ export type ParsedCommand = {
 export type ShellParsers = {
   /** ABI versions: the runtime's supported range and each grammar's own. */
   abi: { runtime: number; minCompatible: number; bash: number; powershell: number };
+  /** Where the three .wasm files were loaded from: inside the binary's embedded filesystem when compiled. */
+  files: { runtime: string; bash: string; powershell: string };
   parse(language: ShellLanguage, command: string): ParsedCommand;
 };
 
@@ -28,7 +30,11 @@ async function bytes(path: string): Promise<Uint8Array> {
   return new Uint8Array(await Bun.file(path).arrayBuffer());
 }
 
-/** Starts the runtime and loads both grammars. Rejects if a .wasm file is missing or a grammar's ABI is unsupported. */
+/**
+ * Starts the runtime and loads both grammars. Rejects if a .wasm file is missing or a grammar's ABI is unsupported.
+ * Call it once per process and keep the result: web-tree-sitter holds one runtime instance per process, and a second
+ * call replaces it under the parsers the first call returned.
+ */
 export async function loadShellParsers(): Promise<ShellParsers> {
   // `wasmBinary` hands the runtime its own .wasm directly, so it never looks for the file next to its JS.
   await Parser.init({ wasmBinary: await bytes(runtimeWasm) });
@@ -47,6 +53,7 @@ export async function loadShellParsers(): Promise<ShellParsers> {
       bash: languages.bash.abiVersion,
       powershell: languages.powershell.abiVersion,
     },
+    files: { runtime: runtimeWasm, bash: bashWasm, powershell: powershellWasm },
     parse(language, command) {
       const tree = parsers[language].parse(command);
       if (!tree) throw new Error(`tree-sitter returned no tree for a ${language} command`);

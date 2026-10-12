@@ -8,6 +8,7 @@ const input = JSON.parse(await Bun.stdin.text()) as Sample;
 const parsers = await loadShellParsers();
 const out = {
   abi: parsers.abi,
+  files: parsers.files,
   bash: input.bash.map((cmd) => parsers.parse("bash", cmd)),
   powershell: input.powershell.map((cmd) => parsers.parse("powershell", cmd)),
 };

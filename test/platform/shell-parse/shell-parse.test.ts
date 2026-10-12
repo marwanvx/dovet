@@ -41,9 +41,13 @@ const POWERSHELL_BROKEN = ["Get-Item (", "foreach ($x in) {"];
 type Parsed = { root: string; hasError: boolean; tree: string };
 type ProbeOut = {
   abi: { runtime: number; minCompatible: number; bash: number; powershell: number };
+  files: { runtime: string; bash: string; powershell: string };
   bash: Parsed[];
   powershell: Parsed[];
 };
+
+// The embedded filesystem of a compiled Bun binary: `/$bunfs/…` on Linux and macOS, `B:\~BUN\…` on Windows.
+const EMBEDDED = /^(\/\$bunfs\/|[A-Z]:[\\/]~BUN[\\/])/;
 
 let dir = "";
 let out: ProbeOut;
@@ -67,6 +71,12 @@ afterAll(() => {
 });
 
 describe("compiled binary parses shell commands with the embedded grammars", () => {
+  test("the runtime and both grammars load from inside the binary, not from disk", () => {
+    expect(out.files.runtime).toMatch(EMBEDDED);
+    expect(out.files.bash).toMatch(EMBEDDED);
+    expect(out.files.powershell).toMatch(EMBEDDED);
+  });
+
   test("both grammars' ABI versions are within the runtime's supported range", () => {
     for (const lang of ["bash", "powershell"] as const) {
       expect(out.abi[lang]).toBeGreaterThanOrEqual(out.abi.minCompatible);
