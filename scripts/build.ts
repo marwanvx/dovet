@@ -2,13 +2,14 @@
 //
 //     bun run build            # dist/dovet (dist/dovet.exe on Windows)
 //
-// compileDovet() holds the compile options; the release build and the compile-flags test use it too.
+// compileDovet() holds the compile options; the compile-flags test builds with it, and the release build will too.
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 
 export async function compileDovet(opts: { outfile: string; entry?: string }): Promise<void> {
-  const result = await Bun.build({
+  // Bun.build rejects with the build errors when compiling fails (`throw` defaults to true).
+  await Bun.build({
     entrypoints: [opts.entry ?? join(ROOT, "src", "cli", "main.ts")],
     compile: {
       outfile: opts.outfile,
@@ -19,9 +20,6 @@ export async function compileDovet(opts: { outfile: string; entry?: string }): P
       autoloadBunfig: false,
     },
   });
-  if (!result.success) {
-    throw new AggregateError(result.logs, `compiling ${opts.outfile} failed`);
-  }
 }
 
 if (import.meta.main) {

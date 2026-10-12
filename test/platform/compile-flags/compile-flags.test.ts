@@ -1,5 +1,6 @@
 // The compiled binary must not load a project's `.env` or `bunfig.toml` (architecture "Compile flags").
-// Both binaries are built with Dovet's real compile options; the probe only adds a way to see child environments.
+// Both binaries are built with Dovet's real compile options. `dovet` can't start child processes yet, so the probe
+// (same options, different entry) shows what reaches a child's environment.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,8 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true });
+  // Windows may still hold the just-run executables open for a moment.
+  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 function run(exe: string, ...args: string[]): string {
