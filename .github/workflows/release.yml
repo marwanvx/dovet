@@ -1,6 +1,4 @@
-# Builds, signs and attests a release (architecture "Distribution"). A `v*` tag publishes it; a pull request touching
-# the release files builds a test release, signed with a throwaway key and not published, and verifies it the same way.
-# Actions are pinned by commit SHA; dependabot keeps the pins current.
+# A `v*` tag builds, signs, attests and publishes a release; a pull request builds an unpublished test release.
 name: release
 
 on:
@@ -14,7 +12,6 @@ on:
       - scripts/sign-release.ts
       - src/cli/release-signature.ts
       - test/platform/release/**
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -80,9 +77,9 @@ jobs:
           path: dist/release/
           if-no-files-found: error
 
-  # Fork pull requests get no id-token, so they can't attest; they skip the test release.
+  # Fork and Dependabot pull requests get no id-token, so they can't attest; they skip the test release.
   sign-test:
-    if: github.event_name != 'push' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 15

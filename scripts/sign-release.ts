@@ -3,8 +3,6 @@
 //     DOVET_RELEASE_KEY=<base64 PKCS#8> bun scripts/sign-release.ts <dir>   # writes <dir>/SHA256SUMS.sig
 //     bun scripts/sign-release.ts <dir> --test-key   # a throwaway key (pull-request runs); prints test_public_key=…
 //     bun scripts/sign-release.ts --new-key          # the owner, once: makes the release key pair
-//
-// The signature file is the raw 64-byte Ed25519 signature of SHA256SUMS's exact bytes.
 import { join } from "node:path";
 import { RELEASE_PUBLIC_KEYS, verifiedSha256Sums } from "../src/cli/release-signature.ts";
 

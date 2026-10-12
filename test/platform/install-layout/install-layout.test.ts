@@ -79,6 +79,15 @@ describe("install-directory archive", () => {
     expect(text).toContain("Apache License");
   });
 
+  // spec: AC-ARCH-05
+  test("THIRD_PARTY_NOTICES lists the npm packages compiled into the executable, with their license", async () => {
+    const text = await Bun.file(join(unpacked, "dovet", "THIRD_PARTY_NOTICES")).text();
+    const nm = join(ROOT, "node_modules", "get-east-asian-width");
+    const { version } = await Bun.file(join(nm, "package.json")).json();
+    expect(text).toContain(`get-east-asian-width ${version}`);
+    expect(text).toContain((await Bun.file(join(nm, "license")).text()).trim());
+  });
+
   test("the unpacked binary runs the bundled ripgrep and gets its version", () => {
     expect(probe.exitCode).toBe(0);
     expect(probe.stdout).toStartWith(`ripgrep ${RIPGREP_VERSION}`);

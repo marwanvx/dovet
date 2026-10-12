@@ -1,5 +1,4 @@
-// The release workflow's own check of a built release (release.yml, job `verify`): DOVET_RELEASE_DIR holds the
-// downloaded release files. Skipped elsewhere: attestations exist only for archives a release run built.
+// Run by release.yml's `verify` job on the release it built (DOVET_RELEASE_DIR); skipped elsewhere.
 import { describe, expect, test } from "bun:test";
 import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +8,7 @@ import { RELEASE_PUBLIC_KEYS, verifiedSha256Sums } from "../../../src/cli/releas
 
 const dir = process.env.DOVET_RELEASE_DIR;
 const repo = process.env.GITHUB_REPOSITORY ?? "marwanvx/dovet";
+const ref = process.env.GITHUB_REF ?? "";
 // Test releases (pull requests) are signed with a throwaway key; real ones with an embedded key.
 const testKey = process.env.DOVET_RELEASE_TEST_PUBLIC_KEY;
 const archives = dir ? readdirSync(dir).filter((f) => f.endsWith(".tar.gz")) : [];
@@ -24,6 +24,8 @@ function ghVerify(file: string) {
       repo,
       "--signer-workflow",
       `${repo}/.github/workflows/release.yml`,
+      "--source-ref",
+      ref,
       "--format",
       "json",
     ],
@@ -50,6 +52,17 @@ describe.skipIf(!dir)("a built release", () => {
     for (const f of archives) {
       const got = new Bun.CryptoHasher("sha256").update(await Bun.file(join(dir, f)).bytes()).digest("hex");
       expect(got).toBe(sums.get(f) ?? "");
+    }
+  });
+
+  // spec: AC-ARCH-05
+  test("every archive contains THIRD_PARTY_NOTICES", async () => {
+    if (!dir) return;
+    for (const f of archives) {
+      const files = await new Bun.Archive(await Bun.file(join(dir, f)).bytes()).files();
+      const notices = files.get("dovet/THIRD_PARTY_NOTICES");
+      if (!notices) throw new Error(`${f} has no dovet/THIRD_PARTY_NOTICES`);
+      expect(await notices.text()).toContain(`Bun ${Bun.version}`);
     }
   });
 

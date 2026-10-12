@@ -1,5 +1,4 @@
-// THIRD_PARTY_NOTICES of one release archive (AC-ARCH-05, ADR-15): every bundled npm package, the Bun runtime,
-// the sandbox-runtime helpers, ripgrep and vendored code, each with its license text and NOTICE file.
+// THIRD_PARTY_NOTICES of one release archive (architecture "Distribution", ADR-15).
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
 import { RIPGREP_VERSION, type Target } from "./build-release.ts";
