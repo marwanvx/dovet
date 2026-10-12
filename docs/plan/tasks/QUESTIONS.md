@@ -13,4 +13,4 @@ Answer:
 
 ## Answered
 
-(none yet)
+ use Dependabot's bun setting (same weekly, grouped updates). The spec line then reads "Bun packages (grouped, weekly)".
