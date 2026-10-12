@@ -433,7 +433,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     const userAfter = registryPath("User");
     expect(userAfter.split(";").filter((p) => p !== "")).toEqual([
       ...userBefore.split(";").filter((p) => p !== ""),
-      join(root, "current"),
+      join(realpathSync.native(root), "current"),
     ]);
     expect(registryPath("Machine")).toBe(machineBefore);
 
