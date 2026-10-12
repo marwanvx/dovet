@@ -2,7 +2,7 @@
 
 Dovet is a terminal coding agent for Windows, macOS and Linux, written in TypeScript on Bun, that works with any model provider. Its promise: the agent can't hide what it did, what it cost, or what it was told.
 
-**Current state:** planning is complete; building starts at milestone M0. The owner is not technical: never ask them to choose tasks, read code or run commands (except a task's listed "Owner step"); ask only through `docs/plan/tasks/QUESTIONS.md`.
+**Current state:** planning is complete; building starts at milestone M0. The owner is not technical: never ask them to choose tasks, read code or run commands (except a task's listed "Owner step"); when something is undecided, **decide it yourself** (best answer, recorded in `docs/plan/tasks/QUESTIONS.md`); never stop to wait for the owner to answer.
 
 ## Start every session with this
 
@@ -11,7 +11,7 @@ bun install   # once per checkout
 bun run next
 ```
 
-It prints where the project stands (questions waiting for the owner, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `bun run next M0-03`.
+It prints where the project stands (owner overrides to apply, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `bun run next M0-03`.
 
 ## Where things are
 
@@ -28,7 +28,7 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 
 ## Rules that always apply
 
-- **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: write the question in `docs/plan/tasks/QUESTIONS.md` with your recommended answer and move on (build loop step 6).
+- **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
 - **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
 - **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
@@ -40,4 +40,4 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 - Copied code keeps its license notice (e.g. vendored pi-tui; listed in `THIRD_PARTY_NOTICES`) and the PR says so.
 - No abstraction until three real uses exist. PRs under ~400 changed lines (tests excluded). One task per session.
 - `bun run check` must pass before you report done.
-- Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question for the owner.
+- Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question you decided yourself (with your answer).

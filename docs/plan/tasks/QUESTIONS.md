@@ -1,6 +1,6 @@
 # Questions for the owner
 
-Agents add questions here when only the owner can decide ([build loop](../../workflow/build-loop.md) step 6). Answer under "Answer:" in plain words; the next session applies it.
+When a spec doesn't decide something, the agent answers it itself and records question and answer here, under "Answered" ([build loop](../../workflow/build-loop.md) step 6). The owner never has to answer. To change an answer, add a line `- **Override (owner, <date>):** <what you want instead>` to that entry; the next session applies it and adds an `**Override applied:**` line. "Waiting for the owner" is only for things no agent can do (an account, money, a secret, a physical device).
 
 ## Waiting for the owner
 

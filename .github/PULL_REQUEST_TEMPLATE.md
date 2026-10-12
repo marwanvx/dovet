@@ -12,7 +12,7 @@
 
 ## Spec ambiguities found
 
-<!-- Anything unclear or missing in the specs, and where it was asked (docs/plan/tasks/QUESTIONS.md). Write "none" if none. -->
+<!-- Anything unclear or missing in the specs, and how you decided it (docs/plan/tasks/QUESTIONS.md). Write "none" if none. -->
 
 ## Third-party code
 

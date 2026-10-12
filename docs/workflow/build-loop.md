@@ -8,13 +8,13 @@ The owner starts every session with the same message, e.g. **"Continue building 
 |---|---|---|
 | `docs/plan/tasks/M<n>.md` | The task list of each milestone, with a status per task | Planner (step 4); you change only the `Status:` line |
 | `docs/plan/tasks/PROGRESS.md` | Append-only log: one entry per session | You, at the end of every session |
-| `docs/plan/tasks/QUESTIONS.md` | Questions only the owner can answer, and their answers | You add questions; the owner answers |
+| `docs/plan/tasks/QUESTIONS.md` | Questions the specs didn't answer, with the answer that was chosen | You write both the question and the answer; the owner may override |
 | git history and PRs | What was built, reviewed and merged | You |
 
 ## Every session, in order
 
 ### 1. Orient (read, don't change)
-- Run `bun run next` and read its whole output: questions waiting for the owner, the last progress entries, the current milestone, the next task and the exact spec sections that task needs.
+- Run `bun run next` and read its whole output: owner overrides to apply, the last progress entries, the current milestone, the next task and the exact spec sections that task needs.
 - `git status`, `git log --oneline -15`, open PRs and the CI state of `main` (`gh pr list`, `gh run list --branch main -L 3`).
 - The current milestone is the first one in [roadmap](../plan/roadmap.md) whose task file has unfinished tasks (or has no task file yet).
 
@@ -24,8 +24,8 @@ In this order; each one is the whole session's work if it applies:
 2. Uncommitted or half-done work from a crashed session → finish it or revert it, and say which in `PROGRESS.md`.
 3. An open PR of yours with review findings or failing CI → fix it (step 6–7).
 
-### 3. Use the owner's answers
-If `QUESTIONS.md` has new answers: apply each one where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes) and move the question to "Answered".
+### 3. Apply the owner's overrides
+You answer your own questions (step 6), so there is normally nothing to wait for. `bun run next` lists any answered question where the owner added an `**Override (owner, <date>):**` line. Apply each override where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes), change the code that followed the old answer, and add an `**Override applied:**` line saying what changed. Anything left under "Waiting for the owner" is something only the owner can do (an account, money, a key); don't start work that depends on it.
 
 ### 4. Make sure the milestone has a plan
 Every v0.1 milestone (M0–M5) already has a task list. **When a milestone's first task is about to start,** this session first re-checks that milestone's list against what earlier milestones actually built (a changed interface, a spike answered "no", work moved earlier or later): it adjusts, splits or adds tasks, keeps every acceptance criterion placed exactly once, commits the update with a PR, then stops. For a milestone with no task file yet (v0.2 and later), this session plans it, then stops:
@@ -44,13 +44,13 @@ Set its `Status:` to `in-progress` and start a branch `task/<id>`.
 3. Write the tests for the task's criteria (`// spec: AC-xx-yy`) following the test-quality rules in [testing](../specs/testing.md), **run them before implementing and keep the failing output** (it goes in the PR: a test that passes before the code exists tests nothing), then implement until they pass. Verify every library or provider API against the installed types or official docs.
 4. `bun run check` must pass.
 
-**When the spec doesn't say:** don't guess and don't go searching beyond the task's Read list for an answer that isn't there. Add a question to `QUESTIONS.md` (what's missing, why it matters, your recommended answer, what you'll do meanwhile), set the task to `blocked`, and continue with the next unblocked task. If the gap is small and your recommendation is safe and easy to change, build it that way, mark it `ASSUMPTION` in the code and the question, and keep going.
+**When the spec doesn't say:** don't guess and don't go searching beyond the task's Read list for an answer that isn't there. **Answer it yourself.** Choose the best answer (the one that follows the product principles and the surrounding specs, and is safest and easiest to change later). Write an entry under "Answered" in `QUESTIONS.md`: what was missing, why it matters, your answer and why. Put the answer into the spec in a separate spec-change PR ([dev-workflow](dev-workflow.md)), or, while that PR is pending, build it that way and mark the code `ASSUMPTION (QUESTIONS Qn)`. Never set a task to `blocked` or stop just to wait for the owner. Only if the answer needs something no agent can provide (an account, money, a secret, a physical device) does the question go under "Waiting for the owner"; then build everything that doesn't depend on it.
 
 ### 7. Review with fresh eyes
 Spawn a **fresh reviewer** (a subagent with no memory of your work; in Claude Code, the `reviewer` agent in `.claude/agents/reviewer.md`, which always runs on the strongest model even when a cheaper one builds) with: the task, its spec sections and the diff. It checks every criterion has a real test, and proves it: for each criterion it **breaks the code that implements it** (removes the check, flips the condition, returns early), confirms the tagged test now fails, then restores the code. A test that still passes with the feature broken is a finding. It also checks behavior matches the spec line by line, the module and dependency rules of [architecture](../specs/architecture.md) hold, and nothing outside the task changed. Fix its findings; repeat until it has none above "minor". Without subagents: open the PR and leave the review to the next session (step 2.3).
 
 ### 8. Ship
-Open the PR (template filled: task, spec sections, criteria, assumptions). When CI is green on all three OSes and the review passed, **merge it** unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step; those wait for the owner (say so in `QUESTIONS.md`). Set the task's `Status:` to `done (#PR)`.
+Open the PR (template filled: task, spec sections, criteria, assumptions). When CI is green on all three OSes and the review passed, **merge it** unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step; those wait for the owner (say so in the progress entry). Set the task's `Status:` to `done (#PR)`.
 
 ### 9. Hand off
 Append to `PROGRESS.md`:
