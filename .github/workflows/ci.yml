@@ -41,6 +41,29 @@ jobs:
       - name: all eight release archives build
         if: matrix.os == 'ubuntu-latest'
         run: bun run release
+      # SPIKE-4: the owner tries pi-tui on real terminals with this binary (checklist in the M0-06 PR). A single
+      # uncompressed upload keeps the executable bit (a .tar.gz on macOS and Linux; zipped uploads lose it).
+      - name: build tui-demo for the terminal checklist
+        id: tui-demo
+        shell: bash
+        run: |
+          os=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          arch=$(echo "$RUNNER_ARCH" | tr '[:upper:]' '[:lower:]')
+          mkdir -p dist/tui-demo
+          if [ "$os" = windows ]; then
+            file="dist/tui-demo/tui-demo-$os-$arch.exe"
+            bun scripts/tui-demo.ts --build "$file"
+          else
+            bun scripts/tui-demo.ts --build dist/tui-demo/tui-demo
+            file="dist/tui-demo/tui-demo-$os-$arch.tar.gz"
+            tar -C dist/tui-demo -czf "$file" tui-demo
+          fi
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: ${{ steps.tui-demo.outputs.file }}
+          archive: false
+          retention-days: 30
       - name: research-cache/ is never committed
         shell: bash
         run: test -z "$(git ls-files research-cache)"
