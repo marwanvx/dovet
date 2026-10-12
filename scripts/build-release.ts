@@ -3,12 +3,13 @@
 //     bun scripts/build-release.ts                       # the machine's own target
 //     bun scripts/build-release.ts --all                 # all eight targets (CI)
 //     bun scripts/build-release.ts --target linux-x64,windows-arm64 --out dist/release
+//     bun scripts/build-release.ts --all --test-release  # a pull request's test release (see `buildTestRelease`)
 //
 // Each archive unpacks to `dovet/` holding the compiled executable, `libexec/rg` and `libexec/srt/` (the
 // sandbox-runtime helpers of the target's OS). A compiled Bun executable can't run a file from its embedded
 // filesystem, so helpers ship beside it as real files (SPIKE-2, SPIKE-16). Each archive also holds THIRD_PARTY_NOTICES,
 // and the output directory gets SHA256SUMS of the archives built (signed by scripts/sign-release.ts).
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
@@ -18,6 +19,7 @@ import { libexecPath } from "../src/platform/index.ts";
 import { SRT_HELPER_FILES, srtHelpersFor } from "../src/policy/index.ts";
 import { compileDovet } from "./build.ts";
 import { releaseNotices } from "./gen-notices.ts";
+import { newKeyPair, signRelease } from "./sign-release.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
@@ -87,6 +89,23 @@ export function hostTarget(): Target {
   const target = TARGETS.find((t) => t.id === id);
   if (!target) throw new Error(`no release target for ${id}`);
   return target;
+}
+
+/** Where a test build's `dovet update` looks for releases; CI serves the "next" test release on this port. */
+export const TEST_UPDATE_URL = "http://127.0.0.1:47231";
+
+/** The targets of the CI runners (Linux, macOS, Windows), which get a "next" test release for `dovet update`. */
+export const TEST_UPDATE_TARGETS = ["linux-x64", "darwin-arm64", "windows-x64"];
+
+/** The `define` that makes a test build trust one throwaway key and fetch from `baseUrl` (read in cli/main.ts). */
+export function testUpdateDefine(testUpdate: { publicKey: string; baseUrl: string }): Record<string, string> {
+  return { DOVET_TEST_UPDATE: JSON.stringify(testUpdate) };
+}
+
+export function nextPatch(version: string): string {
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
+  if (!m) throw new Error(`${version} is not a plain major.minor.patch version`);
+  return `${m[1]}.${m[2]}.${Number(m[3]) + 1}`;
 }
 
 export function archiveName(version: string, targetId: string): string {
@@ -284,6 +303,7 @@ export async function buildInstallArchive(opts: {
   outDir: string;
   cacheDir: string;
   entry?: string;
+  testUpdate?: { publicKey: string; baseUrl: string };
 }): Promise<string> {
   const { target } = opts;
   const exeName = target.os === "win32" ? "dovet.exe" : "dovet";
@@ -294,6 +314,7 @@ export async function buildInstallArchive(opts: {
       outfile: exe,
       target: target.bun,
       ...(opts.entry ? { entry: opts.entry } : {}),
+      ...(opts.testUpdate ? { define: testUpdateDefine(opts.testUpdate) } : {}),
     });
     const exeBytes = await Bun.file(exe).bytes();
     assertBuiltFor("the compiled dovet", exeBytes, target);
@@ -328,6 +349,46 @@ export async function buildInstallArchive(opts: {
   }
 }
 
+async function writeSums(outDir: string, names: string[]): Promise<void> {
+  const entries = names.map((name) => ({ name, sha256: sha256Hex(readFileSync(join(outDir, name))) }));
+  await Bun.write(join(outDir, "SHA256SUMS"), formatSha256Sums(entries));
+}
+
+/**
+ * A pull request's test release: every archive embeds one throwaway public key and the loopback update URL, and the
+ * private half signs `outDir` and `nextDir`, then is dropped. `nextDir` holds the CI targets' archives again under
+ * the next patch version, so CI can run `dovet update` against it. Returns the public key.
+ */
+async function buildTestRelease(targets: Target[], outDir: string, nextDir: string): Promise<string> {
+  const { privateKey, publicKey } = await newKeyPair();
+  for (const target of targets) {
+    const file = await buildInstallArchive({
+      target,
+      version: pkg.version,
+      outDir,
+      cacheDir: join(ROOT, "dist", "cache", "ripgrep"),
+      testUpdate: { publicKey, baseUrl: TEST_UPDATE_URL },
+    });
+    console.log(`built ${file}`);
+  }
+  await writeSums(
+    outDir,
+    targets.map((t) => archiveName(pkg.version, t.id)),
+  );
+  await signRelease(outDir, privateKey, [publicKey]);
+  const next = nextPatch(pkg.version);
+  mkdirSync(nextDir, { recursive: true });
+  const nextNames = targets
+    .filter((t) => TEST_UPDATE_TARGETS.includes(t.id))
+    .map((t) => {
+      copyFileSync(join(outDir, archiveName(pkg.version, t.id)), join(nextDir, archiveName(next, t.id)));
+      return archiveName(next, t.id);
+    });
+  await writeSums(nextDir, nextNames);
+  await signRelease(nextDir, privateKey, [publicKey]);
+  return publicKey;
+}
+
 if (import.meta.main) {
   const args = Bun.argv.slice(2);
   const flag = (name: string) => args[args.indexOf(name) + 1];
@@ -341,17 +402,23 @@ if (import.meta.main) {
         })
       : [hostTarget()];
   const outDir = args.includes("--out") ? resolve(process.cwd(), flag("--out") ?? "") : join(ROOT, "dist", "release");
-  const built: { name: string; sha256: string }[] = [];
-  for (const target of targets) {
-    const file = await buildInstallArchive({
-      target,
-      version: pkg.version,
+  if (args.includes("--test-release")) {
+    const nextDir = args.includes("--next-out") ? resolve(process.cwd(), flag("--next-out") ?? "") : `${outDir}-next`;
+    console.log(`test_public_key=${await buildTestRelease(targets, outDir, nextDir)}`);
+  } else {
+    for (const target of targets) {
+      const file = await buildInstallArchive({
+        target,
+        version: pkg.version,
+        outDir,
+        cacheDir: join(ROOT, "dist", "cache", "ripgrep"),
+      });
+      console.log(`built ${file}${target.ripgrep ? "" : " (no ripgrep: none published for this target)"}`);
+    }
+    await writeSums(
       outDir,
-      cacheDir: join(ROOT, "dist", "cache", "ripgrep"),
-    });
-    console.log(`built ${file}${target.ripgrep ? "" : " (no ripgrep: none published for this target)"}`);
-    built.push({ name: archiveName(pkg.version, target.id), sha256: sha256Hex(await Bun.file(file).bytes()) });
+      targets.map((t) => archiveName(pkg.version, t.id)),
+    );
+    console.log(`wrote ${join(outDir, "SHA256SUMS")}`);
   }
-  await Bun.write(join(outDir, "SHA256SUMS"), formatSha256Sums(built));
-  console.log(`wrote ${join(outDir, "SHA256SUMS")}`);
 }

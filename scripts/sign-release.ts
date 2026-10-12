@@ -1,14 +1,13 @@
 // Signs a release's SHA256SUMS with the Ed25519 release key (architecture "Distribution": Release authenticity).
 //
 //     DOVET_RELEASE_KEY=<base64 PKCS#8> bun scripts/sign-release.ts <dir>   # writes <dir>/SHA256SUMS.sig
-//     bun scripts/sign-release.ts <dir> --test-key   # a throwaway key (pull-request runs); prints test_public_key=…
 //     bun scripts/sign-release.ts --new-key          # the owner, once: makes the release key pair
 import { join } from "node:path";
 import { RELEASE_PUBLIC_KEYS, verifiedSha256Sums } from "../src/cli/release-signature.ts";
 
 const b64 = (bytes: ArrayBuffer) => Buffer.from(bytes).toString("base64");
 
-async function newKeyPair(): Promise<{ privateKey: string; publicKey: string }> {
+export async function newKeyPair(): Promise<{ privateKey: string; publicKey: string }> {
   const pair = (await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
     "sign",
     "verify",
@@ -42,16 +41,10 @@ if (import.meta.main) {
     console.log(`Public key (send this one to the agent; it goes into Dovet):\n${publicKey}`);
   } else {
     const dir = args.find((a) => !a.startsWith("--"));
-    if (!dir) throw new Error("usage: bun scripts/sign-release.ts <dir> [--test-key] | --new-key");
-    if (args.includes("--test-key")) {
-      const { privateKey, publicKey } = await newKeyPair();
-      await signRelease(dir, privateKey, [publicKey]);
-      console.log(`test_public_key=${publicKey}`);
-    } else {
-      const privateKey = Bun.env.DOVET_RELEASE_KEY;
-      if (!privateKey) throw new Error("DOVET_RELEASE_KEY is not set");
-      await signRelease(dir, privateKey, RELEASE_PUBLIC_KEYS);
-      console.log(`signed ${join(dir, "SHA256SUMS")}`);
-    }
+    if (!dir) throw new Error("usage: bun scripts/sign-release.ts <dir> | --new-key");
+    const privateKey = Bun.env.DOVET_RELEASE_KEY;
+    if (!privateKey) throw new Error("DOVET_RELEASE_KEY is not set");
+    await signRelease(dir, privateKey, RELEASE_PUBLIC_KEYS);
+    console.log(`signed ${join(dir, "SHA256SUMS")}`);
   }
 }

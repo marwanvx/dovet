@@ -12,11 +12,13 @@ export async function compileDovet(opts: {
   outfile: string;
   entry?: string;
   target?: Bun.Build.CompileTarget;
+  define?: Record<string, string>;
 }): Promise<string[]> {
   // Bun.build rejects with the build errors when compiling fails (`throw` defaults to true).
   const result = await Bun.build({
     metafile: true,
     entrypoints: [opts.entry ?? join(ROOT, "src", "cli", "main.ts")],
+    ...(opts.define ? { define: opts.define } : {}),
     compile: {
       outfile: opts.outfile,
       // Omitted: the machine running the build. `bun run release` passes each of the eight targets.
