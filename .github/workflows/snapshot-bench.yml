@@ -1,19 +1,20 @@
-# SPIKE-22: times git tree snapshots on a 100,000-file repository on all three OSes (docs/plan/open-questions.md).
-# Runs (20,000 files) when the snapshot code or the benchmark changes; the 100,000-file run only by hand.
+# SPIKE-22: times git tree snapshots on a large repository on all three OSes (docs/plan/open-questions.md).
+# Manual only (Actions > snapshot-bench > Run workflow): it is a measurement, not a gate, and a pull_request path filter
+# would re-run it on every push of a PR that ever touched the snapshot code.
 name: snapshot-bench
 
 on:
-  pull_request:
-    paths:
-      - "src/store/snapshots/**"
-      - "scripts/bench-snapshots.ts"
-      - ".github/workflows/snapshot-bench.yml"
   workflow_dispatch:
+    inputs:
+      files:
+        description: "Number of files in the benchmark repository"
+        default: "20000"
+        required: true
 
 permissions:
   contents: read
 
-# A newer push makes an older run pointless.
+# A newer run of the same branch makes an older one pointless.
 concurrency:
   group: snapshot-bench-${{ github.ref }}
   cancel-in-progress: true
@@ -26,7 +27,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 75
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,12 +36,5 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      - name: 20,000 files
-        timeout-minutes: 20
-        run: bun scripts/bench-snapshots.ts 20000 "${{ runner.temp }}"
-      # The big run takes up to 45 minutes on Windows, so it only runs when started by hand (Actions > snapshot-bench > Run workflow).
-      - name: 100,000 files
-        if: github.event_name == 'workflow_dispatch'
-        timeout-minutes: 45
-        continue-on-error: true
-        run: bun scripts/bench-snapshots.ts 100000 "${{ runner.temp }}"
+      # The repository goes on the runner's temp drive (D: on Windows, about 4 times faster than C:).
+      - run: bun scripts/bench-snapshots.ts "${{ inputs.files }}" "${{ runner.temp }}"
