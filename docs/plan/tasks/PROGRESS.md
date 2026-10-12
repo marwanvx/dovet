@@ -135,3 +135,8 @@ Learned:
 - `BUN_OPTIONS --preload` runs in a compiled binary (reproduced); Bun has no opt-out, which permissions §0 already records, with its mitigations owned by later tasks.
 - W1 (release key) is still the only owner item; the tag path of the `install` job is untested until the first tag.
 Next: M0 is complete (14/14); the next session plans M1 (build loop step 4).
+
+## 2026-10-12 — M1 plan re-check
+Done: re-checked the 31 M1 tasks against what M0 built (build loop step 4). Every reading list prints real sections; every criterion stays placed once. Four tasks got notes from M0: M1-01 adds zod 4 (sandbox-runtime hoists zod 3; check `src/` imports, switch `gen-notices.ts`), M1-02 builds `Platform.libexec` on `libexecPath` and compares paths with `realpathSync.native`, M1-17 handles the `linux-arm64-musl` archive without `rg` (Q2), M1-22 reuses `loadShellParsers()` and must prove the 200 ms cancel works (`progressCallback` is typed `void`). No task added, split or moved. PR: docs only, merged after `docs:check` and `spec:coverage`.
+Learned: no spike M1 needs was answered in M0 except SPIKE-15 and SPIKE-16, which M1 does not list. The fresh-reviewer check of the plan was skipped: the edits are four notes, not structure.
+Next: M1-01 (core schemas, runtime and test helpers).
