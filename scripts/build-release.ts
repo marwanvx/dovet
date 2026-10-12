@@ -13,7 +13,7 @@ import { join, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import pkg from "../package.json";
 import { libexecPath } from "../src/platform/index.ts";
-import { SRT_HELPER_FILES, srtHelpersFor } from "../src/policy/sandbox/init.ts";
+import { SRT_HELPER_FILES, srtHelpersFor } from "../src/policy/index.ts";
 import { compileDovet } from "./build.ts";
 
 const ROOT = join(import.meta.dir, "..");

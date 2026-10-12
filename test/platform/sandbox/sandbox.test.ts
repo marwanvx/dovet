@@ -19,6 +19,8 @@ let allowed = "";
 let outside = "";
 let probe: {
   error?: string;
+  helpersPresent?: Record<string, boolean>;
+  proxyEnv?: Run;
   enabled?: boolean;
   dependencies?: { errors: string[]; warnings: string[] };
   echo?: Run;
@@ -70,9 +72,15 @@ describe("sandbox-runtime inside the compiled binary", () => {
   test.skipIf(!WINDOWS)("Windows: the binary loads sandbox-runtime and reports the backend's state", () => {
     console.log(`SPIKE-16 Windows result: ${JSON.stringify(probe)}`);
     expect(probe.error !== undefined || probe.dependencies !== undefined).toBe(true);
+    // srt-win.exe is where the config points (the "not provisioned" error comes from running it).
+    expect(probe.helpersPresent).toEqual({ "srt-proxy-agent.jar": true, "srt-win.exe": true });
   });
 
   describe.skipIf(WINDOWS)("Linux and macOS", () => {
+    test("the proxies started: the sandboxed command is pointed at the local HTTP proxy", () => {
+      expect(probe.proxyEnv?.stdout.trim()).toMatch(/^http:\/\/(\S+@)?localhost:\d+$/);
+    });
+
     test("sandboxing is on and `echo hi` runs inside it", () => {
       expect(probe.enabled).toBe(true);
       expect(probe.echo?.exitCode).toBe(0);

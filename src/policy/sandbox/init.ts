@@ -1,7 +1,7 @@
 // Sandbox initialization (permissions §7.1, ADR-6): sandbox-runtime gets every helper by explicit path into the
 // install directory's `libexec/srt/`, so nothing is looked up relative to a `node_modules` that a compiled binary
 // doesn't have (SPIKE-16).
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
 export type SandboxOs = "linux" | "darwin" | "win32";
@@ -16,9 +16,11 @@ export const SRT_HELPER_FILES = {
   srtWin: "srt-win.exe",
 } as const;
 
+export type SrtHelperFile = (typeof SRT_HELPER_FILES)[keyof typeof SRT_HELPER_FILES];
+
 /** Which helper files belong in the archive of `os` (and so which the config below points at). */
-export function srtHelpersFor(os: SandboxOs): (typeof SRT_HELPER_FILES)[keyof typeof SRT_HELPER_FILES][] {
-  const files: (typeof SRT_HELPER_FILES)[keyof typeof SRT_HELPER_FILES][] = [SRT_HELPER_FILES.javaAgent];
+export function srtHelpersFor(os: SandboxOs): SrtHelperFile[] {
+  const files: SrtHelperFile[] = [SRT_HELPER_FILES.javaAgent];
   if (os === "linux") files.push(SRT_HELPER_FILES.seccomp);
   if (os === "win32") files.push(SRT_HELPER_FILES.srtWin);
   return files;
@@ -35,8 +37,16 @@ export type SandboxStartOptions = {
   allowedDomains?: string[];
 };
 
-/** The sandbox-runtime configuration with an explicit path for every helper file the OS uses. */
+/**
+ * The sandbox-runtime configuration with an explicit path for every helper file the OS uses. Throws if the helpers
+ * sit inside a write grant (a sandboxed command could then replace them).
+ */
 export function sandboxRuntimeConfig(opts: SandboxStartOptions): SandboxRuntimeConfig {
+  for (const dir of opts.allowWrite) {
+    const rel = relative(resolve(dir), resolve(opts.srtDir));
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)))
+      throw new Error(`the sandbox helpers in ${opts.srtDir} are inside the write grant ${dir}`);
+  }
   const helper = (name: string) => join(opts.srtDir, name);
   return {
     network: { allowedDomains: opts.allowedDomains ?? [], deniedDomains: [] },

@@ -4,7 +4,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { libexecPath } from "../../../src/platform/index.ts";
-import { startSandbox } from "../../../src/policy/index.ts";
+import { srtHelpersFor, startSandbox } from "../../../src/policy/index.ts";
 
 const os = process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
 const [allowed, outside] = Bun.argv.slice(2);
@@ -14,6 +14,7 @@ const srtDir = libexecPath(exe, os, "srt");
 const rgPath = libexecPath(exe, os, "rg");
 
 const report: Record<string, unknown> = { exe, srtDir, os };
+report.helpersPresent = Object.fromEntries(srtHelpersFor(os).map((name) => [name, existsSync(join(srtDir, name))]));
 try {
   const sandbox = await startSandbox({
     os,
@@ -30,6 +31,8 @@ try {
   };
   if (os !== "win32") {
     report.echo = await run("echo hi");
+    // The proxy sandbox-runtime started is the only way out: the sandboxed command is told where it is.
+    report.proxyEnv = await run('echo "$HTTP_PROXY"');
     report.writeAllowed = await run(`echo ok > '${join(allowed, "inside.txt")}'`);
     report.writeOutside = await run(`echo no > '${join(outside, "outside.txt")}'`);
     report.insideExists = existsSync(join(allowed, "inside.txt"));

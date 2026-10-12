@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor } from "./init.ts";
 
 const srtDir = join("install", "libexec", "srt");
@@ -22,9 +22,21 @@ describe("sandboxRuntimeConfig", () => {
   });
 
   test("macOS needs only the Java agent", () => {
-    const c = sandboxRuntimeConfig({ os: "darwin", srtDir, allowWrite: ["/work"] });
+    const c = sandboxRuntimeConfig({ os: "darwin", srtDir, rgPath: "/i/libexec/rg", allowWrite: ["/work"] });
+    expect(c.javaAgentJarPath).toBe(join(srtDir, "srt-proxy-agent.jar"));
+    expect(c.ripgrep?.command).toBe("/i/libexec/rg");
     expect(c.seccomp).toBeUndefined();
     expect(c.windows).toBeUndefined();
+  });
+
+  // Sandbox-runtime's own docs: a sandboxed command must not be able to replace the helpers that confine it.
+  test("helpers inside a write grant are refused", () => {
+    const base = join(resolve("install"), "libexec", "srt");
+    expect(() => sandboxRuntimeConfig({ os: "linux", srtDir: base, allowWrite: [resolve("install")] })).toThrow(
+      /write grant/,
+    );
+    expect(() => sandboxRuntimeConfig({ os: "linux", srtDir: base, allowWrite: [base] })).toThrow(/write grant/);
+    expect(() => sandboxRuntimeConfig({ os: "linux", srtDir: base, allowWrite: [resolve("install2")] })).not.toThrow();
   });
 
   test("the archive ships exactly the files the config points at", () => {
