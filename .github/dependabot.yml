@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  # ASSUMPTION: architecture says "npm"; the `bun` ecosystem is the one that updates bun.lock (QUESTIONS.md).
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      packages:
+        patterns: ["*"]

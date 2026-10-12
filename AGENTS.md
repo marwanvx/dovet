@@ -7,10 +7,11 @@ Dovet is a terminal coding agent for Windows, macOS and Linux, written in TypeSc
 ## Start every session with this
 
 ```
-python3 scripts/next.py
+bun install   # once per checkout
+bun run next
 ```
 
-It prints where the project stands (questions waiting for the owner, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `python3 scripts/next.py M0-03`.
+It prints where the project stands (questions waiting for the owner, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `bun run next M0-03`.
 
 ## Where things are
 
@@ -28,7 +29,7 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 ## Rules that always apply
 
 - **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: write the question in `docs/plan/tasks/QUESTIONS.md` with your recommended answer and move on (build loop step 6).
-- **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `python3 scripts/docs-context.py`. After any docs change, `python3 scripts/check-docs.py` must pass.
+- **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
 - **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
 - **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
 - **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).

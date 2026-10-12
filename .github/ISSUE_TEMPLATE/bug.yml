@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Dovet doesn't work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `dovet bug` fills in this form for you: it builds a redacted report (versions, OS, settings with secrets removed, doctor results, last crash report; never code, prompts or transcripts) and shows it to you before anything is sent.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: input
+    id: version
+    attributes:
+      label: Dovet version
+      description: Output of `dovet --version`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS and terminal
+      description: e.g. Windows 11 24H2 / Windows Terminal, macOS 26 / Ghostty, Ubuntu 24.04 / GNOME Terminal.
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings (secrets removed)
+      render: json
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Doctor results
+      description: Output of `dovet doctor`.
+      render: text
+  - type: textarea
+    id: crash
+    attributes:
+      label: Last crash report
+      render: text

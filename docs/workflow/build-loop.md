@@ -14,7 +14,7 @@ The owner starts every session with the same message, e.g. **"Continue building 
 ## Every session, in order
 
 ### 1. Orient (read, don't change)
-- Run `python3 scripts/next.py` (`bun run next` once M0-01 has added it) and read its whole output: questions waiting for the owner, the last progress entries, the current milestone, the next task and the exact spec sections that task needs.
+- Run `bun run next` and read its whole output: questions waiting for the owner, the last progress entries, the current milestone, the next task and the exact spec sections that task needs.
 - `git status`, `git log --oneline -15`, open PRs and the CI state of `main` (`gh pr list`, `gh run list --branch main -L 3`).
 - The current milestone is the first one in [roadmap](../plan/roadmap.md) whose task file has unfinished tasks (or has no task file yet).
 
@@ -30,8 +30,8 @@ If `QUESTIONS.md` has new answers: apply each one where it belongs (a spec chang
 ### 4. Make sure the milestone has a plan
 Every v0.1 milestone (M0–M5) already has a task list. **When a milestone's first task is about to start,** this session first re-checks that milestone's list against what earlier milestones actually built (a changed interface, a spike answered "no", work moved earlier or later): it adjusts, splits or adds tasks, keeps every acceptance criterion placed exactly once, commits the update with a PR, then stops. For a milestone with no task file yet (v0.2 and later), this session plans it, then stops:
 - Read [roadmap](../plan/roadmap.md) (that milestone and its exit evidence), [open-questions](../plan/open-questions.md), and the "Before you build" box of every spec the milestone builds. Not whole specs.
-- Write the task file in the format of [tasks/M0.md](../plan/tasks/M0.md): tasks in build order, each with **Depends on**, **Read** (links whose text names the exact sections, as quoted headings or § numbers, e.g. a link labeled `tools §5 and "Common rules"`, so `scripts/next.py` can print them), **Build** (files per [architecture "Repository layout"](../specs/architecture.md)), **Done when** (acceptance-criterion IDs or a concrete test), **Owner step** if any. Each task fits one PR under ~400 changed lines; blocking spikes come first; every acceptance criterion of the milestone is in exactly one task; the last task is the exit check.
-- **Check the plan with a fresh reviewer** (a subagent if your tool has them; otherwise the next session does it before building): every criterion placed once, dependencies in order, no task needing a spec that isn't in its Read list, and `python3 scripts/next.py <task>` prints real sections for every task (no "couldn't find" lines). Fix what it finds. Commit the task file to `main` with a PR.
+- Write the task file in the format of [tasks/M0.md](../plan/tasks/M0.md): tasks in build order, each with **Depends on**, **Read** (links whose text names the exact sections, as quoted headings or § numbers, e.g. a link labeled `tools §5 and "Common rules"`, so `bun run next` can print them), **Build** (files per [architecture "Repository layout"](../specs/architecture.md)), **Done when** (acceptance-criterion IDs or a concrete test), **Owner step** if any. Each task fits one PR under ~400 changed lines; blocking spikes come first; every acceptance criterion of the milestone is in exactly one task; the last task is the exit check.
+- **Check the plan with a fresh reviewer** (a subagent if your tool has them; otherwise the next session does it before building): every criterion placed once, dependencies in order, no task needing a spec that isn't in its Read list, and `bun run next <task>` prints real sections for every task (no "couldn't find" lines). Fix what it finds. Commit the task file to `main` with a PR.
 
 ### 5. Pick the task
 The first task in the current milestone's file whose `Status:` is `todo` and whose **Depends on** tasks are all `done`. Skip tasks `blocked` on an unanswered question. If every remaining task is blocked, write a clear summary for the owner and stop. If the milestone's tasks are all `done`, do its exit-check task.
@@ -39,7 +39,7 @@ The first task in the current milestone's file whose `Status:` is `todo` and who
 Set its `Status:` to `in-progress` and start a branch `task/<id>`.
 
 ### 6. Build it
-1. Read what `scripts/next.py` printed for the task (its **Read** sections and their "Before you build" boxes); open a linked doc only when those sections point to it for this task. Nothing else unless a test failure points you there.
+1. Read what `bun run next` printed for the task (its **Read** sections and their "Before you build" boxes); open a linked doc only when those sections point to it for this task. Nothing else unless a test failure points you there.
 2. If the task depends on an unresolved spike, resolve the spike first (its "How to resolve" in [open questions](../plan/open-questions.md), for real, with code and runs); record the result in open questions and [background/feature-research.md](../background/feature-research.md); apply its fallback if the answer is no.
 3. Write the tests for the task's criteria (`// spec: AC-xx-yy`) following the test-quality rules in [testing](../specs/testing.md), **run them before implementing and keep the failing output** (it goes in the PR: a test that passes before the code exists tests nothing), then implement until they pass. Verify every library or provider API against the installed types or official docs.
 4. `bun run check` must pass.

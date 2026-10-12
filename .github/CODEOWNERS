@@ -1,0 +1,5 @@
+# The owner approves changes to decisions, the roadmap and open questions (docs/specs/architecture.md "Repository layout").
+# Other PRs merge after review and green CI.
+/docs/plan/decisions.md       @marwanvx
+/docs/plan/roadmap.md         @marwanvx
+/docs/plan/open-questions.md  @marwanvx
