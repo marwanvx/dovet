@@ -44,6 +44,12 @@ function dirBytes(dir: string): number {
   return total;
 }
 
+const started = performance.now();
+/** Progress lines with elapsed seconds, so a run that hits the CI time limit still shows how far it got. */
+function log(message: string): void {
+  console.log(`[${((performance.now() - started) / 1000).toFixed(1)}s] ${message}`);
+}
+
 async function time<T>(run: () => Promise<T>): Promise<{ ms: number; value: T }> {
   const t0 = performance.now();
   const value = await run();
@@ -61,12 +67,16 @@ try {
       writeFileSync(join(dir, `f${i}.ts`), `export const v${d}_${i} = ${d * perDir + i};\n`.repeat(20));
     }
   }
+  log(`${count} files written`);
   git("add", "-A");
+  log("git add done");
   git("commit", "-q", "-m", "bench");
+  log("committed");
   const files: string[] = [];
   for (let d = 0; d * perDir < count; d++)
     for (let i = 0; i < perDir && d * perDir + i < count; i++) files.push(join(repo, "src", `d${d}`, `f${i}.ts`));
   for (const f of files) utimesSync(f, past, past);
+  log("timestamps aged; measuring");
 
   const sourceBytes = dirBytes(join(repo, "src"));
   const snap = await openSnapshotter({
@@ -77,9 +87,12 @@ try {
     platform: process.platform,
   });
   const first = await time(() => snap.snapshot());
+  log(`first snapshot ${first.ms} ms`);
   const second = await time(() => snap.snapshot());
+  log(`second snapshot ${second.ms} ms`);
   for (const f of files.slice(0, 100)) writeFileSync(f, "changed\n");
   const edited = await time(() => snap.snapshot());
+  log(`edited snapshot ${edited.ms} ms`);
   const status = await time(async () => git("status", "--porcelain"));
 
   const rows = [

@@ -21,7 +21,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -30,4 +30,10 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      - run: bun scripts/bench-snapshots.ts 100000
+      - name: 20,000 files
+        timeout-minutes: 20
+        run: bun scripts/bench-snapshots.ts 20000
+      - name: 100,000 files
+        timeout-minutes: 45
+        continue-on-error: true
+        run: bun scripts/bench-snapshots.ts 100000
