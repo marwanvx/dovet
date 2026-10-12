@@ -240,16 +240,17 @@ describe("snapshot", () => {
 
   test("many new files are stored in one pack, not one object file each", async () => {
     const files: Record<string, string> = {};
-    for (let i = 0; i < 300; i++) files[`d${i % 10}/f${i}.txt`] = `file number ${i}\n`;
+    // More than 100 objects (git's fastimport.unpackLimit), or fast-import writes loose objects instead of a pack.
+    for (let i = 0; i < 150; i++) files[`d${i % 10}/f${i}.txt`] = `file number ${i}\n`;
     const f = fixture(files);
     const { hashed } = await (await f.open()).snapshot();
-    expect(hashed).toBe(300);
+    expect(hashed).toBe(150);
     const stored = readdirSync(join(f.project, "objects"), { recursive: true, withFileTypes: true }).filter((e) =>
       e.isFile(),
     );
     expect(stored.some((e) => e.name.endsWith(".pack"))).toBe(true);
-    expect(stored.length).toBeLessThan(50); // the pack, its index and a few tree objects; loose blobs would be 300 files
-  });
+    expect(stored.length).toBeLessThan(40); // the pack, its index and a few tree objects; loose blobs would be 150 files
+  }, 60_000); // creating the fixture repository with git add is slow on a Windows runner
 
   test("a file's bytes are stored as they are, even when they look like fast-import commands", async () => {
     const forged = "blob\nmark :1\ndata 3\nabc\n\ncommit refs/heads/evil\ndata 0\n";
