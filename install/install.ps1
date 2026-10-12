@@ -1,6 +1,4 @@
-# Installs Dovet: irm <url>/install.ps1 | iex   (cli-config "Install, PATH and uninstall"; architecture "Distribution")
-# Test hooks: DOVET_BASE_URL (release assets), DOVET_RELEASE_PUBLIC_KEYS (comma-separated), DOVET_INSTALL_DIR, DOVET_NONINTERACTIVE.
-# Everything runs inside one script block so `iex` leaves no functions or variables in the user's session.
+# Installs Dovet (cli-config "Install, PATH and uninstall"). Test hooks: DOVET_BASE_URL, DOVET_RELEASE_PUBLIC_KEYS, DOVET_INSTALL_DIR, DOVET_NONINTERACTIVE. One script block, so `iex` leaves nothing in the session.
 & {
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -72,7 +70,8 @@ function Test-Ed25519Signature([byte[]]$publicKey, [byte[]]$message, [byte[]]$si
     if ($null -eq $keyPoint -or $null -eq $rPoint) { return $false }
     $s = ConvertTo-Int ([byte[]]$signature[32..63])
     if ($s -ge $Order) { return $false }
-    $hash = [System.Security.Cryptography.SHA512]::Create().ComputeHash([byte[]]($rBytes + $publicKey + $message))
+    $sha = [System.Security.Cryptography.SHA512]::Create()
+    try { $hash = $sha.ComputeHash([byte[]]($rBytes + $publicKey + $message)) } finally { $sha.Dispose() }
     $k = $BI::Remainder((ConvertTo-Int $hash), $Order)
     Test-SamePoint (Multiply-Point $s $BasePoint) (Add-Point $rPoint (Multiply-Point $k $keyPoint))
 }
@@ -100,6 +99,7 @@ function Offer-Git {
 
 function Add-UserPath($entry) {
     $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    if ($null -eq $key) { throw 'dovet install: the user environment registry key is missing' }
     try {
         $current = [string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
         $parts = @($current -split ';' | Where-Object { $_ -ne '' })
@@ -164,6 +164,15 @@ function Install-Dovet {
         }
         if (@(& $tar -tvzf $archive | Where-Object { $_ -match '^[lh]' }).Count -gt 0) { throw 'dovet install: the archive holds a link' }
 
+        $current = Join-Path $root 'current'
+        $old = Join-Path $root 'current.old'
+        # An interrupted swap leaves only current.old; put it back first, as `dovet update` does.
+        if (-not (Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue) -and (Get-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue)) {
+            [IO.Directory]::Move($old, $current)
+        }
+        $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+        if ($item -and -not $item.LinkType) { throw "dovet install: $current exists and is not a junction" }
+
         $versions = Join-Path $root 'versions'
         New-Item -ItemType Directory -Path $versions -Force | Out-Null
         $scratch = Join-Path $versions (".new-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -174,16 +183,17 @@ function Install-Dovet {
 
         $dest = Join-Path $versions $release.Version
         if (Test-Path -LiteralPath $dest) { Move-Item -LiteralPath $dest -Destination (Join-Path $scratch 'replaced') }
-        Move-Item -LiteralPath (Join-Path $scratch 'dovet') -Destination $dest
+        try {
+            Move-Item -LiteralPath (Join-Path $scratch 'dovet') -Destination $dest
+        } catch {
+            if (Test-Path -LiteralPath (Join-Path $scratch 'replaced')) { Move-Item -LiteralPath (Join-Path $scratch 'replaced') -Destination $dest }
+            throw
+        }
 
         # A directory junction needs no admin rights. It can't be renamed over, so the old one is set aside and put back on failure.
-        $current = Join-Path $root 'current'
-        $old = Join-Path $root 'current.old'
-        if (Test-Path -LiteralPath $old) { [IO.Directory]::Delete($old) }
+        if (Get-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue) { [IO.Directory]::Delete($old) }
         $left = $null
-        if (Test-Path -LiteralPath $current) {
-            $item = Get-Item -LiteralPath $current -Force
-            if (-not $item.LinkType) { throw "dovet install: $current exists and is not a junction" }
+        if ($item) {
             $left = Split-Path -Leaf ($item.Target | Select-Object -First 1)
             [IO.Directory]::Move($current, $old)
         }
@@ -193,8 +203,11 @@ function Install-Dovet {
             if ($left) { [IO.Directory]::Move($old, $current) }
             throw
         }
-        if (Test-Path -LiteralPath $old) { [IO.Directory]::Delete($old) }
-        if ($left -and $left -ne $release.Version) { Set-Content -Path (Join-Path $root 'previous') -Value $left -Encoding ascii }
+        if (Get-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue) { [IO.Directory]::Delete($old) }
+        if ($left -and $left -ne $release.Version) {
+            Set-Content -Path (Join-Path $root 'previous.new') -Value $left -Encoding ascii
+            Move-Item -LiteralPath (Join-Path $root 'previous.new') -Destination (Join-Path $root 'previous') -Force
+        }
 
         Write-Host "Installed dovet $($release.Version) in $root"
         Add-UserPath $current

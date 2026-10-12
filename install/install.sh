@@ -1,6 +1,5 @@
 #!/bin/sh
-# Installs Dovet: curl -fsSL <url>/install.sh | sh   (cli-config "Install, PATH and uninstall"; architecture "Distribution")
-# Test hooks: DOVET_BASE_URL (release assets), DOVET_RELEASE_PUBLIC_KEYS (comma-separated), DOVET_INSTALL_DIR, DOVET_BIN_DIR.
+# Installs Dovet (cli-config "Install, PATH and uninstall"). Test hooks: DOVET_BASE_URL, DOVET_RELEASE_PUBLIC_KEYS, DOVET_INSTALL_DIR, DOVET_BIN_DIR, DOVET_TARGET.
 set -eu
 
 DOVET_EMBEDDED_KEYS=""
@@ -30,6 +29,10 @@ sha256_of() {
 }
 
 host_target() {
+  if [ -n "${DOVET_TARGET:-}" ]; then
+    echo "$DOVET_TARGET"
+    return
+  fi
   case "$(uname -s)" in
     Linux) os=linux ;;
     Darwin) os=darwin ;;
@@ -76,7 +79,7 @@ write_pem() {
 verify_signature() {
   keys=${DOVET_RELEASE_PUBLIC_KEYS:-$DOVET_EMBEDDED_KEYS}
   [ -n "$keys" ] || die "this install script has no release key yet, so it can't verify a download"
-  ssl=$(find_openssl "$1") || die "verifying the signature needs OpenSSL 3 (on macOS: brew install openssl)"
+  ssl=$(find_openssl "$1") || die "verifying the signature needs the OpenSSL 3 command (macOS: brew install openssl; Alpine: apk add openssl; Debian, Ubuntu: apt install openssl)"
   for key in $(printf '%s' "$keys" | tr ',' ' '); do
     write_pem "$key" "$1/key.pem"
     if "$ssl" pkeyutl -verify -pubin -inkey "$1/key.pem" -rawin -in "$1/SHA256SUMS" -sigfile "$1/SHA256SUMS.sig" >/dev/null 2>&1; then
@@ -91,6 +94,9 @@ main() {
   base=${DOVET_BASE_URL:-$DOVET_LATEST_URL}
   root=${DOVET_INSTALL_DIR:-$HOME/.local/share/dovet}
   bindir=${DOVET_BIN_DIR:-$HOME/.local/bin}
+
+  if [ -e "$root/current" ] && [ ! -L "$root/current" ]; then die "$root/current exists and is not a link"; fi
+  if [ -e "$bindir/dovet" ] && [ ! -L "$bindir/dovet" ]; then die "$bindir/dovet exists and is not a link"; fi
 
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/dovet-install.XXXXXX")
   scratch=
@@ -122,19 +128,25 @@ main() {
 
   dest="$root/versions/$version"
   if [ -e "$dest" ]; then mv "$dest" "$scratch/replaced"; fi
-  mv "$scratch/dovet" "$dest"
+  if ! mv "$scratch/dovet" "$dest"; then
+    if [ -e "$scratch/replaced" ]; then mv "$scratch/replaced" "$dest"; fi
+    die "could not move the new version into $dest"
+  fi
 
-  if [ -e "$root/current" ] && [ ! -L "$root/current" ]; then die "$root/current exists and is not a link"; fi
   if [ -L "$root/current" ]; then
     left=$(basename "$(readlink "$root/current")")
-    if [ "$left" != "$version" ]; then echo "$left" >"$root/previous"; fi
+    if [ "$left" != "$version" ]; then
+      echo "$left" >"$root/previous.new"
+      mv "$root/previous.new" "$root/previous"
+    fi
   fi
   ln -sfn "versions/$version" "$root/current"
-
-  if [ -e "$bindir/dovet" ] && [ ! -L "$bindir/dovet" ]; then die "$bindir/dovet exists and is not a link"; fi
   ln -sfn "$root/current/dovet" "$bindir/dovet"
 
   echo "Installed dovet $version in $root"
+  if [ "$target" = linux-arm64-musl ] && ! command -v rg >/dev/null 2>&1; then
+    echo "This archive has no bundled ripgrep (none is built for Alpine on arm64). Run: apk add ripgrep"
+  fi
   case ":$PATH:" in
     *":$bindir:"*) ;;
     *)

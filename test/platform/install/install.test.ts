@@ -9,6 +9,7 @@ import {
   readlinkSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,6 +23,7 @@ const OS = WINDOWS ? "win32" : process.platform === "darwin" ? "darwin" : "linux
 const EXE = WINDOWS ? "dovet.exe" : "dovet";
 const TARGET = hostTargetId(OS, process.arch, detectMusl());
 const INSTALL_DIR = join(import.meta.dir, "../../../install");
+const SH = Bun.which("sh") ?? "sh";
 const POSIX_SCRIPT = join(INSTALL_DIR, "install.sh");
 const WINDOWS_SCRIPT = join(INSTALL_DIR, "install.ps1");
 
@@ -44,8 +46,11 @@ let server: ReturnType<typeof Bun.serve>;
 let baseUrl = "";
 let keys: Awaited<ReturnType<typeof newKeys>>;
 
-/** The signed latest release in `releases` (one version, as on GitHub), packed with the system `tar` from real files as `build-release.ts` lays them out. */
-async function writeRelease(version: string) {
+/** The signed latest release in `releases` (one version, as on GitHub), packed with the system `tar` as `build-release.ts` lays it out. */
+async function writeRelease(
+  version: string,
+  opts: { target?: string; prepare?: (src: string) => void; tarArgs?: string[] } = {},
+) {
   rmSync(releases, { recursive: true, force: true });
   mkdirSync(releases, { recursive: true });
   const src = mkdtempSync(join(work, "pack-"));
@@ -53,12 +58,19 @@ async function writeRelease(version: string) {
   writeFileSync(join(src, "dovet", EXE), `#!/bin/sh\necho "dovet ${version}"\n`, { mode: 0o755 });
   writeFileSync(join(src, "dovet", "libexec", "rg"), "rg", { mode: 0o755 });
   writeFileSync(join(src, "dovet", "THIRD_PARTY_NOTICES"), "notices");
-  const name = `dovet-${version}-${TARGET}.tar.gz`;
-  const tar = Bun.spawnSync(["tar", "-czf", join(releases, name), "dovet"], { cwd: src });
+  opts.prepare?.(src);
+  const name = `dovet-${version}-${opts.target ?? TARGET}.tar.gz`;
+  const tar = Bun.spawnSync(["tar", "-czf", join(releases, name), ...(opts.tarArgs ?? ["dovet"])], { cwd: src });
   if (tar.exitCode !== 0) throw new Error(`tar failed: ${tar.stderr.toString()}`);
   rmSync(src, { recursive: true, force: true });
-  const sha = sha256(await Bun.file(join(releases, name)).bytes());
-  await Bun.write(join(releases, "SHA256SUMS"), formatSha256Sums([{ name, sha256: sha }]));
+  await signedSums([name]);
+}
+
+async function signedSums(names: string[]) {
+  const entries = await Promise.all(
+    names.map(async (name) => ({ name, sha256: sha256(await Bun.file(join(releases, name)).bytes()) })),
+  );
+  await Bun.write(join(releases, "SHA256SUMS"), formatSha256Sums(entries));
   await signRelease(releases, keys.privateKey, [keys.publicKey]);
 }
 
@@ -93,7 +105,7 @@ type Run = { code: number; out: string };
 async function runPosix(home: string, extraEnv: Record<string, string> = {}): Promise<Run> {
   const bin = join(home, ".local", "bin");
   const path = (process.env.PATH ?? "").split(":").filter((p) => p !== bin);
-  const r = Bun.spawn(["sh", POSIX_SCRIPT], {
+  const r = Bun.spawn([SH, POSIX_SCRIPT], {
     stdout: "pipe",
     stderr: "pipe",
     cwd: home,
@@ -212,6 +224,113 @@ describe.skipIf(WINDOWS)("install.sh", () => {
     expect(existsSync(join(home, ".local", "bin", "dovet"))).toBe(false);
   });
 
+  test("records the version it left in `previous`", async () => {
+    await writeRelease("0.1.0");
+    const home = posixHome();
+    expect((await runPosix(home)).code).toBe(0);
+    await writeRelease("0.2.0");
+    expect((await runPosix(home)).code).toBe(0);
+    expect(readFileSync(join(home, ".local", "share", "dovet", "previous"), "utf8").trim()).toBe("0.1.0");
+  });
+
+  // spec: AC-ARCH-02
+  test("a refused release leaves an existing install exactly as it was", async () => {
+    await writeRelease("0.1.0");
+    const home = posixHome();
+    expect((await runPosix(home)).code).toBe(0);
+    const root = join(home, ".local", "share", "dovet");
+    await writeRelease("0.2.0");
+    const sums = readFileSync(join(releases, "SHA256SUMS"), "utf8");
+    writeFileSync(
+      join(releases, "SHA256SUMS"),
+      sums.replace(/^./, (c) => (c === "0" ? "1" : "0")),
+    );
+    expect((await runPosix(home)).code).not.toBe(0);
+    expect(readdirSync(join(root, "versions"))).toEqual(["0.1.0"]);
+    expect(basename(readlinkSync(join(root, "current")))).toBe("0.1.0");
+    expect(
+      Bun.spawnSync([join(home, ".local", "bin", "dovet")])
+        .stdout.toString()
+        .trim(),
+    ).toBe("dovet 0.1.0");
+  });
+
+  test("stops before changing anything when ~/.local/bin/dovet is a file that is not ours", async () => {
+    await writeRelease("0.1.0");
+    const home = posixHome();
+    mkdirSync(join(home, ".local", "bin"), { recursive: true });
+    writeFileSync(join(home, ".local", "bin", "dovet"), "someone else's");
+    const r = await runPosix(home);
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("is not a link");
+    expect(existsSync(join(home, ".local", "share", "dovet", "current"))).toBe(false);
+    expect(readFileSync(join(home, ".local", "bin", "dovet"), "utf8")).toBe("someone else's");
+  });
+
+  test.skipIf(RELEASE_PUBLIC_KEYS.length > 0)("refuses to install while no release key is embedded", async () => {
+    await writeRelease("0.1.0");
+    const home = posixHome();
+    const r = await runPosix(home, { DOVET_RELEASE_PUBLIC_KEYS: "" });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("no release key");
+    expect(existsSync(join(home, ".local", "share", "dovet", "current"))).toBe(false);
+  });
+
+  test("stops and names what to install when the openssl command is unusable", async () => {
+    await writeRelease("0.1.0");
+    const stub = mkdtempSync(join(work, "stub-"));
+    writeFileSync(join(stub, "openssl"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const home = posixHome();
+    const r = await runPosix(home, { PATH: `${stub}:${process.env.PATH ?? ""}` });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("OpenSSL 3");
+    expect(existsSync(join(home, ".local", "bin", "dovet"))).toBe(false);
+  });
+
+  // spec: AC-ARCH-02
+  test("refuses a signed archive that holds a link, or a path climbing out of dovet/", async () => {
+    const home = posixHome();
+    await writeRelease("0.1.0", {
+      prepare: (src) => symlinkSync("/etc/passwd", join(src, "dovet", "libexec", "link")),
+    });
+    const link = await runPosix(home);
+    expect(link.code).not.toBe(0);
+    expect(link.out).toContain("link");
+
+    await writeRelease("0.1.0", {
+      prepare: (src) => writeFileSync(join(src, "escape"), "x"),
+      tarArgs: ["-P", "dovet", "dovet/../escape"],
+    });
+    const climb = await runPosix(home);
+    expect(climb.code).not.toBe(0);
+    expect(climb.out).toContain("outside dovet/");
+    expect(existsSync(join(home, ".local", "share", "dovet", "current"))).toBe(false);
+  });
+
+  test("refuses a signed release that names two archives for this platform", async () => {
+    await writeRelease("0.1.0");
+    copyFileSync(join(releases, `dovet-0.1.0-${TARGET}.tar.gz`), join(releases, `dovet-0.2.0-${TARGET}.tar.gz`));
+    await signedSums([`dovet-0.1.0-${TARGET}.tar.gz`, `dovet-0.2.0-${TARGET}.tar.gz`]);
+    const r = await runPosix(posixHome());
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("more than one archive");
+  });
+
+  test("tells Alpine arm64 users to install ripgrep, since that archive bundles none", async () => {
+    await writeRelease("0.1.0", { target: "linux-arm64-musl" });
+    // Only the tools the script uses, so a developer's own rg isn't found.
+    const tools = mkdtempSync(join(work, "tools-"));
+    for (const name of "uname mktemp rm mkdir mv ln cat cut tr grep awk tar sha256sum shasum basename readlink wc curl openssl sysctl gzip".split(
+      " ",
+    )) {
+      const found = Bun.which(name);
+      if (found) symlinkSync(found, join(tools, name));
+    }
+    const r = await runPosix(posixHome(), { DOVET_TARGET: "linux-arm64-musl", PATH: tools });
+    expect(r).toMatchObject({ code: 0 });
+    expect(r.out).toContain("apk add ripgrep");
+  });
+
   test("leaves an install that `dovet update` accepts: the update moves current and keeps the old version", async () => {
     await writeRelease("0.1.0");
     const home = posixHome();
@@ -316,11 +435,13 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
   });
 
   // spec: AC-ARCH-02
-  test("refuses a tampered SHA256SUMS or archive, and an untrusted key, and installs nothing", async () => {
-    await writeRelease("0.1.0");
-    const archive = join(releases, `dovet-0.1.0-${TARGET}.tar.gz`);
-    const sums = readFileSync(join(releases, "SHA256SUMS"), "utf8");
+  test("refuses a tampered SHA256SUMS or archive, and an untrusted key, leaving the existing install as it was", async () => {
     const root = join(work, `win-${crypto.randomUUID()}`, "dovet");
+    await writeRelease("0.1.0");
+    expect(await runWindows(root)).toMatchObject({ code: 0 });
+    await writeRelease("0.2.0");
+    const archive = join(releases, `dovet-0.2.0-${TARGET}.tar.gz`);
+    const sums = readFileSync(join(releases, "SHA256SUMS"), "utf8");
 
     writeFileSync(
       join(releases, "SHA256SUMS"),
@@ -341,7 +462,19 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     const untrusted = await runWindows(root, { DOVET_RELEASE_PUBLIC_KEYS: (await newKeys()).publicKey });
     expect(untrusted.code, untrusted.out).not.toBe(0);
     expect(untrusted.out.toLowerCase()).toContain("signature");
-    expect(existsSync(join(root, "current"))).toBe(false);
+
+    expect(readdirSync(join(root, "versions"))).toEqual(["0.1.0"]);
+    expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.1.0")));
+  });
+
+  test("records the version it left in `previous` when installing a newer one", async () => {
+    const root = join(work, `win-${crypto.randomUUID()}`, "dovet");
+    await writeRelease("0.1.0");
+    expect(await runWindows(root)).toMatchObject({ code: 0 });
+    await writeRelease("0.2.0");
+    expect(await runWindows(root)).toMatchObject({ code: 0 });
+    expect(readFileSync(join(root, "previous"), "utf8").trim()).toBe("0.1.0");
+    expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.2.0")));
   });
 
   // spec: AC-CLI-07
