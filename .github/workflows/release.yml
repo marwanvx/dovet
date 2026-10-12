@@ -10,9 +10,14 @@ on:
       - .github/workflows/release.yml
       - scripts/build-release.ts
       - scripts/gen-notices.ts
+      - scripts/build.ts
       - scripts/sign-release.ts
+      - install/**
+      - src/cli/main.ts
       - src/cli/release-signature.ts
+      - src/cli/update.ts
       - test/platform/release/**
+      - test/platform/release-install/**
 
 permissions:
   contents: read
@@ -183,7 +188,7 @@ jobs:
           DOVET_RELEASE_TEST_PUBLIC_KEY: ${{ needs.build.outputs.test_public_key }}
 
   publish:
-    if: github.event_name == 'push'
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.verify.result == 'success' && needs.install.result == 'success' }}
     needs: [verify, install]
     runs-on: ubuntu-latest
     timeout-minutes: 10

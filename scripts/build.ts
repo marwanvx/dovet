@@ -18,7 +18,8 @@ export async function compileDovet(opts: {
   const result = await Bun.build({
     metafile: true,
     entrypoints: [opts.entry ?? join(ROOT, "src", "cli", "main.ts")],
-    ...(opts.define ? { define: opts.define } : {}),
+    // Without this a normal build would still read a global `DOVET_TEST_UPDATE` at run time (cli/main.ts).
+    define: { DOVET_TEST_UPDATE: "undefined", ...opts.define },
     compile: {
       outfile: opts.outfile,
       // Omitted: the machine running the build. `bun run release` passes each of the eight targets.

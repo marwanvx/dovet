@@ -369,7 +369,7 @@ async function buildTestRelease(targets: Target[], outDir: string, nextDir: stri
       cacheDir: join(ROOT, "dist", "cache", "ripgrep"),
       testUpdate: { publicKey, baseUrl: TEST_UPDATE_URL },
     });
-    console.log(`built ${file}`);
+    console.log(`built ${file}${target.ripgrep ? "" : " (no ripgrep: none published for this target)"}`);
   }
   await writeSums(
     outDir,

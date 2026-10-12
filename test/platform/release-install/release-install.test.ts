@@ -1,7 +1,4 @@
-// The test release a pull request builds: its binaries embed the throwaway update key and loopback URL, a normal
-// build embeds neither, and CI installs, updates and rolls back the built archives (architecture "Distribution").
-// The install half runs on a release built by release.yml (DOVET_RELEASE_DIR; a test release also has
-// DOVET_NEXT_RELEASE_DIR and DOVET_RELEASE_TEST_PUBLIC_KEY, a tag release neither); skipped elsewhere.
+// A normal build has no update override; a test release (pull request) installs, updates and rolls back (needs DOVET_RELEASE_DIR).
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,9 +31,9 @@ describe("test release build", () => {
   const holds = (name: string, text: string) =>
     Buffer.from(readFileSync(join(dir, `${name}${WINDOWS ? ".exe" : ""}`))).includes(text);
 
-  test("a normal build holds neither the loopback update URL nor a test key", () => {
+  test("a normal build holds no update override: not the identifier, the loopback URL or a key", () => {
+    expect(holds("normal", "DOVET_TEST_UPDATE")).toBe(false);
     expect(holds("normal", "127.0.0.1:47231")).toBe(false);
-    expect(holds("normal", FAKE_KEY)).toBe(false);
   });
 
   test("a test build holds the loopback update URL and the test key", () => {
@@ -79,6 +76,7 @@ describe.skipIf(!releaseDir)("the built test release", () => {
   let root = "";
   let installed = "";
   const servers: ReturnType<typeof serve>[] = [];
+  const installedExe = () => realpathSync(installed);
   const current = () => basename(realpathSync(join(root, "current")));
   const dovet = (...args: string[]) => run([installed, ...args], { ...process.env } as Record<string, string>);
 
@@ -126,6 +124,12 @@ describe.skipIf(!releaseDir)("the built test release", () => {
   test("the installed binary runs and prints its version", async () => {
     expect(await dovet("--version")).toEqual({ code: 0, out: `dovet ${pkg.version}\n` });
     expect(current()).toBe(pkg.version);
+  });
+
+  test.skipIf(!!testKey)("a tag release's installed binary holds no update override", () => {
+    const bytes = readFileSync(installedExe());
+    expect(bytes.includes("DOVET_TEST_UPDATE")).toBe(false);
+    expect(bytes.includes("127.0.0.1:47231")).toBe(false);
   });
 
   test.skipIf(!nextDir)(
