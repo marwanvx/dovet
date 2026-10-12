@@ -112,3 +112,8 @@ Learned:
 - Not done here: `dovet uninstall` (M3-11), the Git for Windows prompt's "doesn't ask again" memory (first-run wizard, M3), the CI job that installs the real test release built by `release.yml` (the tests install synthetic signed releases on all three OSes instead).
 Next: M0-12 (exit check).
 
+
+## 2026-10-12 — M0-12 Exit check
+Done: compared the roadmap's M0 exit evidence with CI on `main` (#22, green on Linux and macOS, Windows running at the time) and the tests. Met on all 3 OSes in CI: tree-sitter parse, bundled `rg`, pi-tui screen (`tui-demo`), `.env`/`bunfig` autoload off, 8 archives, notices, signed `SHA256SUMS`, attestations, update and rollback, install scripts, Actions pinned by SHA, import boundaries, Bun 1.4.3. Not met, so M0 stays open: (1) snapshot take and restore only runs from source, not the compiled binary (new M0-13); (2) install and update are tested against synthetic signed releases, not the archives `release.yml` builds (new M0-14); (3) the sandboxed `echo` on Windows needs the one-time Windows sandbox install and is left to the M2 escape suite (Q16, a known gap). PR: #23 (docs only, merged after `docs:check` and `spec:coverage`).
+Learned: Putting an AC ID anywhere in a task's text counts as placing it, so follow-up tasks must not name IDs already placed. W1 (release key) is still the only owner item and is not needed until the first public release.
+Next: M0-13 (compiled-binary snapshot), then M0-14.
