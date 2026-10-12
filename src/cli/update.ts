@@ -43,6 +43,9 @@ export function installRootFor(execPath: string): string {
 
 function installedVersion(root: string): string {
   const link = join(root, "current");
+  const old = join(root, "current.old");
+  // An interrupted Windows junction swap leaves only `current.old`.
+  if (!lstatSync(link, { throwIfNoEntry: false }) && lstatSync(old, { throwIfNoEntry: false })) renameSync(old, link);
   if (!existsSync(link)) throw new Error(`no install found: ${link} is missing`);
   const version = basename(readlinkSync(link));
   if (!VERSION.test(version)) throw new Error(`${link} points at ${version}, which is not a version directory`);
@@ -63,22 +66,39 @@ function compareVersions(a: string, b: string): number {
   if (x.pre === y.pre) return 0;
   if (x.pre === undefined) return 1;
   if (y.pre === undefined) return -1;
-  return x.pre < y.pre ? -1 : 1;
+  const xs = x.pre.split(".");
+  const ys = y.pre.split(".");
+  for (let i = 0; i < Math.max(xs.length, ys.length); i++) {
+    const p = xs[i];
+    const q = ys[i];
+    if (p === undefined) return -1;
+    if (q === undefined) return 1;
+    if (p === q) continue;
+    const pn = /^\d+$/.test(p);
+    const qn = /^\d+$/.test(q);
+    if (pn && qn) return Number(p) - Number(q);
+    if (pn !== qn) return pn ? -1 : 1;
+    return p < q ? -1 : 1;
+  }
+  return 0;
 }
 
 function removeLink(path: string): void {
   if (lstatSync(path, { throwIfNoEntry: false })) unlinkSync(path);
 }
 
-/** Points `current` at `versions/<version>`: a rename over the old symlink on POSIX, a swapped junction on Windows. */
 function pointCurrent(root: string, version: string, os: string): void {
   const current = join(root, "current");
   const dir = join(root, "versions", version);
   if (os !== "win32") {
-    const next = join(root, `current.${process.pid}.new`);
-    removeLink(next);
+    const next = join(root, `current.${crypto.randomUUID()}.new`);
     symlinkSync(join("versions", version), next);
-    renameSync(next, current);
+    try {
+      renameSync(next, current);
+    } catch (err) {
+      removeLink(next);
+      throw err;
+    }
     return;
   }
   // Windows can't rename over a directory link, so the old junction is set aside and put back if the new one fails.
@@ -107,7 +127,6 @@ async function download(url: string, what: string): Promise<Uint8Array<ArrayBuff
   return new Uint8Array(await res.arrayBuffer());
 }
 
-/** Archive entries must stay under `dovet/`; the unpacked tree must hold no links. */
 async function unpack(archive: Uint8Array<ArrayBuffer>, into: string): Promise<void> {
   const tar = new Bun.Archive(archive);
   for (const path of (await tar.files()).keys()) {
@@ -116,6 +135,7 @@ async function unpack(archive: Uint8Array<ArrayBuffer>, into: string): Promise<v
       throw new Error(`the archive holds a file outside dovet/: ${path}`);
   }
   await tar.extract(into);
+  if (readdirSync(into).join() !== "dovet") throw new Error("the archive holds entries outside dovet/");
   for (const entry of readdirSync(into, { recursive: true, withFileTypes: true }))
     if (entry.isSymbolicLink()) throw new Error(`the archive holds a link: ${join(entry.parentPath, entry.name)}`);
 }
@@ -155,17 +175,24 @@ export async function update(opts: {
     const exe = os === "win32" ? "dovet.exe" : "dovet";
     if (!existsSync(join(scratch, "dovet", exe))) throw new Error(`the archive has no dovet/${exe}`);
     const dest = join(versions, latest.version);
-    rmSync(dest, { recursive: true, force: true });
-    renameSync(join(scratch, "dovet"), dest);
+    const aside = join(scratch, "replaced");
+    const replacing = existsSync(dest);
+    if (replacing) renameSync(dest, aside);
+    try {
+      renameSync(join(scratch, "dovet"), dest);
+    } catch (err) {
+      if (replacing) renameSync(aside, dest);
+      throw err;
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
-  pointCurrent(root, latest.version, os);
   writePrevious(root, installed);
+  pointCurrent(root, latest.version, os);
 
   const pruneErrors: string[] = [];
   for (const name of readdirSync(versions)) {
-    if (name === latest.version || name === installed) continue;
+    if (!VERSION.test(name) || name === latest.version || name === installed) continue;
     try {
       rmSync(join(versions, name), { recursive: true, force: true });
     } catch (err) {
@@ -181,9 +208,9 @@ export function rollback(opts: { root: string; os: string }): { from: string; to
   const from = installedVersion(root);
   const file = join(root, "previous");
   const to = existsSync(file) ? readFileSync(file, "utf8").trim() : "";
-  if (!VERSION.test(to)) throw new Error("there is no previous version to roll back to");
+  if (!VERSION.test(to) || to === from) throw new Error("there is no previous version to roll back to");
   if (!existsSync(join(root, "versions", to))) throw new Error(`version ${to} is no longer installed`);
-  pointCurrent(root, to, opts.os);
   writePrevious(root, from);
+  pointCurrent(root, to, opts.os);
   return { from, to };
 }

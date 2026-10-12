@@ -25,4 +25,10 @@ describe("dovet command line", () => {
     expect(r.code).toBe(1);
     expect(r.err).toMatch(/^dovet: .*install script/);
   });
+
+  test("update with an unknown option exits 2 and installs nothing", () => {
+    const r = dovet("update", "--rollbak");
+    expect(r.code).toBe(2);
+    expect(r.err).toBe("usage: dovet update [--rollback]\n");
+  });
 });

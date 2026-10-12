@@ -22,17 +22,20 @@ async function runUpdate(rollingBack: boolean): Promise<void> {
   if (result.status === "current") console.log(`dovet ${result.version} is up to date.`);
   else console.log(`Updated dovet ${result.from} to ${result.to}. The next dovet you start is the new one.`);
   if (result.status === "updated")
-    for (const e of result.pruneErrors) console.error(`could not remove an old version: ${e}`);
+    for (const e of result.pruneErrors) console.error(`dovet: could not remove an old version: ${e}`);
 }
 
 const args = process.argv.slice(2);
-if (args[0] === "update") {
+if (args[0] === "update" && (args.length === 1 || (args.length === 2 && args[1] === "--rollback"))) {
   try {
-    await runUpdate(args.includes("--rollback"));
+    await runUpdate(args.length === 2);
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   }
+} else if (args[0] === "update") {
+  console.error("usage: dovet update [--rollback]");
+  process.exitCode = 2;
 } else {
   process.stdout.write(`dovet ${pkg.version}\n`);
 }

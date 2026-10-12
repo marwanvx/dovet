@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -49,7 +50,6 @@ async function archiveOf(version: string, files: Record<string, string> = {}): P
   return await Bun.file(out).bytes();
 }
 
-/** Writes a signed release of `version` into `dir`: its archive, SHA256SUMS and SHA256SUMS.sig. */
 async function writeRelease(dir: string, version: string, keys: { privateKey: string; publicKey: string }) {
   const archive = await archiveOf(version);
   mkdirSync(dir, { recursive: true });
@@ -237,6 +237,62 @@ describe("dovet update", () => {
     expect(existsSync(join(root, "versions", "0.2.0", "link"))).toBe(false);
   });
 
+  test("installs the newest version for this platform from a release listing every target", async () => {
+    mkdirSync(releases, { recursive: true });
+    const names: Record<string, string> = {};
+    for (const [version, target] of [
+      ["0.2.0", TARGET],
+      ["0.3.0", TARGET],
+      ["0.9.0", `${TARGET}-musl`],
+      ["0.9.0", "darwin-arm64"],
+      ["0.9.0", "windows-x64"],
+    ] as const) {
+      const archive = await archiveOf(`${version}-${target}`);
+      names[`dovet-${version}-${target}.tar.gz`] = sha256(archive);
+      await Bun.write(join(releases, `dovet-${version}-${target}.tar.gz`), archive);
+    }
+    await Bun.write(
+      join(releases, "SHA256SUMS"),
+      formatSha256Sums(Object.entries(names).map(([name, hash]) => ({ name, sha256: hash }))),
+    );
+    await signRelease(releases, keys.privateKey, [keys.publicKey]);
+    expect(await run()).toMatchObject({ status: "updated", to: "0.3.0" });
+    expect(readFileSync(join(root, "current", EXE), "utf8")).toBe(`binary 0.3.0-${TARGET}`);
+  });
+
+  test("orders prerelease identifiers by number, not as text", async () => {
+    rmSync(root, { recursive: true });
+    installVersion(root, "0.2.0-rc.9");
+    await writeRelease(releases, "0.2.0-rc.10", keys);
+    expect(await run()).toMatchObject({ status: "updated", from: "0.2.0-rc.9", to: "0.2.0-rc.10" });
+  });
+
+  test("reinstalls a newer version that is still on disk after a rollback", async () => {
+    await writeRelease(releases, "0.2.0", keys);
+    await run();
+    rollback({ root, os: OS });
+    expect(await run()).toMatchObject({ status: "updated", from: "0.1.0", to: "0.2.0" });
+    expect(readFileSync(join(root, "current", EXE), "utf8")).toBe("binary 0.2.0");
+    expect(readdirSync(join(root, "versions")).sort()).toEqual(["0.1.0", "0.2.0"]);
+  });
+
+  test("refuses a signed archive with a path that climbs out of dovet/", async () => {
+    mkdirSync(releases, { recursive: true });
+    const archive = await new Bun.Archive(
+      { [`dovet/${EXE}`]: "x", "dovet/../../escaped": "x" },
+      { compress: "gzip" },
+    ).bytes();
+    await Bun.write(join(releases, "dovet-0.2.0-linux-x64.tar.gz"), archive);
+    await Bun.write(
+      join(releases, "SHA256SUMS"),
+      formatSha256Sums([{ name: "dovet-0.2.0-linux-x64.tar.gz", sha256: sha256(archive) }]),
+    );
+    await signRelease(releases, keys.privateKey, [keys.publicKey]);
+    await run().catch((err: Error) => expect(err.message).toMatch(/outside dovet\//));
+    expect(readdirSync(join(root, ".."))).not.toContain("escaped");
+    expect(readdirSync(join(root, "versions")).some((n) => n.startsWith("."))).toBe(false);
+  });
+
   test("says so when the release has no archive for this platform", async () => {
     await writeRelease(releases, "0.2.0", keys);
     await expect(
@@ -264,6 +320,17 @@ describe("dovet update --rollback", () => {
   test("says there is nothing to roll back to on a fresh install", () => {
     expect(() => rollback({ root, os: OS })).toThrow(/no previous version/);
     expectUntouched();
+  });
+
+  test("puts back a current that an interrupted Windows swap set aside", () => {
+    renameSync(join(root, "current"), join(root, "current.old"));
+    expect(() => rollback({ root, os: OS })).toThrow(/no previous version/);
+    expect(current(root)).toBe("0.1.0");
+  });
+
+  test("has nothing to roll back to when previous names the running version", () => {
+    writeFileSync(join(root, "previous"), "0.1.0\n");
+    expect(() => rollback({ root, os: OS })).toThrow(/no previous version/);
   });
 
   test("refuses when the previous version's directory is gone", async () => {

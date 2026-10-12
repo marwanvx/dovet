@@ -88,3 +88,14 @@ Learned:
 - sandbox-runtime's `apply-seccomp` is linked statically with glibc (its build script); the notice carries sandbox-runtime's own license as upstream ships it.
 - The `release` environment's tag rule (`v*`) is what keeps the key away from pull requests that edit `release.yml`; W1 step 1 must keep it.
 Next: M0-10 (`dovet update`). W1 (release key) is not needed until the first public release.
+
+## 2026-10-12 — M0-10 `dovet update` and rollback
+Done: `src/cli/update.ts` (`update`, `rollback`, `installRootFor`, `hostTargetId`) and `dovet update [--rollback]` in `main.ts`. Latest version comes from the signed `SHA256SUMS`; signature, then archive checksum, then unpack into `versions/<v>/`, then `current` switches (POSIX symlink rename, Windows junction swap) and `previous` records the version left; only the new and previous version stay. AC-ARCH-02 passes against a real local HTTP server, real `tar` archives and a throwaway key; the fresh reviewer's findings are fixed (see Learned). PR: #21 (draft; task stays `in-progress` until CI is green on all 3 OSes and it is merged).
+Learned:
+- `Bun.Archive.extract` keeps file modes and silently drops symlink entries (1.4.2/1.4.3) and sanitizes `..`; `update` still refuses links and entries outside `dovet/` as a guard. `files()` lists regular files only.
+- `src/cli` code can't call `process.*` (not even `process.pid`); temp names use `crypto.randomUUID()`.
+- The Windows junction swap (rename `current` to `current.old`, new junction, drop the old) has never run: the Windows CI job is its first real run, and `installedVersion` puts `current.old` back if a swap was interrupted. AC-CLI-07 (swap while an older `dovet.exe` runs) is M0-11.
+- Not covered: `main.ts` passing the embedded `RELEASE_PUBLIC_KEYS` (the tests call `update()` with their own keys); the embedded list is empty until W1.
+- The cloud container lacks `bwrap`/`socat`, so the 5 `test/platform/sandbox` tests fail here (and on a clean checkout); CI has them. `bun run check` needs Bun 1.4.3 (the container had 1.4.2).
+- Q14 records the update decisions (spec text added to architecture "Distribution").
+Next: M0-11 (install scripts) once #21 is merged.
