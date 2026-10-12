@@ -2,17 +2,23 @@
 //
 //     bun run build            # dist/dovet (dist/dovet.exe on Windows)
 //
-// compileDovet() holds the compile options; the compile-flags test builds with it, and the release build will too.
+// compileDovet() holds the compile options; the compile-flags test and build-release.ts build with it.
 import { join } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 
-export async function compileDovet(opts: { outfile: string; entry?: string }): Promise<void> {
+export async function compileDovet(opts: {
+  outfile: string;
+  entry?: string;
+  target?: Bun.Build.CompileTarget;
+}): Promise<void> {
   // Bun.build rejects with the build errors when compiling fails (`throw` defaults to true).
   await Bun.build({
     entrypoints: [opts.entry ?? join(ROOT, "src", "cli", "main.ts")],
     compile: {
       outfile: opts.outfile,
+      // Omitted: the machine running the build. `bun run release` passes each of the eight targets.
+      ...(opts.target ? { target: opts.target } : {}),
       // Security-critical (architecture "Compile flags"): a compiled Bun executable otherwise loads `.env` and
       // `bunfig.toml` from the current directory, putting a project's secrets into Dovet's environment and its
       // child processes. Never remove; test/platform/compile-flags guards it.
