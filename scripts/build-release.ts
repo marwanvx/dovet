@@ -65,8 +65,8 @@ export const TARGETS: readonly Target[] = [
   { id: "linux-x64", bun: "bun-linux-x64", os: "linux", arch: "x64", ripgrep: "linux-x64" },
   { id: "linux-arm64", bun: "bun-linux-arm64", os: "linux", arch: "arm64", ripgrep: "linux-arm64" },
   { id: "linux-x64-musl", bun: "bun-linux-x64-musl", os: "linux", arch: "x64", ripgrep: "linux-x64" },
-  // ASSUMPTION (QUESTIONS Q2): no official ripgrep for arm64 musl, so this archive has no libexec/rg and Dovet is
-  // to fall back to an `rg` on PATH (tools "Grep"; not built yet).
+  // No official ripgrep for arm64 musl, so this archive has no libexec/rg and Dovet falls back to an `rg` on PATH
+  // (architecture "Distribution"; the fallback itself is built with Grep).
   { id: "linux-arm64-musl", bun: "bun-linux-arm64-musl", os: "linux", arch: "arm64", ripgrep: null },
   { id: "darwin-arm64", bun: "bun-darwin-arm64", os: "darwin", arch: "arm64", ripgrep: "darwin-arm64" },
   { id: "darwin-x64", bun: "bun-darwin-x64", os: "darwin", arch: "x64", ripgrep: "darwin-x64" },
