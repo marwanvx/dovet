@@ -3,8 +3,7 @@
 //     bun run build                              # dist/dovet (dist/dovet.exe on Windows)
 //     bun scripts/build.ts --tui-demo <outfile>  # the SPIKE-4 terminal demo (scripts/tui-demo.ts)
 //
-// compileDovet() holds the compile options and returns the bundled files; the compile-flags test and build-release.ts
-// build with it.
+// compileDovet() holds the compile options; the compile-flags test and build-release.ts build with it.
 import { join, resolve } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");

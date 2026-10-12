@@ -5,7 +5,8 @@ When a spec doesn't decide something, the agent answers it itself and records qu
 ## Waiting for the owner
 
 ### W1 (M0-09): the release signing key
-Nothing can be released until this is done; everything else keeps going. About 15 minutes, once, **after PR #19 is merged** (step 2 needs its script on the main branch):
+Nothing can be released until this is done; everything else keeps going. About 15 minutes, once:
+0. **Merge PR #19** on github.com (its **Merge pull request** button); step 2 needs its script on the main branch.
 1. **The protected environment.** On github.com open the `dovet` repository > **Settings** > **Environments** > **New environment**, name it `release`, click **Configure environment**. Tick **Required reviewers** and add yourself. Under **Deployment branches and tags** choose **Selected branches and tags** > **Add deployment branch or tag rule** > type **Tag**, pattern `v*`. Click **Save protection rules**.
 2. **Make the key.** Install Bun if you don't have it: on macOS or Linux run `curl -fsSL https://bun.sh/install | bash`; on Windows run `powershell -c "irm bun.sh/install.ps1 | iex"` (then open a new terminal). On the repository's GitHub page click **Code** > **Download ZIP**, unzip it, open a terminal in the unzipped folder and run `bun scripts/sign-release.ts --new-key`. It prints a private key and a public key.
 3. **Store the private key.** In the `release` environment page from step 1, under **Environment secrets** click **Add environment secret**, name `DOVET_RELEASE_KEY`, paste the private key, **Add secret**. Also keep a copy somewhere safe offline (a password manager). Never paste it anywhere else, including to the agent. Then clear the terminal (`clear`, or Cmd+K on macOS) and close it.

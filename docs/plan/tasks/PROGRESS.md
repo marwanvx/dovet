@@ -75,3 +75,16 @@ Learned:
 - Installing the SDK inside this cloud session was refused by the session's safety checks (untrusted code); running it on GitHub's runners is the way.
 - Owner rule (this session): few code comments, only where the code can't say it (AGENTS.md, dev-workflow, reviewer checklist).
 Next: M0-09 (release pipeline); it needs the owner's release key.
+
+
+## 2026-10-12 — M0-09 Signed release archives: notices, SHA256SUMS, attestations
+Done: M0-09 split in three (M0-09 signing, M0-10 `dovet update`, M0-11 install scripts; exit check now M0-12; Q10). Built `scripts/gen-notices.ts` (`THIRD_PARTY_NOTICES` in every archive, from Bun's build metafile plus Bun, sandbox-runtime, ripgrep, pi-tui), `SHA256SUMS` from `build-release.ts`, `scripts/sign-release.ts` (Ed25519; `--new-key`, `--test-key`), `src/cli/release-signature.ts` (`RELEASE_PUBLIC_KEYS`, empty until the owner's key; `verifiedSha256Sums` for M0-10/M0-11), `release.yml` (tag: build > sign in the `release` environment > attest > verify > publish; pull request: same with a throwaway key, unpublished). AC-ARCH-05 and AC-ARCH-03 pass; the PR's test release verified for real in CI (8 archives attested, tampered copy refused). Formats and the `--source-ref` verify command went into architecture "Distribution" (Q11, Q12). PR: #19 (waiting for owner: W1, merge then the release key).
+Learned:
+- `gh attestation verify` prints nothing on stdout unless `--format json`; check the attested `sha256` in its JSON. Attestations from PR runs carry `refs/pull/<n>/merge`, so users must verify with `--source-ref refs/tags/v<version>` (the test passes `GITHUB_REF`).
+- `Bun.build({ metafile: true })` returns an object (not a string); input paths are relative to the working directory. `crypto.subtle.generateKey({ name: "Ed25519" })` is typed `CryptoKey`, so it needs `as unknown as CryptoKeyPair`; `verify` wants `Uint8Array<ArrayBuffer>`.
+- In a shell, `bun check -b` runs the package's `check` script (as noted before); use `bun run check` and read its type-check line.
+- Bun's LICENSE.md is kept per Bun version in `scripts/licenses/`: a Bun upgrade must add the new file or the release build fails (on purpose).
+- zod is still not a dependency; `gen-notices.ts` checks `package.json` fields by hand. The task that adds zod 4 should switch it over.
+- sandbox-runtime's `apply-seccomp` is linked statically with glibc (its build script); the notice carries sandbox-runtime's own license as upstream ships it.
+- The `release` environment's tag rule (`v*`) is what keeps the key away from pull requests that edit `release.yml`; W1 step 1 must keep it.
+Next: the owner merges #19 and does W1 (release key); meanwhile M0-10 (`dovet update`) can start once #19 is merged (it needs `release-signature.ts`).
