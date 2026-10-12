@@ -63,6 +63,7 @@ jobs:
         with:
           path: ${{ steps.tui-demo.outputs.file }}
           archive: false
+          if-no-files-found: error
           retention-days: 30
       - name: research-cache/ is never committed
         shell: bash

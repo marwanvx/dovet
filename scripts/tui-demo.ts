@@ -31,6 +31,7 @@ import {
   TuiMainScreen,
   truncateToWidth,
 } from "../src/tui/vendor/pi-tui/index.ts";
+import { enableWindowsVirtualTerminalInput } from "../src/tui/vendor/pi-tui/windows-console.ts";
 import { compileDovet } from "./build.ts";
 
 const style = (open: number, close: number) => (s: string) => `\x1b[${open}m${s}\x1b[${close}m`;
@@ -133,6 +134,7 @@ function describeColors(colors: TerminalColors): string {
 
 export type Demo = {
   tui: TUI;
+  editor: Editor;
   /** Start streaming `text` as a new reply; calls `onDone` when it's complete. */
   stream(text: string, onDone?: () => void): void;
   toggleOverlay(): void;
@@ -228,7 +230,7 @@ export function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: numb
       probe.colors = `query failed: ${String(error)}`;
     });
 
-  return { tui, stream, toggleOverlay };
+  return { tui, editor, stream, toggleOverlay };
 }
 
 /** A terminal that records what pi-tui writes, for `--self-test` (no TTY in CI). */
@@ -262,6 +264,7 @@ async function selfTest(): Promise<void> {
   const demo = createDemo(terminal, { alt: false, chunk: 40, intervalMs: 0 });
   demo.tui.start();
   demo.stream(SAMPLE_REPLY);
+  demo.editor.setText("typed into the editor");
   demo.toggleOverlay();
   demo.tui.renderNow();
   demo.tui.stop();
@@ -269,6 +272,8 @@ async function selfTest(): Promise<void> {
   process.stdout.write(
     `${stripTerminalSequences(terminal.output)}\nframes synchronized: ${synchronized ? "yes" : "no"}\n`,
   );
+  // The kernel32 call that replaces pi-tui's Windows addon, run inside the compiled binary (stdin is not a console here).
+  if (process.platform === "win32") process.stdout.write(`vt input enabled: ${enableWindowsVirtualTerminalInput()}\n`);
 }
 
 async function interactive(alt: boolean): Promise<void> {

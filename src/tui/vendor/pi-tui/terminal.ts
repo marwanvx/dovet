@@ -419,7 +419,7 @@ export class ProcessTerminal implements Terminal {
 	 */
 	private enableWindowsVTInput(): void {
 		if (process.platform !== "win32") return;
-		// Dovet: the native platform addon is removed (ADR-5); kernel32 is called through bun:ffi instead.
+		// Dovet: the native platform addon is removed (ADR-5); windows-console.ts calls kernel32 instead.
 		try {
 			enableWindowsVirtualTerminalInput();
 		} catch {

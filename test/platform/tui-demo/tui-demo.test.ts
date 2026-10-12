@@ -33,11 +33,21 @@ describe("compiled tui-demo", () => {
     expect(out).toContain("const greeting");
     expect(out).toContain("日本語");
     // The editor's border and the overlay's text are on screen.
-    expect(out).toContain("─────");
+    expect(out).toContain("typed into the editor");
     expect(out).toContain("This is an overlay");
     // pi-tui's inline renderer wrapped its frames in synchronized output (mode 2026).
     expect(out).toContain("frames synchronized: yes");
   });
+
+  test.if(process.platform === "win32")(
+    "Windows: the kernel32 console-mode call loads and runs without the addon",
+    () => {
+      // stdin is not a console in the test, so GetConsoleMode fails and the call reports false instead of throwing.
+      const r = Bun.spawnSync([join(dir, `tui-demo${EXE}`), "--self-test"], { stdin: "ignore" });
+      expect(r.stderr.toString()).toBe("");
+      expect(r.stdout.toString()).toContain("vt input enabled: false");
+    },
+  );
 });
 
 describe("vendored pi-tui", () => {
@@ -51,10 +61,13 @@ describe("vendored pi-tui", () => {
 
   test("contains no native addon and no code that loads one", () => {
     expect(files.filter((f) => f.endsWith(".node"))).toEqual([]);
+    // Any addon or FFI loader, except windows-console.ts (Dovet's kernel32 call, VENDORED.md).
     const loaders = files
-      .filter((f) => f.endsWith(".ts"))
+      .filter((f) => f.endsWith(".ts") && !f.endsWith("windows-console.ts"))
       .filter((f) =>
-        /createRequire|\.node["'`]|native-platform|native-modifiers/.test(readFileSync(join(VENDOR, f), "utf8")),
+        /createRequire|\brequire\(|process\.dlopen|\bdlopen\(|bun:ffi|\.node["'`]|native-platform|native-modifiers/.test(
+          readFileSync(join(VENDOR, f), "utf8"),
+        ),
       );
     expect(loaders).toEqual([]);
   });
