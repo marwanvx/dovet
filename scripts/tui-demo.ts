@@ -5,10 +5,10 @@
 //     bun scripts/tui-demo.ts               # inline mode (keeps the terminal's scrollback), like Dovet's default
 //     bun scripts/tui-demo.ts --alt         # fullscreen (alternate screen)
 //     bun scripts/tui-demo.ts --self-test   # no terminal needed: renders into memory and prints what was drawn
-//     bun scripts/tui-demo.ts --build <out> # compile the demo into a single executable
+//     bun scripts/build.ts --tui-demo <out> # compile it into a single executable (Dovet's compile options)
 //
-// CI compiles it per OS and attaches it to the run (ci.yml, "tui-demo" artifacts) for the owner's terminal checklist.
-import { join } from "node:path";
+// The dispatch at the bottom runs unconditionally: in a compiled Windows executable `import.meta.main` is false, so
+// this file is only ever an entry point, never imported. CI compiles it per OS and attaches it to the run (ci.yml, "tui-demo" artifacts) for the owner's terminal checklist.
 import {
   Box,
   Container,
@@ -32,7 +32,6 @@ import {
   truncateToWidth,
 } from "../src/tui/vendor/pi-tui/index.ts";
 import { enableWindowsVirtualTerminalInput } from "../src/tui/vendor/pi-tui/windows-console.ts";
-import { compileDovet } from "./build.ts";
 
 const style = (open: number, close: number) => (s: string) => `\x1b[${open}m${s}\x1b[${close}m`;
 const bold = style(1, 22);
@@ -69,7 +68,7 @@ const markdownTheme: MarkdownTheme = {
 };
 
 /** The streamed reply: every block type the TUI must handle, plus wide and combining characters. */
-export const SAMPLE_REPLY = `# Streaming markdown
+const SAMPLE_REPLY = `# Streaming markdown
 
 This reply arrives a few characters at a time, like a model's. **Bold**, *italic*, \`inline code\` and a [link](https://example.com).
 
@@ -132,7 +131,7 @@ function describeColors(colors: TerminalColors): string {
   return `${scheme} background ${hex(colors.background)}`;
 }
 
-export type Demo = {
+type Demo = {
   tui: TUI;
   editor: Editor;
   /** Start streaming `text` as a new reply; calls `onDone` when it's complete. */
@@ -141,7 +140,7 @@ export type Demo = {
 };
 
 /** Build the demo screen on `terminal`. `chunk` characters arrive every `intervalMs`. */
-export function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; intervalMs: number }): Demo {
+function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; intervalMs: number }): Demo {
   const tui: TUI = opts.alt ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
   // The hardware cursor follows the caret, so IME composition windows appear in place (tui "Terminal I/O robustness").
   tui.setShowHardwareCursor(true);
@@ -293,14 +292,6 @@ async function interactive(alt: boolean): Promise<void> {
   demo.stream(SAMPLE_REPLY);
 }
 
-/** Compile the demo with Dovet's own compile options (build.ts). */
-export async function compileTuiDemo(opts: { outfile: string }): Promise<void> {
-  await compileDovet({ entry: join(import.meta.dir, "tui-demo.ts"), outfile: opts.outfile });
-}
-
-if (import.meta.main) {
-  const args = process.argv.slice(2);
-  if (args[0] === "--build" && args[1]) await compileTuiDemo({ outfile: args[1] });
-  else if (args.includes("--self-test")) await selfTest();
-  else await interactive(args.includes("--alt"));
-}
+const args = process.argv.slice(2);
+if (args.includes("--self-test")) await selfTest();
+else await interactive(args.includes("--alt"));

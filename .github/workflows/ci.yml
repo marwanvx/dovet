@@ -52,9 +52,9 @@ jobs:
           mkdir -p dist/tui-demo
           if [ "$os" = windows ]; then
             file="dist/tui-demo/tui-demo-$os-$arch.exe"
-            bun scripts/tui-demo.ts --build "$file"
+            bun scripts/build.ts --tui-demo "$file"
           else
-            bun scripts/tui-demo.ts --build dist/tui-demo/tui-demo
+            bun scripts/build.ts --tui-demo dist/tui-demo/tui-demo
             file="dist/tui-demo/tui-demo-$os-$arch.tar.gz"
             tar -C dist/tui-demo -czf "$file" tui-demo
           fi

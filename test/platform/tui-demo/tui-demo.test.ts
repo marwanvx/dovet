@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { compileTuiDemo } from "../../../scripts/tui-demo.ts";
+import { compileTuiDemo } from "../../../scripts/build.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 const VENDOR = join(import.meta.dir, "..", "..", "..", "src", "tui", "vendor", "pi-tui");

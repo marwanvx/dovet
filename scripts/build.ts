@@ -1,6 +1,7 @@
 // `bun run build`: compile `dovet` for the current OS into dist/ (architecture "Distribution").
 //
-//     bun run build            # dist/dovet (dist/dovet.exe on Windows)
+//     bun run build                              # dist/dovet (dist/dovet.exe on Windows)
+//     bun scripts/build.ts --tui-demo <outfile>  # the SPIKE-4 terminal demo (scripts/tui-demo.ts)
 //
 // compileDovet() holds the compile options; the compile-flags test and build-release.ts build with it.
 import { join } from "node:path";
@@ -28,8 +29,16 @@ export async function compileDovet(opts: {
   });
 }
 
+/** The SPIKE-4 terminal demo (scripts/tui-demo.ts), with the same compile options. Not part of `dovet`. */
+export async function compileTuiDemo(opts: { outfile: string }): Promise<void> {
+  await compileDovet({ entry: join(ROOT, "scripts", "tui-demo.ts"), outfile: opts.outfile });
+}
+
 if (import.meta.main) {
-  const outfile = join(ROOT, "dist", process.platform === "win32" ? "dovet.exe" : "dovet");
-  await compileDovet({ outfile });
+  const demo = Bun.argv.indexOf("--tui-demo");
+  const outfile =
+    demo >= 0 ? Bun.argv[demo + 1] : join(ROOT, "dist", process.platform === "win32" ? "dovet.exe" : "dovet");
+  if (!outfile) throw new Error("usage: bun scripts/build.ts [--tui-demo <outfile>]");
+  await (demo >= 0 ? compileTuiDemo({ outfile }) : compileDovet({ outfile }));
   console.log(`built ${outfile}`);
 }
