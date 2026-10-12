@@ -16,3 +16,8 @@ Next: M0-01.
 Done: module tree, `bun run check` (type check, Biome, dependency-cruiser boundaries, tests, spec coverage, docs check), CI green on Linux/macOS/Windows, community files; docs scripts ported to `bun run next` / `docs:boxes` / `docs:check` (Python versions removed). PR: #1 (merged).
 Learned: `typescript` is pinned to 6.0.3 because dependency-cruiser needs `<7` (Bun's own `bun check` does the type check). This session's GitHub integration gets 403 on Actions re-runs and branch protection: the three CI jobs are not yet required status checks on `main` (owner can add `check (ubuntu-latest)`, `check (macos-latest)`, `check (windows-latest)`). Dependabot uses the `bun` ecosystem as an assumption (QUESTIONS Q1). A `setup-bun` download can 504 on macOS; that's GitHub, not the code.
 Next: M0-02.
+
+## 2026-10-12 — M0-02 Compiled binary and safe compile flags
+Done: `bun run build` compiles `src/cli/main.ts` (prints the version) into `dist/dovet` with `.env`/`bunfig.toml` autoload off; `compileDovet()` in `scripts/build.ts` holds the compile options; AC-ARCH-01 tested on all 3 OSes. PR: #2 (merged).
+Learned: Bun 1.4.2's `bun check` runs the package's `check` script instead of type-checking, so `bun run check` recurses forever: use Bun ≥ 1.4.3 locally (CI pins 1.4.3). `dovet` can't spawn children yet, so the `.env`-in-child half of AC-ARCH-01 uses a probe compiled with the same options (`test/platform/compile-flags/env-probe.ts`). `scripts/build.ts` isn't in architecture "Repository layout" yet (only the `build` script is); add it with the next spec change.
+Next: M0-03.
