@@ -1,5 +1,5 @@
 # SPIKE-22: times git tree snapshots on a 100,000-file repository on all three OSes (docs/plan/open-questions.md).
-# Runs when the snapshot code or the benchmark changes, or by hand.
+# Runs (20,000 files) when the snapshot code or the benchmark changes; the 100,000-file run only by hand.
 name: snapshot-bench
 
 on:
@@ -12,6 +12,11 @@ on:
 
 permissions:
   contents: read
+
+# A newer push makes an older run pointless.
+concurrency:
+  group: snapshot-bench-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   bench:
@@ -33,7 +38,9 @@ jobs:
       - name: 20,000 files
         timeout-minutes: 20
         run: bun scripts/bench-snapshots.ts 20000
+      # The big run takes up to 45 minutes on Windows, so it only runs when started by hand (Actions > snapshot-bench > Run workflow).
       - name: 100,000 files
+        if: github.event_name == 'workflow_dispatch'
         timeout-minutes: 45
         continue-on-error: true
         run: bun scripts/bench-snapshots.ts 100000
