@@ -148,7 +148,7 @@ Not used: Ink/React, LangChain, Effect, the AI SDK's agent classes and UI packag
 ## ADR-19: Git tree snapshots in a private object store
 **Decision:** In git workspaces, checkpoints are git trees built with a private index (`GIT_INDEX_FILE`) and a private, self-contained object directory (no alternate: git would refresh the timestamps of the user's objects, and checkpoints would depend on objects the user can prune). Non-git workspaces fall back to file-level blobs ([checkpoints](../specs/checkpoints.md)).
 **Why:** Sandbox auto-allow lets shell commands edit files without prompts, so checkpoints must cover shell changes. This is incremental (stat cache) and never writes to the user's `.git`; the price is one compressed copy of the workspace in Dovet's store (QUESTIONS Q3).
-**Filter safety:** snapshots use plumbing that runs no clean/process/smudge filters (`ls-files`, `hash-object --no-filters`, `update-index --index-info`, `write-tree`, `cat-file`); `git add`/`checkout` are forbidden in this module (lint rule).
+**Filter safety:** snapshots use plumbing that runs no clean/process/smudge filters (`ls-files`, `fast-import` with exact-length blobs in Dovet's own bare repository, `update-index --index-info`, `write-tree`, `diff-tree`, `cat-file`); `git add`/`checkout` are forbidden in this module (a test scans the module's source for them).
 **Risk:** Performance on huge repos and Windows correctness [SPIKE-22].
 
 ## ADR-20: Install-directory distribution
