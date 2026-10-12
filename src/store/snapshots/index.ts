@@ -5,6 +5,7 @@ export {
   type SkippedPath,
   type SkipReason,
   type SnapshotResult,
+  type SnapshotTimings,
   type Snapshotter,
   type SnapshotterOptions,
 } from "./snapshotter.ts";

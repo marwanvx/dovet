@@ -54,6 +54,21 @@ export interface SnapshotResult {
   hashed: number;
   /** Paths left out of the tree; the receipt lists them as not restorable, and `restore` must be given them. */
   skipped: SkippedPath[];
+  /** Where the time went, for benchmarks and for the "a snapshot took over 2 s" notice. */
+  timings: SnapshotTimings;
+}
+
+/** Milliseconds per phase of one snapshot. */
+export interface SnapshotTimings {
+  /** `git ls-files` (tracked and untracked). */
+  list: number;
+  /** `lstat` of every listed path, and the stat-cache lookups. */
+  stat: number;
+  /** Reading and hashing the changed files (`git hash-object`). */
+  hash: number;
+  /** Rebuilding the private index and `git write-tree`. */
+  index: number;
+  total: number;
 }
 
 export interface RestoreResult {
@@ -160,7 +175,9 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
 
   async function snapshot(): Promise<SnapshotResult> {
     const startNs = BigInt(Date.now()) * 1_000_000n;
+    const t0 = performance.now();
     const listing = await list("", 0);
+    const t1 = performance.now();
     const skipped: SkippedPath[] = listing.skipped;
     const planned: Planned[] = [];
 
@@ -200,6 +217,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
         p.blob = hit.blob;
       } else toHash.push(p);
     }
+    const t2 = performance.now();
     const scratch: string[] = [];
     try {
       for (const [i, p] of toHash.entries()) {
@@ -226,6 +244,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       for (const tmp of scratch) rmSync(tmp, { force: true });
     }
 
+    const t3 = performance.now();
     planned.sort(byPath);
     const next: StatCache = new Map();
     const entries: string[] = [];
@@ -248,7 +267,10 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
 
     cache = next;
     saveStatCache(statPath, cache);
-    return { tree, hashed: toHash.length, skipped };
+    const t4 = performance.now();
+    const ms = (a: number, b: number): number => Math.round(b - a);
+    const timings = { list: ms(t0, t1), stat: ms(t1, t2), hash: ms(t2, t3), index: ms(t3, t4), total: ms(t0, t4) };
+    return { tree, hashed: toHash.length, skipped, timings };
   }
 
   async function restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult> {

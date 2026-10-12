@@ -95,6 +95,11 @@ try {
   log(`edited snapshot ${edited.ms} ms`);
   const status = await time(async () => git("status", "--porcelain"));
 
+  const phases = [
+    ["first", first.value.timings],
+    ["second", second.value.timings],
+    ["edited", edited.value.timings],
+  ] as const;
   const rows = [
     ["first snapshot (everything hashed)", first.ms, first.value.hashed],
     ["second snapshot, nothing changed", second.ms, second.value.hashed],
@@ -107,6 +112,10 @@ try {
     "| step | ms | files hashed |",
     "|---|---:|---:|",
     ...rows.map(([name, ms, hashed]) => `| ${name} | ${ms} | ${hashed} |`),
+    "",
+    "| snapshot | list files | lstat + cache | hash | index + write-tree | total (ms) |",
+    "|---|---:|---:|---:|---:|---:|",
+    ...phases.map(([name, t]) => `| ${name} | ${t.list} | ${t.stat} | ${t.hash} | ${t.index} | ${t.total} |`),
     "",
     `Private object store after the three snapshots: ${(dirBytes(join(root, "data", "p1", "objects")) / 1e6).toFixed(1)} MB, for ${(sourceBytes / 1e6).toFixed(1)} MB of source files.`,
     "",
