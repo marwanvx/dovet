@@ -99,3 +99,16 @@ Learned:
 - The cloud container lacks `bwrap`/`socat`, so the 5 `test/platform/sandbox` tests fail here (and on a clean checkout); CI has them. `bun run check` needs Bun 1.4.3 (the container had 1.4.2).
 - Q14 records the update decisions (spec text added to architecture "Distribution").
 Next: M0-11 (install scripts) once #21 is merged.
+
+## 2026-10-12 — M0-11 Install scripts
+Done: `install/install.sh` and `install/install.ps1` verify the Ed25519 signature on `SHA256SUMS`, then the archive checksum, refuse links and paths outside `dovet/`, unpack into `versions/<v>/`, point `current` (symlink / junction), link `~/.local/bin/dovet` or add the user PATH entry (never rc files, never the system PATH), record `previous`, and leave an existing install untouched on any refusal. AC-CLI-07 passes in CI on all three OSes, including `dovet update` swapping the junction while a copy of `bun.exe` runs as the older `dovet.exe`. PR: #22 (merged after green CI).
+Learned:
+- Q15: POSIX verifies with OpenSSL 3 (macOS's LibreSSL can't; the script also tries Homebrew's `openssl@3` after an RFC 8032 self-test; the macOS runner passes). Windows PowerShell 5.1 has no Ed25519, so `install.ps1` carries its own BigInteger RFC 8032 verifier (about 1.5 s on pwsh 7, seconds on 5.1); the Windows tests run it under `powershell.exe` as `iex (Get-Content -Raw ...)`.
+- `Bun.spawnSync` blocks the event loop, so a test that serves releases from the same process must use async `Bun.spawn`.
+- `Get-FileHash` is missing in Windows PowerShell 5.1 when the parent is pwsh 7 (its `PSModulePath` leaks in); the script hashes with .NET instead. `[Environment]::GetEnvironmentVariable('Path','User')` expands `%VAR%`; the script reads and writes the registry value unexpanded (`ExpandString`) so the user's PATH keeps its variables.
+- On Windows runners the temp dir has 8.3 names (`RUNNER~1`) while .NET prints long names: compare with `realpathSync.native`.
+- A local PowerShell 7 can be fetched from the PowerShell GitHub release for parse-checking `.ps1` files in the cloud container.
+- The release key is still W1; until `DOVET_EMBEDDED_KEYS` / `$EmbeddedKeys` / `RELEASE_PUBLIC_KEYS` hold it, the scripts refuse to install real releases (a test keeps the three equal: W1 must change all three).
+- Not done here: `dovet uninstall` (M3-11), the Git for Windows prompt's "doesn't ask again" memory (first-run wizard, M3), the CI job that installs the real test release built by `release.yml` (the tests install synthetic signed releases on all three OSes instead).
+Next: M0-12 (exit check).
+
