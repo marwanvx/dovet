@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   archiveName,
   buildInstallArchive,
@@ -68,7 +68,10 @@ describe("install-directory archive", () => {
   test("the unpacked binary runs the bundled ripgrep and gets its version", () => {
     expect(probe.exitCode).toBe(0);
     expect(probe.stdout).toStartWith(`ripgrep ${RIPGREP_VERSION}`);
-    expect(probe.rg).toBe(join(unpacked, "dovet", "libexec", WINDOWS ? "rg.exe" : "rg"));
+    // Same file, compared by canonical path: Windows runners' temp paths use 8.3 short names (RUNNER~1).
+    const expected = join(unpacked, "dovet", "libexec", WINDOWS ? "rg.exe" : "rg");
+    expect(realpathSync.native(probe.rg)).toBe(realpathSync.native(expected));
+    expect(dirname(probe.rg)).toBe(dirname(probe.exe) + (WINDOWS ? "\\libexec" : "/libexec"));
   });
 
   // Windows has no execute bit to keep.
