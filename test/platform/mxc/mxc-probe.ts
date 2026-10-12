@@ -48,7 +48,8 @@ async function step(run: () => unknown): Promise<Step> {
 const report: Record<string, unknown> = { exe: process.execPath, assisted: Boolean(resources) };
 let sdk: MxcSdk | undefined;
 report.import = await step(async () => {
-  // @ts-expect-error -- installed only by the mxc-spike workflow; the shape used here is typed by MxcSdk above.
+  // @ts-expect-error -- installed only by the mxc-spike workflow; the shape used here is typed by MxcSdk above. Once
+  // the SDK is a dependency (M2) this directive fails the type check: remove it and MxcSdk, and use the SDK's types.
   sdk = await import("@microsoft/mxc-sdk/v1");
   return "loaded";
 });
@@ -73,12 +74,24 @@ if (sdk) {
       timeoutMs: 60_000,
     }),
   );
+  // Control: without a write root the same write must fail, or `readwritePaths` isn't what allowed it.
+  const noRoot = join(allowed, "no-root.txt");
+  report.writeWithoutRoot = await step(() => mxc.run({ command: `cmd /c echo no > "${noRoot}"`, timeoutMs: 60_000 }));
+  report.noRootExists = existsSync(noRoot);
   report.insideExists = existsSync(inside);
   report.outsideExists = existsSync(outsideFile);
   report.networkDenied = await step(() =>
     mxc.run({
       command: "curl.exe -sS -m 10 -o NUL -w %{http_code} https://example.com",
       network: { egress: { default: "deny" } },
+      timeoutMs: 60_000,
+    }),
+  );
+  // Control: the same request allowed, so a denial above isn't just a container without DNS.
+  report.networkAllowed = await step(() =>
+    mxc.run({
+      command: "curl.exe -sS -m 10 -o NUL -w %{http_code} https://example.com",
+      network: { egress: { default: "allow" } },
       timeoutMs: 60_000,
     }),
   );
