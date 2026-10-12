@@ -265,7 +265,7 @@ Rules can be added/removed live with `/permissions`, **also while a turn runs**;
 ## 7. Sandbox [DECISION-6]
 
 ### 7.1 Implementation
-`@anthropic-ai/sandbox-runtime` [VERIFIED 2026-10-11]. Its helper files (Linux seccomp filters and `apply-seccomp`, Windows `srt-win.exe`, Java proxy agent) ship in Dovet's `libexec/` directory and are passed by **explicit path** (the library supports explicit paths for each) [DECISION-20].
+`@anthropic-ai/sandbox-runtime` [VERIFIED 2026-10-11]. Its helper files (Linux `apply-seccomp`, Windows `srt-win.exe`, Java proxy agent) ship in Dovet's `libexec/` directory and are passed by **explicit path** (the library supports explicit paths for each) [DECISION-20].
 
 ### 7.2 What it restricts (defaults)
 | Access | Default | Settings |

@@ -31,6 +31,12 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
+      - name: Linux sandbox needs bubblewrap and socat, and user namespaces allowed (AppArmor on Ubuntu 24.04)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap socat
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bun run check
       - name: all eight release archives build
         if: matrix.os == 'ubuntu-latest'

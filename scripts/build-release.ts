@@ -4,15 +4,16 @@
 //     bun scripts/build-release.ts --all                 # all eight targets (CI)
 //     bun scripts/build-release.ts --target linux-x64,windows-arm64 --out dist/release
 //
-// Each archive unpacks to `dovet/` holding the compiled executable and `libexec/rg`. A compiled Bun executable can't
-// run a file from its embedded filesystem, so ripgrep ships beside it as a real file (SPIKE-2). The sandbox-runtime
-// helpers join `libexec/srt/` in M0-05; signing, checksums and notices are M0-09.
+// Each archive unpacks to `dovet/` holding the compiled executable, `libexec/rg` and `libexec/srt/` (the
+// sandbox-runtime helpers of the target's OS). A compiled Bun executable can't run a file from its embedded
+// filesystem, so helpers ship beside it as real files (SPIKE-2, SPIKE-16). Signing, checksums and notices are M0-09.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import pkg from "../package.json";
 import { libexecPath } from "../src/platform/index.ts";
+import { SRT_HELPER_FILES, srtHelpersFor } from "../src/policy/index.ts";
 import { compileDovet } from "./build.ts";
 
 const ROOT = join(import.meta.dir, "..");
@@ -206,6 +207,29 @@ function assertBuiltFor(what: string, bytes: Uint8Array, target: Target): void {
     throw new Error(`${what} for ${target.id} is a ${got.format} ${got.arch} executable`);
 }
 
+const SRT_VENDOR = join(ROOT, "node_modules", "@anthropic-ai", "sandbox-runtime", "vendor");
+
+/**
+ * sandbox-runtime's helper files for one target, from its pinned npm package: name inside `libexec/srt/` and bytes.
+ * The native ones are checked against the target's OS and CPU, like the compiled executable and ripgrep.
+ */
+export async function sandboxHelpers(target: Target): Promise<{ name: string; bytes: Uint8Array }[]> {
+  const source: Record<string, { path: string[]; native: boolean }> = {
+    [SRT_HELPER_FILES.javaAgent]: { path: ["java-proxy-agent", "srt-proxy-agent.jar"], native: false },
+    [SRT_HELPER_FILES.seccomp]: { path: ["seccomp", target.arch, "apply-seccomp"], native: true },
+    [SRT_HELPER_FILES.srtWin]: { path: ["srt-win", target.arch, "srt-win.exe"], native: true },
+  };
+  return await Promise.all(
+    srtHelpersFor(target.os).map(async (name) => {
+      const entry = source[name];
+      if (!entry) throw new Error(`no source for sandbox helper ${name}`);
+      const bytes = await Bun.file(join(SRT_VENDOR, ...entry.path)).bytes();
+      if (entry.native) assertBuiltFor(`sandbox helper ${name}`, bytes, target);
+      return { name, bytes };
+    }),
+  );
+}
+
 type TarEntry = { path: string; mode: number; data?: Uint8Array };
 
 /** A gzip-compressed ustar archive. Fixed owner and timestamp, so the same inputs give the same bytes. */
@@ -242,7 +266,7 @@ function tarGz(entries: TarEntry[]): Uint8Array {
 
 /**
  * Builds `outDir/dovet-<version>-<target>.tar.gz`: the compiled executable (`entry`, default `src/cli/main.ts`) and
- * the target's ripgrep under `libexec/`, laid out as `libexecPath` expects to find them.
+ * the target's ripgrep and sandbox helpers under `libexec/`, laid out as `libexecPath` expects to find them.
  */
 export async function buildInstallArchive(opts: {
   target: Target;
@@ -270,6 +294,11 @@ export async function buildInstallArchive(opts: {
       const rgBytes = await fetchRipgrep(target.ripgrep, opts.cacheDir);
       assertBuiltFor("ripgrep", rgBytes, target);
       entries.push({ path: rg, mode: 0o755, data: rgBytes });
+    }
+    const srtDir = libexecPath(`dovet/${exeName}`, target.os, "srt").replaceAll("\\", "/");
+    entries.push({ path: srtDir, mode: 0o755 });
+    for (const { name, bytes } of await sandboxHelpers(target)) {
+      entries.push({ path: `${srtDir}/${name}`, mode: 0o755, data: bytes });
     }
     mkdirSync(opts.outDir, { recursive: true });
     const out = join(opts.outDir, archiveName(opts.version, target.id));

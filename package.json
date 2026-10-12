@@ -32,6 +32,7 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.79",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-powershell": "0.26.4",
     "web-tree-sitter": "0.27.1"
