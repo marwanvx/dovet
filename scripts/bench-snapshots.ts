@@ -18,7 +18,7 @@ import { openSnapshotter } from "../src/store/index.ts";
 
 const count = Number(Bun.argv[2] ?? 100_000);
 const perDir = 100;
-const root = realpathSync.native(mkdtempSync(join(tmpdir(), "dovet-bench-")));
+const root = realpathSync.native(mkdtempSync(join(Bun.argv[3] ?? tmpdir(), "dovet-bench-")));
 const repo = join(root, "repo");
 const env: Record<string, string | undefined> = {
   ...process.env,
