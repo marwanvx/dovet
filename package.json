@@ -14,6 +14,7 @@
   },
   "scripts": {
     "build": "bun scripts/build.ts",
+    "release": "bun scripts/build-release.ts --all",
     "check": "bun run typecheck && bun run lint && bun run lint:deps && bun run test && bun run spec:coverage && bun run docs:check",
     "typecheck": "bun check",
     "lint": "biome check .",

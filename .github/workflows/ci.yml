@@ -32,6 +32,9 @@ jobs:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - run: bun run check
+      - name: all eight release archives build
+        if: matrix.os == 'ubuntu-latest'
+        run: bun run release
       - name: research-cache/ is never committed
         shell: bash
         run: test -z "$(git ls-files research-cache)"

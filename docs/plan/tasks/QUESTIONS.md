@@ -4,7 +4,10 @@ Agents add questions here when only the owner can decide ([build loop](../../wor
 
 ## Waiting for the owner
 
-(none)
+### Q2 (M0-04): ripgrep for Linux arm64 on musl (Alpine)
+- **What's missing:** the architecture spec lists eight targets, each with its own `libexec/rg`. ripgrep's official releases have no Linux arm64 musl build (only arm64 glibc), and the glibc one won't run on Alpine. The other seven targets are covered.
+- **Recommended answer:** for v0.1, ship the `linux-arm64-musl` archive without `libexec/rg`. the spec already says Dovet falls back to an `rg` on PATH and says so (tools "Grep"; not built yet); `dovet doctor` and the install script tell Alpine arm64 users to run `apk add ripgrep`. Building ripgrep ourselves in CI (Rust, cross-compiled) can come later if people need it.
+- **Meanwhile:** built that way, marked `ASSUMPTION` in `scripts/build-release.ts`. If you agree, just write "yes".
 
 ## Answered
 
