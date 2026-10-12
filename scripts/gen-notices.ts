@@ -1,23 +1,24 @@
 // THIRD_PARTY_NOTICES of one release archive (architecture "Distribution", ADR-15).
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, sep } from "node:path";
+import { z } from "zod";
 import { RIPGREP_VERSION, type Target } from "./build-release.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
 type Notice = { title: string; source: string; license: string; texts: string[] };
 
+const PackageJson = z.object({
+  name: z.string().min(1),
+  version: z.string().min(1),
+  license: z.string().optional(),
+  homepage: z.string().optional(),
+});
+
 function packageJson(dir: string): { name: string; version: string; license?: string; homepage?: string } {
-  const pkg: unknown = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-  const field = (key: string) => {
-    const v = typeof pkg === "object" && pkg !== null ? (pkg as Record<string, unknown>)[key] : undefined;
-    return typeof v === "string" ? v : undefined;
-  };
-  const name = field("name");
-  const version = field("version");
-  if (!name || !version) throw new Error(`${dir}/package.json has no name or version`);
-  const license = field("license");
-  const homepage = field("homepage");
+  const parsed = PackageJson.safeParse(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")));
+  if (!parsed.success) throw new Error(`${dir}/package.json has no name or version`);
+  const { name, version, license, homepage } = parsed.data;
   return { name, version, ...(license ? { license } : {}), ...(homepage ? { homepage } : {}) };
 }
 

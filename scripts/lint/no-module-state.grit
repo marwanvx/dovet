@@ -1,0 +1,21 @@
+language js
+
+`$x` as $s where {
+  $s <: or {
+    JsVariableStatement(),
+    JsVariableDeclarationClause()
+  },
+  $s <: or {
+    r"(?s)let .*",
+    r"(?s)var .*"
+  },
+  not $s <: within or {
+    JsFunctionBody(),
+    JsBlockStatement(),
+    JsStaticInitializationBlockClassMember(),
+    JsCaseClause(),
+    JsDefaultClause(),
+    TsModuleBlock()
+  },
+  register_diagnostic(span=$s, message="Module-level let/var is mutable state shared by every Runtime and Session. Keep it on Runtime or Session (architecture: State ownership).")
+}
