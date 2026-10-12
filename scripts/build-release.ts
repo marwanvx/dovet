@@ -6,15 +6,18 @@
 //
 // Each archive unpacks to `dovet/` holding the compiled executable, `libexec/rg` and `libexec/srt/` (the
 // sandbox-runtime helpers of the target's OS). A compiled Bun executable can't run a file from its embedded
-// filesystem, so helpers ship beside it as real files (SPIKE-2, SPIKE-16). Signing, checksums and notices are M0-09.
+// filesystem, so helpers ship beside it as real files (SPIKE-2, SPIKE-16). Each archive also holds THIRD_PARTY_NOTICES,
+// and the output directory gets SHA256SUMS of the archives built (signed by scripts/sign-release.ts).
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import pkg from "../package.json";
+import { formatSha256Sums } from "../src/cli/release-signature.ts";
 import { libexecPath } from "../src/platform/index.ts";
 import { SRT_HELPER_FILES, srtHelpersFor } from "../src/policy/index.ts";
 import { compileDovet } from "./build.ts";
+import { releaseNotices } from "./gen-notices.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
@@ -95,9 +98,14 @@ const sha256Hex = (bytes: Uint8Array): string => new Bun.CryptoHasher("sha256").
 /**
  * The `rg` executable of one platform's pinned ripgrep release: downloaded over HTTPS, checked against the pinned
  * SHA-256 (a mismatch throws and nothing is cached), kept in `cacheDir` so repeat builds don't download again.
- * `pin` overrides the pinned checksum (tests).
+ * `pin` overrides the pinned checksum (tests); `file` picks another file of the archive (its license).
  */
-export async function fetchRipgrep(platform: string, cacheDir: string, pin?: { sha256: string }): Promise<Uint8Array> {
+export async function fetchRipgrep(
+  platform: string,
+  cacheDir: string,
+  pin?: { sha256: string },
+  file = "rg",
+): Promise<Uint8Array> {
   const info = RIPGREP_PLATFORMS[platform];
   if (!info) throw new Error(`no pinned ripgrep for ${platform}`);
   const sha256 = pin?.sha256 ?? info.sha256;
@@ -119,7 +127,9 @@ export async function fetchRipgrep(platform: string, cacheDir: string, pin?: { s
     await Bun.write(cached, bytes);
     archive = bytes;
   }
-  return platform.startsWith("windows-") ? fileFromZip(archive, "rg.exe") : await fileFromTarGz(archive, "rg");
+  const windows = platform.startsWith("windows-");
+  const wanted = windows && file === "rg" ? "rg.exe" : file;
+  return windows ? fileFromZip(archive, wanted) : await fileFromTarGz(archive, wanted);
 }
 
 async function fileFromTarGz(archive: Uint8Array, name: string): Promise<Uint8Array> {
@@ -280,7 +290,11 @@ export async function buildInstallArchive(opts: {
   const scratch = mkdtempSync(join(tmpdir(), "dovet-release-"));
   try {
     const exe = join(scratch, exeName);
-    await compileDovet({ outfile: exe, target: target.bun, ...(opts.entry ? { entry: opts.entry } : {}) });
+    const inputs = await compileDovet({
+      outfile: exe,
+      target: target.bun,
+      ...(opts.entry ? { entry: opts.entry } : {}),
+    });
     const exeBytes = await Bun.file(exe).bytes();
     assertBuiltFor("the compiled dovet", exeBytes, target);
     const entries: TarEntry[] = [
@@ -300,6 +314,11 @@ export async function buildInstallArchive(opts: {
     for (const { name, bytes } of await sandboxHelpers(target)) {
       entries.push({ path: `${srtDir}/${name}`, mode: 0o755, data: bytes });
     }
+    const ripgrepLicense = target.ripgrep
+      ? new TextDecoder().decode(await fetchRipgrep(target.ripgrep, opts.cacheDir, undefined, "LICENSE-MIT"))
+      : null;
+    const notices = await releaseNotices({ inputs, target, ripgrepLicense });
+    entries.push({ path: "dovet/THIRD_PARTY_NOTICES", mode: 0o644, data: new TextEncoder().encode(notices) });
     mkdirSync(opts.outDir, { recursive: true });
     const out = join(opts.outDir, archiveName(opts.version, target.id));
     await Bun.write(out, tarGz(entries));
@@ -322,6 +341,7 @@ if (import.meta.main) {
         })
       : [hostTarget()];
   const outDir = args.includes("--out") ? resolve(process.cwd(), flag("--out") ?? "") : join(ROOT, "dist", "release");
+  const built: { name: string; sha256: string }[] = [];
   for (const target of targets) {
     const file = await buildInstallArchive({
       target,
@@ -330,5 +350,8 @@ if (import.meta.main) {
       cacheDir: join(ROOT, "dist", "cache", "ripgrep"),
     });
     console.log(`built ${file}${target.ripgrep ? "" : " (no ripgrep: none published for this target)"}`);
+    built.push({ name: archiveName(pkg.version, target.id), sha256: sha256Hex(await Bun.file(file).bytes()) });
   }
+  await Bun.write(join(outDir, "SHA256SUMS"), formatSha256Sums(built));
+  console.log(`wrote ${join(outDir, "SHA256SUMS")}`);
 }

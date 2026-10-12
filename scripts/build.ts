@@ -4,7 +4,7 @@
 //     bun scripts/build.ts --tui-demo <outfile>  # the SPIKE-4 terminal demo (scripts/tui-demo.ts)
 //
 // compileDovet() holds the compile options; the compile-flags test and build-release.ts build with it.
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 const ROOT = join(import.meta.dir, "..");
 
@@ -12,9 +12,10 @@ export async function compileDovet(opts: {
   outfile: string;
   entry?: string;
   target?: Bun.Build.CompileTarget;
-}): Promise<void> {
+}): Promise<string[]> {
   // Bun.build rejects with the build errors when compiling fails (`throw` defaults to true).
-  await Bun.build({
+  const result = await Bun.build({
+    metafile: true,
     entrypoints: [opts.entry ?? join(ROOT, "src", "cli", "main.ts")],
     compile: {
       outfile: opts.outfile,
@@ -27,6 +28,8 @@ export async function compileDovet(opts: {
       autoloadBunfig: false,
     },
   });
+  // Metafile paths are relative to the working directory.
+  return Object.keys(result.metafile?.inputs ?? {}).map((p) => resolve(p));
 }
 
 /** The SPIKE-4 terminal demo (scripts/tui-demo.ts), with the same compile options. Not part of `dovet`. */

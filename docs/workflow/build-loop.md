@@ -52,6 +52,8 @@ Spawn a **fresh reviewer** (a subagent with no memory of your work; in Claude Co
 ### 8. Ship
 Open the PR (template filled: task, spec sections, criteria, assumptions). When CI is green on all three OSes and the review passed, **merge it** unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step; those wait for the owner (say so in the progress entry). Set the task's `Status:` to `done (#PR)`.
 
+**Docs-only changes don't wait for CI** (owner rule, 2026-10-12): a commit or PR that touches only `docs/` and Markdown files (status lines, progress entries, questions, wording) is merged as soon as `bun run docs:check` and `bun run spec:coverage` pass locally. Anything that touches code, tests, scripts, workflows or `package.json` still waits for green CI.
+
 ### 9. Hand off
 Append to `PROGRESS.md`:
 ```

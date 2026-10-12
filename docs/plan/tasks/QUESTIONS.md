@@ -4,7 +4,12 @@ When a spec doesn't decide something, the agent answers it itself and records qu
 
 ## Waiting for the owner
 
-(none)
+### W1 (M0-09): the release signing key
+Needed only before the first public release (owner, 2026-10-12: not now); building continues without it, tested with throwaway keys. About 15 minutes, once:
+1. **The protected environment.** On github.com open the `dovet` repository > **Settings** > **Environments** > **New environment**, name it `release`, click **Configure environment**. Tick **Required reviewers** and add yourself. Under **Deployment branches and tags** choose **Selected branches and tags** > **Add deployment branch or tag rule** > type **Tag**, pattern `v*`. Click **Save protection rules**.
+2. **Make the key.** Install Bun if you don't have it: on macOS or Linux run `curl -fsSL https://bun.sh/install | bash`; on Windows run `powershell -c "irm bun.sh/install.ps1 | iex"` (then open a new terminal). On the repository's GitHub page click **Code** > **Download ZIP**, unzip it, open a terminal in the unzipped folder and run `bun scripts/sign-release.ts --new-key`. It prints a private key and a public key.
+3. **Store the private key.** In the `release` environment page from step 1, under **Environment secrets** click **Add environment secret**, name `DOVET_RELEASE_KEY`, paste the private key, **Add secret**. Also keep a copy somewhere safe offline (a password manager). Never paste it anywhere else, including to the agent. Then clear the terminal (`clear`, or Cmd+K on macOS) and close it.
+4. **Give the agent the public key.** Paste the public key line into your next message to the agent (it is safe to share). The agent puts it into Dovet (`src/cli/release-signature.ts`); from then on a `v*` tag releases.
 
 ## Answered
 
@@ -53,3 +58,14 @@ When a spec doesn't decide something, the agent answers it itself and records qu
 - **Question (owner):** the downloads are large though little is built yet.
 - **Answer:** it is the Bun runtime, which every compiled Bun executable carries (ADR-1). Measured on Linux x64 with Bun 1.4.3: a one-line `console.log("hi")` compiles to 86.6 MB, `dovet` to 86.6 MB, `tui-demo` to 87.0 MB; Dovet's own JavaScript, minified, is about 0.3 MB. Windows: 91.9 MB for the one-liner. Compressed downloads are 31–42 MB. Size therefore stays roughly flat as Dovet grows. Shrinking the runtime (UPX-style packers) is not used: it breaks macOS code signatures and sets off antivirus scanners. Revisit only if Bun ships a smaller runtime.
 
+### Q10 (M0-09): M0-09 split in three tasks
+- **What's missing:** M0-09 asked for the release workflow, both install scripts and `dovet update` in one task, well over the ~400-line PR limit.
+- **Answer:** three tasks in build order: M0-09 signed release archives (notices, `SHA256SUMS`, signature, attestations), M0-10 `dovet update` and rollback (AC-ARCH-02), M0-11 install scripts (AC-CLI-07, which needs `dovet update` for its Windows junction part). The exit check is now M0-12. Every criterion stays in exactly one task.
+
+### Q11 (M0-09): signature format, and how the release workflow is tested before a key exists
+- **What's missing:** architecture "Distribution" says `SHA256SUMS` is Ed25519-signed and the public key embedded, but not the file formats, nor how the pipeline is proven without the owner's key.
+- **Answer:** `SHA256SUMS` lines are `<sha256 hex>  <file name>` (the `sha256sum` format); the signature is `SHA256SUMS.sig`, the raw 64-byte Ed25519 signature of its exact bytes (what `openssl pkeyutl -verify -rawin` and WebCrypto both take, for the install scripts). Keys are base64: the private key PKCS#8 (the `DOVET_RELEASE_KEY` secret), public keys raw 32 bytes (`RELEASE_PUBLIC_KEYS`, a list so a rotation can trust old and new). `sign-release.ts` refuses a key whose public half isn't embedded, so a release no install could verify is never published. A pull request touching the release files runs the whole workflow with a throwaway key and does not publish; its archives get real attestations, so `gh attestation verify` is proven in CI (AC-ARCH-03). Those attestations name the pull request's ref, not a `v*` tag; so users verify with `--source-ref refs/tags/v<version>` (now in architecture "Distribution"), and the release workflow's own check passes `--source-ref` of the run's ref. Dependabot pull requests skip the test release (read-only token).
+
+### Q12 (M0-09): what THIRD_PARTY_NOTICES lists
+- **What's missing:** AC-ARCH-05 says "each bundled package"; the spec doesn't say how they're found, nor whether the Bun runtime counts.
+- **Answer:** the npm packages are read from Bun's build metafile (every file compiled into the executable), so the list follows the code without upkeep. Also listed: the Bun runtime (its `LICENSE.md` for the exact Bun version, kept in `scripts/licenses/`; the build fails for a Bun version without one), `@anthropic-ai/sandbox-runtime` (its helpers ship in `libexec/srt/`), ripgrep (its `LICENSE-MIT` from the pinned archive) and the vendored pi-tui. A package without a license file fails the build. Noted for later: sandbox-runtime's `apply-seccomp` is linked statically with glibc; the notice carries sandbox-runtime's own license only, as upstream ships it.

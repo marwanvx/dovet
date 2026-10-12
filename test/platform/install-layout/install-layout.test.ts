@@ -30,7 +30,7 @@ const WINDOWS = process.platform === "win32";
 
 let work = "";
 let unpacked = "";
-let probe: { exe: string; rg: string; exitCode: number; stdout: string; stderr: string };
+let probe: { exe: string; rg: string; wide: number; exitCode: number; stdout: string; stderr: string };
 
 beforeAll(async () => {
   // Real path: the probe reports its own real path, and macOS and Windows temp directories go through links.
@@ -61,8 +61,32 @@ afterAll(() => {
 
 describe("install-directory archive", () => {
   test("unpacks to dovet/ holding the executable and libexec/rg", () => {
-    expect(readdirSync(join(unpacked, "dovet")).sort()).toEqual([`dovet${WINDOWS ? ".exe" : ""}`, "libexec"]);
+    expect(readdirSync(join(unpacked, "dovet")).sort()).toEqual([
+      "THIRD_PARTY_NOTICES",
+      `dovet${WINDOWS ? ".exe" : ""}`,
+      "libexec",
+    ]);
     expect(existsSync(join(unpacked, "dovet", "libexec", WINDOWS ? "rg.exe" : "rg"))).toBe(true);
+  });
+
+  // spec: AC-ARCH-05
+  test("THIRD_PARTY_NOTICES in the archive carries the licenses of Bun, ripgrep and the sandbox helpers", async () => {
+    const text = await Bun.file(join(unpacked, "dovet", "THIRD_PARTY_NOTICES")).text();
+    expect(text).toContain(`Bun ${Bun.version}`);
+    expect(text).toContain(`ripgrep ${RIPGREP_VERSION}`);
+    expect(text).toContain("Permission is hereby granted");
+    expect(text).toContain("@anthropic-ai/sandbox-runtime");
+    expect(text).toContain("Apache License");
+  });
+
+  // spec: AC-ARCH-05
+  test("THIRD_PARTY_NOTICES lists the npm packages compiled into the executable, with their license", async () => {
+    const text = await Bun.file(join(unpacked, "dovet", "THIRD_PARTY_NOTICES")).text();
+    const nm = join(ROOT, "node_modules", "get-east-asian-width");
+    const { version } = await Bun.file(join(nm, "package.json")).json();
+    expect(probe.wide).toBe(2);
+    expect(text).toContain(`get-east-asian-width ${version}`);
+    expect(text).toContain((await Bun.file(join(nm, "license")).text()).trim());
   });
 
   test("the unpacked binary runs the bundled ripgrep and gets its version", () => {
