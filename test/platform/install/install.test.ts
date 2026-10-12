@@ -276,7 +276,11 @@ describe.skipIf(WINDOWS)("install.sh", () => {
     expect(existsSync(join(home, ".local", "share", "dovet", "current"))).toBe(false);
   });
 
-  test("stops and names what to install when the openssl command is unusable", async () => {
+  // The script also tries Homebrew's openssl@3 by absolute path, which a stub on PATH can't shadow.
+  const homebrewOpenssl = ["/opt/homebrew/opt/openssl@3/bin/openssl", "/usr/local/opt/openssl@3/bin/openssl"].some(
+    existsSync,
+  );
+  test.skipIf(homebrewOpenssl)("stops and names what to install when the openssl command is unusable", async () => {
     await writeRelease("0.1.0");
     const stub = mkdtempSync(join(work, "stub-"));
     writeFileSync(join(stub, "openssl"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
