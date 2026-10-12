@@ -299,7 +299,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
 
     const first = await runWindows(root);
     expect(first.out).toContain(join(root, "current"));
-    expect(first.code).toBe(0);
+    expect(first).toMatchObject({ code: 0 });
     expect(readFileSync(join(root, "versions", "0.1.0", "libexec", "rg"), "utf8")).toBe("rg");
     expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.1.0")));
     expect(installRootFor(realpathSync(join(root, "current", EXE)))).toBe(realpathSync(root));
@@ -311,7 +311,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     ]);
     expect(registryPath("Machine")).toBe(machineBefore);
 
-    expect((await runWindows(root)).code).toBe(0);
+    expect(await runWindows(root)).toMatchObject({ code: 0 });
     expect(registryPath("User")).toBe(userAfter);
   });
 
@@ -327,19 +327,19 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
       sums.replace(/^./, (c) => (c === "0" ? "1" : "0")),
     );
     const badSums = await runWindows(root);
-    expect(badSums.code).not.toBe(0);
+    expect(badSums.code, badSums.out).not.toBe(0);
     expect(badSums.out.toLowerCase()).toContain("signature");
 
     writeFileSync(join(releases, "SHA256SUMS"), sums);
     const original = readFileSync(archive);
     writeFileSync(archive, Buffer.concat([original, Buffer.from("x")]));
     const badArchive = await runWindows(root);
-    expect(badArchive.code).not.toBe(0);
+    expect(badArchive.code, badArchive.out).not.toBe(0);
     expect(badArchive.out.toLowerCase()).toContain("checksum");
 
     writeFileSync(archive, original);
     const untrusted = await runWindows(root, { DOVET_RELEASE_PUBLIC_KEYS: (await newKeys()).publicKey });
-    expect(untrusted.code).not.toBe(0);
+    expect(untrusted.code, untrusted.out).not.toBe(0);
     expect(untrusted.out.toLowerCase()).toContain("signature");
     expect(existsSync(join(root, "current"))).toBe(false);
   });
@@ -348,7 +348,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
   test("`dovet update` swaps the junction while an older dovet.exe is running", async () => {
     await writeRelease("0.1.0");
     const root = join(work, `win-${crypto.randomUUID()}`, "dovet");
-    expect((await runWindows(root)).code).toBe(0);
+    expect(await runWindows(root)).toMatchObject({ code: 0 });
 
     const old = join(root, "versions", "0.1.0", EXE);
     copyFileSync(process.execPath, old);
