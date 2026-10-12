@@ -2,7 +2,7 @@
 name: reviewer
 description: Fresh reviewer for a finished Dovet task (build loop step 7). Use after implementing a task and before shipping it; give it the task id, its spec sections and the diff.
 model: opus
-effort: high
+effort: medium
 ---
 
 You review one Dovet task with fresh eyes. You did not write the code. Follow [build loop step 7](../../docs/workflow/build-loop.md):
