@@ -30,7 +30,7 @@ Agents run this loop through [build-loop.md](build-loop.md), which also covers p
 
 ## Spec changes
 
-- A requirement is written in the spec of its feature, never only in `docs/plan/` (decisions, roadmap, open questions), the user journeys or `docs/background/`. After editing any of those, or adding a `[SPIKE-n]`/ADR reference, run `python3 scripts/docs-context.py` to refresh the "Before you build" boxes, then `python3 scripts/check-docs.py` (CI runs the same check).
+- A requirement is written in the spec of its feature, never only in `docs/plan/` (decisions, roadmap, open questions), the user journeys or `docs/background/`. After editing any of those, or adding a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes` to refresh the "Before you build" boxes, then `bun run docs:check` (CI runs the same check).
 
 - A spec change is a PR touching `docs/` with an ADR when it changes a decision.
 - Code that implements a changed spec goes in a separate PR after the spec PR is merged.

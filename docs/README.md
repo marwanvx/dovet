@@ -18,8 +18,8 @@ These specs are written to be **built from by an AI coding agent** and reviewed 
 2. **Every feature has acceptance criteria** (`AC-<SPEC>-<n>`, e.g. `AC-TOOLS-04`). A feature is done when each criterion has a passing automated test tagged with its ID (or a documented manual check where automation is impossible).
 3. **Nothing is guessed.** External facts are marked `[VERIFIED date]`. Anything unverified is a **spike** in [open-questions](plan/open-questions.md): resolve it before building the feature that depends on it.
 4. **Build in milestone order** ([roadmap](plan/roadmap.md)). v0.2 items are described so v0.1 leaves room for them; don't build them early.
-5. **One home per requirement.** Every requirement lives in the spec of the feature it belongs to. The cross-cutting docs (decisions, roadmap, open questions, user journeys) only explain, order or point; they never add requirements. Each spec starts with a generated **"Before you build"** box listing its milestone, decisions, open questions with fallbacks, and user journeys (`scripts/docs-context.py`).
-6. **What to read for a task:** run `python3 scripts/next.py`; it prints the task and the exact spec sections it needs. For background on the whole design: [principles](product/principles.md), [architecture](specs/architecture.md), [interfaces](specs/interfaces.md).
+5. **One home per requirement.** Every requirement lives in the spec of the feature it belongs to. The cross-cutting docs (decisions, roadmap, open questions, user journeys) only explain, order or point; they never add requirements. Each spec starts with a generated **"Before you build"** box listing its milestone, decisions, open questions with fallbacks, and user journeys (`bun run docs:boxes`).
+6. **What to read for a task:** run `bun run next`; it prints the task and the exact spec sections it needs. For background on the whole design: [principles](product/principles.md), [architecture](specs/architecture.md), [interfaces](specs/interfaces.md).
 
 ## Status markers
 

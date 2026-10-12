@@ -1,0 +1,171 @@
+// Print everything an agent needs to start its next session, in one go.
+//
+//     bun run next            # where the project stands + the next task + the exact spec text it needs
+//     bun run next M0-03      # the same for a named task
+//
+// It reads docs/plan/tasks/ (task lists, PROGRESS.md, QUESTIONS.md) and the spec sections a task's
+// "Read" line links to, and prints them, so the agent never has to guess which files matter.
+// The build loop (docs/workflow/build-loop.md) tells agents to run this first.
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, normalize, relative, sep } from "node:path";
+
+const ROOT = join(import.meta.dir, "..");
+const TASKS = join(ROOT, "docs", "plan", "tasks");
+export const NOT_FOUND = "Couldn't find those sections";
+
+const read = (path: string): string => readFileSync(path, "utf8");
+
+export type Task = { id: string; title: string; body: string; status: string; deps: string };
+
+/** Task files in roadmap order (M0, M1, ...). */
+export function milestones(): [string, string][] {
+  return readdirSync(TASKS)
+    .filter((f) => /^M\d+\.md$/.test(f))
+    .sort((a, b) => Number(a.slice(1, -3)) - Number(b.slice(1, -3)))
+    .map((f) => [f.slice(0, -3), read(join(TASKS, f))]);
+}
+
+export function parseTasks(text: string): Task[] {
+  const tasks: Task[] = [];
+  for (const m of text.matchAll(/^### (M\d+-\d+\w*) (.+?)\n(.*?)(?=^### |(?![\s\S]))/gms)) {
+    const [, id = "", title = "", rawBody = ""] = m;
+    const body = rawBody.trim();
+    const status = /\*\*Status:\*\*\s*(.+)/.exec(body);
+    const deps = /\*\*Depends on:\*\*\s*(.+)/.exec(body);
+    tasks.push({
+      id,
+      title: title.trim(),
+      body,
+      status: status?.[1]?.trim() ?? "todo",
+      deps: deps?.[1]?.trim() ?? "—",
+    });
+  }
+  return tasks;
+}
+
+export const isDone = (status: string): boolean => status.startsWith("done");
+
+function depsDone(task: Task, byId: Map<string, Task>): boolean {
+  if (["—", "-", ""].includes(task.deps)) return true;
+  if (task.deps.startsWith("all other")) return [...byId.values()].every((t) => t.id === task.id || isDone(t.status));
+  return [...task.deps.matchAll(/M\d+-\d+\w*/g)].every((d) => {
+    const dep = byId.get(d[0]);
+    return !dep || isDone(dep.status);
+  });
+}
+
+/** The parts of a markdown doc whose headings match the wanted § numbers or quoted titles. */
+function sections(doc: string, wanted: string[]): string[] {
+  const heads = [...doc.matchAll(/^(#{2,4}) (.+)$/gm)].map((m) => ({
+    pos: m.index,
+    level: m[1]?.length ?? 0,
+    title: (m[2] ?? "").trim(),
+  }));
+  const out: string[] = [];
+  const covered: [number, number][] = [];
+  heads.forEach(({ pos, level, title }, i) => {
+    if (covered.some(([a, b]) => a <= pos && pos < b)) return; // already inside a printed section
+    const num = /^(\d+[a-z]?(?:\.\d+)?)\.?\s/.exec(title);
+    const hit = wanted.some(
+      (w) => (num && num[1] === w) || (!/^\d/.test(w) && title.toLowerCase().includes(w.toLowerCase())),
+    );
+    if (!hit) return;
+    const end = heads.slice(i + 1).find((h) => h.level <= level)?.pos ?? doc.length;
+    covered.push([pos, end]);
+    out.push(doc.slice(pos, end).trimEnd());
+  });
+  return out;
+}
+
+function box(doc: string): string {
+  const m = /<!-- before-you-build:start -->(.*?)<!-- before-you-build:end -->/s.exec(doc);
+  return m?.[1]?.trim() ?? "";
+}
+
+type Reading = { rel: string; label: string; box: string; parts: string[]; hadSections: boolean };
+
+function readingFor(task: Task): Reading[] {
+  const readLine = /\*\*Read:\*\*(.+)/.exec(task.body);
+  if (!readLine?.[1]) return [];
+  const out: Reading[] = [];
+  for (const [, label = "", target = ""] of readLine[1].matchAll(/\[([^\]]+)\]\(([^)#]+)(?:#[^)]*)?\)/g)) {
+    const path = normalize(join(TASKS, target));
+    if (!existsSync(path) || !statSync(path).isFile()) continue;
+    const text = read(path);
+    const wanted = [
+      ...[...label.matchAll(/§\s*(\d+[a-z]?(?:\.\d+)?)/g)].map((m) => m[1] ?? ""),
+      ...[...label.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? ""),
+    ];
+    const rel = relative(ROOT, path).split(sep).join("/");
+    const parts = wanted.length ? sections(text, wanted) : [];
+    for (const [, n] of label.matchAll(/SPIKE-(\d+)/g)) {
+      // a spike reference prints its table row
+      parts.push(...[...text.matchAll(new RegExp(`^\\| SPIKE-${n} \\|.*$`, "gm"))].map((m) => m[0]));
+      wanted.push(`SPIKE-${n}`);
+    }
+    out.push({ rel, label, box: box(text), parts, hadSections: wanted.length > 0 });
+  }
+  return out;
+}
+
+function tailEntries(text: string, n: number): string {
+  const entries = text.split(/(?=^## )/m).filter((e) => e.startsWith("## "));
+  return entries.slice(-n).join("");
+}
+
+/** The session-start report: for the next task, or for `want` (a task id). */
+export function report(want?: string): string {
+  const lines: string[] = [];
+  const print = (s = ""): void => {
+    lines.push(s);
+  };
+  const ms = milestones();
+  print("# Session start (generated by scripts/next.ts)\n");
+  const q = read(join(TASKS, "QUESTIONS.md"));
+  const waiting = q.includes("## Waiting for the owner")
+    ? (q.split("## Waiting for the owner")[1]?.split("## Answered")[0]?.trim() ?? "")
+    : "";
+  print(`## Questions waiting for the owner\n${waiting || "(none)"}\n`);
+  print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 3).trim()}\n`);
+
+  for (const [name, text] of ms) {
+    const tasks = parseTasks(text);
+    const byId = new Map(tasks.map((t) => [t.id, t]));
+    let task: Task | undefined;
+    if (want) {
+      task = byId.get(want);
+      if (!task) continue;
+    } else {
+      if (tasks.length && tasks.every((t) => isDone(t.status))) continue;
+      task =
+        tasks.find((t) => t.status.startsWith("in-progress")) ??
+        tasks.find((t) => t.status === "todo" && depsDone(t, byId));
+    }
+    print(
+      `## Current milestone: ${name}  (${tasks.filter((t) => isDone(t.status)).length}/${tasks.length} tasks done)\n`,
+    );
+    if (!task) {
+      const blocked = tasks.filter((t) => t.status.startsWith("blocked")).map((t) => t.id);
+      print(`No task can start now.${blocked.length ? ` Blocked: ${blocked.join(", ")} (see QUESTIONS.md).` : ""}`);
+      return lines.join("\n");
+    }
+    print(`## Task ${task.id} ${task.title}\n\n${task.body}\n`);
+    print("## What to read (exact text; read nothing else unless a test failure points you there)\n");
+    for (const r of readingFor(task)) {
+      print(`### ${r.rel} — ${r.label}\n`);
+      if (r.box) print(`${r.box}\n`);
+      if (r.parts.length) print(`${r.parts.join("\n\n")}\n`);
+      else if (r.hadSections) print(`(${NOT_FOUND} automatically: read them in ${r.rel}.)\n`);
+      else print(`(Read the whole file: ${r.rel}.)\n`);
+    }
+    return lines.join("\n");
+  }
+  print(
+    want
+      ? `Task ${want} not found in docs/plan/tasks/.`
+      : "Every task list is finished. Next: plan the next milestone (build loop step 4).",
+  );
+  return lines.join("\n");
+}
+
+if (import.meta.main) console.log(report(Bun.argv[2]));
