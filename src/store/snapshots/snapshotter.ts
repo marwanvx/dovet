@@ -110,7 +110,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
   if (top === undefined) throw new Error(`${options.workspace} is not in a git repository`);
   const root = resolve(top);
   const ctx: GitContext = { cwd: root, env, hooksDir };
-  // Only the private store is configured: every blob a tree needs is written there, so a checkpoint stays restorable
+  // ASSUMPTION (QUESTIONS Q3, spec PR #14): only the private store is configured: every blob a tree needs is written there, so a checkpoint stays restorable
   // however the user's repository is pruned, and git never touches the user's objects (it would freshen their
   // timestamps if they were an alternate).
   const privateEnv = { GIT_INDEX_FILE: indexPath, GIT_OBJECT_DIRECTORY: objectsDir };
