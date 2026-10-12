@@ -15,8 +15,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "release": "bun scripts/build-release.ts --all",
-    "check": "bun run typecheck && bun run lint && bun run lint:deps && bun run test && bun run spec:coverage && bun run docs:check",
-    "typecheck": "bun check -b",
+    "check": "bun check -b && bun run lint && bun run lint:deps && bun run test && bun run spec:coverage && bun run docs:check",
     "lint": "biome check .",
     "lint:deps": "bun --bun depcruise src --config .dependency-cruiser.cjs",
     "test": "bun test --check",
