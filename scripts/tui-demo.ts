@@ -11,9 +11,14 @@
 // this file is only ever an entry point, never imported. CI compiles it per OS and attaches it to the run (ci.yml, "tui-demo" artifacts) for the owner's terminal checklist.
 import {
   Box,
+  backgroundAnsi,
+  type Color,
+  type Component,
   Container,
   Editor,
   type EditorTheme,
+  foregroundAnsi,
+  getTerminalColorMode,
   Markdown,
   type MarkdownTheme,
   matchesKey,
@@ -21,6 +26,7 @@ import {
   ProcessTerminal,
   type ProgramStatus,
   parseKey,
+  rgbColor,
   type SelectListTheme,
   stripTerminalSequences,
   type Terminal,
@@ -30,6 +36,7 @@ import {
   TuiAltScreen,
   TuiMainScreen,
   truncateToWidth,
+  visibleWidth,
 } from "../src/tui/vendor/pi-tui/index.ts";
 import { enableWindowsVirtualTerminalInput } from "../src/tui/vendor/pi-tui/windows-console.ts";
 
@@ -100,7 +107,54 @@ const HELP = [
   dim("/long streams 300 lines · /reply streams the sample again · resize the window while a reply streams"),
 ].join("\n");
 
-type Probe = { colors: string; lastKey: string };
+/** Dovet's own colors (tui "Rendering rules": Dovet paints its own background, QUESTIONS Q8). */
+type Palette = { name: "dark" | "light"; bg: Color; fg: Color; overlay: Color };
+const DARK: Palette = {
+  name: "dark",
+  bg: rgbColor(24, 25, 33),
+  fg: rgbColor(222, 223, 230),
+  overlay: rgbColor(44, 46, 60),
+};
+const LIGHT: Palette = {
+  name: "light",
+  bg: rgbColor(250, 249, 245),
+  fg: rgbColor(36, 37, 46),
+  overlay: rgbColor(232, 230, 222),
+};
+
+/**
+ * Paint one line with the palette across `width` columns. Every reset inside the line (SGR 0, 39, 49) is followed by
+ * the palette again, so no text falls back to the terminal's own colors mid-line.
+ */
+export function paintLine(line: string, width: number, bg: Color, fg: Color): string {
+  const mode = getTerminalColorMode();
+  const bgOn = backgroundAnsi(bg, mode);
+  const fgOn = foregroundAnsi(fg, mode);
+  const body = line
+    .replaceAll("\x1b[0m", `\x1b[0m${fgOn}${bgOn}`)
+    .replaceAll("\x1b[m", `\x1b[m${fgOn}${bgOn}`)
+    .replaceAll("\x1b[39m", `\x1b[39m${fgOn}`)
+    .replaceAll("\x1b[49m", `\x1b[49m${bgOn}`);
+  return `${fgOn}${bgOn}${body}${" ".repeat(Math.max(0, width - visibleWidth(line)))}\x1b[0m`;
+}
+
+/** Wraps the whole screen so every line Dovet draws is painted (inline mode: full width, blank lines too). */
+class Painted implements Component {
+  constructor(
+    private readonly child: Component,
+    private readonly palette: () => Palette | undefined,
+  ) {}
+  invalidate(): void {
+    this.child.invalidate();
+  }
+  render(width: number): string[] {
+    const p = this.palette();
+    const lines = this.child.render(width);
+    return p ? lines.map((line) => paintLine(line, width, p.bg, p.fg)) : lines;
+  }
+}
+
+type Probe = { colors: string; lastKey: string; theme: string };
 
 /** One line of facts for the checklist: size, keyboard protocol, theme colors, redraws and the last key received. */
 class StatusLine {
@@ -115,7 +169,8 @@ class StatusLine {
       `last key: ${this.probe.lastKey}`,
       `${t.columns}x${t.rows}`,
       `kitty keys: ${t.kittyProtocolActive ? "on" : "off"}`,
-      `colors: ${this.probe.colors}`,
+      `terminal colors: ${this.probe.colors}`,
+      `Dovet theme: ${this.probe.theme}`,
       `full redraws: ${this.tui.fullRedraws}`,
     ];
     return [truncateToWidth(dim(facts.join(" · ")), width)];
@@ -142,17 +197,25 @@ type Demo = {
 };
 
 /** Build the demo screen on `terminal`. `chunk` characters arrive every `intervalMs`. */
-function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; intervalMs: number }): Demo {
+function createDemo(
+  terminal: Terminal,
+  opts: { alt: boolean; chunk: number; intervalMs: number; noColor: boolean },
+): Demo {
   const tui: TUI = opts.alt ? new TuiAltScreen(terminal) : new TuiMainScreen(terminal);
   // The hardware cursor follows the caret, so IME composition windows appear in place (tui "Terminal I/O robustness").
   tui.setShowHardwareCursor(true);
-  const probe: Probe = { colors: "asking…", lastKey: "(none yet)" };
+  // NO_COLOR, or a terminal without 256 colors: no background is painted.
+  const painting = !opts.noColor;
+  let palette: Palette | undefined = painting ? DARK : undefined;
+  const probe: Probe = { colors: "asking…", lastKey: "(none yet)", theme: palette?.name ?? "off (NO_COLOR)" };
   const transcript = new Container();
   const editor = new Editor(tui, editorTheme, { paddingX: 1 });
-  tui.addChild(new Text(HELP, 1, 0));
-  tui.addChild(transcript);
-  tui.addChild(new StatusLine(tui, probe));
-  tui.addChild(editor);
+  const screen = new Container();
+  screen.addChild(new Text(HELP, 1, 0));
+  screen.addChild(transcript);
+  screen.addChild(new StatusLine(tui, probe));
+  screen.addChild(editor);
+  tui.addChild(new Painted(screen, () => palette));
   tui.setFocus(editor);
 
   let streaming: ReturnType<typeof setInterval> | undefined;
@@ -189,7 +252,12 @@ function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; int
       overlay = undefined;
       tui.setFocus(editor);
     } else {
-      const box = new Box(2, 1);
+      const shade = palette;
+      const box = new Box(
+        2,
+        1,
+        shade ? (line) => paintLine(line, visibleWidth(line), shade.overlay, shade.fg) : undefined,
+      );
       box.addChild(
         new Text(`${bold("This is an overlay")}\n\nIt is drawn over the conversation.\nEsc or Ctrl+O closes it.`, 0, 0),
       );
@@ -230,7 +298,10 @@ function createDemo(terminal: Terminal, opts: { alt: boolean; chunk: number; int
       .queryTerminalColors({ timeoutMs: 500, onLateReply: (c) => (probe.colors = `${describeColors(c)} (late)`) })
       .then((c) => {
         probe.colors = describeColors(c);
-        tui.requestRender();
+        // The terminal's light/dark only picks which of Dovet's variants starts.
+        if (painting && describeColors(c).startsWith("light")) palette = LIGHT;
+        probe.theme = palette?.name ?? probe.theme;
+        tui.requestRender(true);
       })
       .catch((error: unknown) => {
         probe.colors = `query failed: ${String(error)}`;
@@ -268,7 +339,7 @@ class MemoryTerminal implements Terminal {
 
 async function selfTest(): Promise<void> {
   const terminal = new MemoryTerminal();
-  const demo = createDemo(terminal, { alt: false, chunk: 40, intervalMs: 0 });
+  const demo = createDemo(terminal, { alt: false, chunk: 40, intervalMs: 0, noColor: false });
   demo.start();
   demo.stream(SAMPLE_REPLY);
   demo.editor.setText("typed into the editor");
@@ -285,7 +356,7 @@ async function selfTest(): Promise<void> {
 
 async function interactive(alt: boolean): Promise<void> {
   const terminal = new ProcessTerminal();
-  const demo = createDemo(terminal, { alt, chunk: 6, intervalMs: 16 });
+  const demo = createDemo(terminal, { alt, chunk: 6, intervalMs: 16, noColor: Boolean(process.env.NO_COLOR) });
   const quit = async () => {
     demo.tui.stop();
     await terminal.drainInput();

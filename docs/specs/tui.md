@@ -51,6 +51,12 @@ pi-tui's inline renderer clears and fully re-renders when content **above the vi
 - Diffs: unified diff with line numbers, red/green, word-level highlights for changed lines.
 - Long tool output in expanded view is capped at 200 lines with "… N more lines (o to open in pager)"; the pager uses the alt screen temporarily.
 - Colors: a theme with light and dark variants, auto-detected via `COLORFGBG`/OSC 11 query where supported [SPIKE-4]; `NO_COLOR` respected (monochrome, symbols only).
+- **Dovet paints its own background** (owner decision, QUESTIONS Q8): the theme sets both the background and the default text color, so Dovet looks the same whatever the terminal's colors are. The detected light/dark only picks which variant starts (`ui.theme` overrides it).
+  - Fullscreen mode paints the whole screen.
+  - Inline mode paints every line Dovet draws across the full width, including blank lines between blocks, so the conversation reads as one panel. Rows Dovet hasn't drawn, and the shell prompt after exit, keep the terminal's own colors.
+  - Every reset inside a line (`SGR 0`, `39`, `49`) is followed by the theme's colors again, so no text falls back to the terminal's colors mid-line; overlays use a slightly different shade of the background.
+  - With `NO_COLOR`, or a terminal limited to 16 colors, no background is painted.
+  - Lines already in the scrollback are not repainted when the terminal is resized (append-only screen); the terminal reflows them.
 
 ## Permission prompt
 
@@ -290,3 +296,4 @@ Custom slash commands from `.claude/commands/*.md` / `.dovet/commands/*.md` (pro
 - [ ] **AC-TUI-16** Sanitization: model output containing OSC 0 (title), OSC 52 (clipboard), OSC 8 with a hidden target, CSI cursor moves and a BEL changes neither title nor clipboard nor screen layout and shows the escapes visibly; colored test output keeps its colors.
 - [ ] **AC-TUI-17** Terminal state: after exit, Ctrl+Z/fg, SIGTERM, an uncaught exception and killing a suspended session, `stty -a` and a probe of bracketed paste, the Kitty keyboard protocol, mouse and focus reporting show the terminal as it was before Dovet started.
 - [ ] **AC-TUI-18** Input: a paste without an end marker ends after 1 s and input keeps working; two overlapping pastes reach the model as two `<pasted_content>` blocks; a delayed DA1 reply over a simulated slow link never appears in the prompt; with an IME composition the hardware cursor is at the caret.
+- [ ] **AC-TUI-19** Dovet's own background: with a dark and with a light terminal theme, every cell of every line Dovet draws (inline and fullscreen; including blank lines, overlays, code blocks and text after a color reset) has the theme's background and no text has the terminal's default color (VirtualTerminal); with `NO_COLOR` no background is painted.
