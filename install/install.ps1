@@ -150,7 +150,8 @@ function Install-Dovet {
 
         $archive = Join-Path $tmp $release.Name
         Get-File "$base/$($release.Name)" $archive
-        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLower() -ne $release.Sha) {
+        $actual = ([BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([IO.File]::ReadAllBytes($archive))) -replace '-', '').ToLower()
+        if ($actual -ne $release.Sha) {
             throw "dovet install: the checksum of $($release.Name) does not match the signed SHA256SUMS"
         }
 
