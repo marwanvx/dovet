@@ -1332,3 +1332,12 @@ How the CI timings were found: the first benchmark printed only totals, hit the 
 - `import.meta.main` is false inside a Bun-compiled Windows executable (Bun 1.4.3): an entry file must run unconditionally.
 - Size: a Bun 1.4.3 compiled one-line program is 86.6 MB (Linux x64), 91.9 MB (Windows x64); Dovet's own code is about 0.3 MB minified.
 
+## SPIKE-42 first look: Windows sandbox via MXC (M0-08, 2026-10-12)
+
+- Result in [open-questions](../plan/open-questions.md): `@microsoft/mxc-sdk` 1.0.0 runs `cmd /c echo hi`, enforces a write root and denies egress under Bun 1.4.3 and from a compiled executable, on Windows 11 25H2 arm64 and Server 2025 x64; the compiled executable needs the SDK's native files and `koffi.node` beside it.
+- Package facts (1.0.0 tarball): ESM, `engines.node >=24`; public API under `@microsoft/mxc-sdk/v1` (`run`, `spawn`, `spawnWithPty`, `getPlatformSupport`, `getAvailableBackends`, lifecycle calls); dependencies `koffi` ^3.2.1, `node-pty` ^1.1.0, `semver`; 105 MB unpacked, almost all `bin/x64` and `bin/arm64` (Windows, Linux and macOS executables and `mxc_ffi` libraries for both CPUs).
+- How it finds its files: `wxc-exec.exe` from `$MXC_BIN_DIR/<arch>/` first, then `<package>/bin/<arch>/`; `mxc_ffi.dll` from `$MXC_FFI_DIR/` first, then `<package>/bin/<arch>/`. `getPlatformSupport()` runs `wxc-exec --probe`.
+- `koffi` 3.3.3 loads its prebuilt `koffi.node` from the optional package `@koromix/koffi-<os>-<arch>` (`<os>_<arch>/koffi.node`) or `build/koffi/<triplet>/` next to its own JS file, or from `process.resourcesPath + "/koffi/<triplet>/koffi.node"` (meant for Electron). Bun installs the optional package without running koffi's install script.
+- Tiers seen in `getPlatformSupport()`: Windows 11 Enterprise 25H2: `base-container`; Windows Server 2025 Datacenter: `appcontainer-dacl` with three warnings (no BaseContainer, system-drive root metadata, NUL device; the last two are fixed by an elevated `wxc-host-prep`); there `curl -o NUL` failed with exit 23 even with egress allowed.
+- The runners' user is `runneradmin`, an administrator: a standard user is untested.
+

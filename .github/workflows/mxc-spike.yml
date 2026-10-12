@@ -1,0 +1,36 @@
+# SPIKE-42 (M0-08): @microsoft/mxc-sdk from a compiled executable. A record, not a gate; the SDK is not a dependency.
+name: mxc-spike
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - test/platform/mxc/**
+      - .github/workflows/mxc-spike.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mxc-spike-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    name: probe (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-11-arm, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bun add --no-save @microsoft/mxc-sdk@1.0.0
+      - run: bun test/platform/mxc/run-spike.ts
