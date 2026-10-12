@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   copyFileSync,
   existsSync,
@@ -23,6 +23,9 @@ const OS = WINDOWS ? "win32" : process.platform === "darwin" ? "darwin" : "linux
 const EXE = WINDOWS ? "dovet.exe" : "dovet";
 const TARGET = hostTargetId(OS, process.arch, detectMusl());
 const INSTALL_DIR = join(import.meta.dir, "../../../install");
+// Each install.ps1 run spends seconds on its own Ed25519 check under Windows PowerShell.
+if (process.platform === "win32") setDefaultTimeout(60_000);
+
 const SH = Bun.which("sh") ?? "sh";
 const POSIX_SCRIPT = join(INSTALL_DIR, "install.sh");
 const WINDOWS_SCRIPT = join(INSTALL_DIR, "install.ps1");
@@ -421,11 +424,11 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     const userBefore = registryPath("User");
 
     const first = await runWindows(root);
-    expect(first.out).toContain(join(root, "current"));
+    expect(first.out).toContain(join(realpathSync.native(root), "current"));
     expect(first).toMatchObject({ code: 0 });
     expect(readFileSync(join(root, "versions", "0.1.0", "libexec", "rg"), "utf8")).toBe("rg");
-    expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.1.0")));
-    expect(installRootFor(realpathSync(join(root, "current", EXE)))).toBe(realpathSync(root));
+    expect(realpathSync.native(join(root, "current"))).toBe(realpathSync.native(join(root, "versions", "0.1.0")));
+    expect(installRootFor(realpathSync.native(join(root, "current", EXE)))).toBe(realpathSync.native(root));
 
     const userAfter = registryPath("User");
     expect(userAfter.split(";").filter((p) => p !== "")).toEqual([
@@ -468,7 +471,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     expect(untrusted.out.toLowerCase()).toContain("signature");
 
     expect(readdirSync(join(root, "versions"))).toEqual(["0.1.0"]);
-    expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.1.0")));
+    expect(realpathSync.native(join(root, "current"))).toBe(realpathSync.native(join(root, "versions", "0.1.0")));
   });
 
   test("records the version it left in `previous` when installing a newer one", async () => {
@@ -478,7 +481,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
     await writeRelease("0.2.0");
     expect(await runWindows(root)).toMatchObject({ code: 0 });
     expect(readFileSync(join(root, "previous"), "utf8").trim()).toBe("0.1.0");
-    expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.2.0")));
+    expect(realpathSync.native(join(root, "current"))).toBe(realpathSync.native(join(root, "versions", "0.2.0")));
   });
 
   // spec: AC-CLI-07
@@ -497,7 +500,7 @@ describe.skipIf(!WINDOWS)("install.ps1", () => {
       const result = await update({ root, baseUrl, targetId: TARGET, os: OS, publicKeys: [keys.publicKey] });
       expect(result).toMatchObject({ status: "updated", from: "0.1.0", to: "0.2.0" });
       expect(running.exitCode).toBeNull();
-      expect(realpathSync(join(root, "current"))).toBe(realpathSync(join(root, "versions", "0.2.0")));
+      expect(realpathSync.native(join(root, "current"))).toBe(realpathSync.native(join(root, "versions", "0.2.0")));
       expect(existsSync(old)).toBe(true);
     } finally {
       running.kill();
