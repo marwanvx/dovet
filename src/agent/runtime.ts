@@ -23,6 +23,7 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     ...deps,
     dirs: Object.freeze({ ...deps.dirs }),
     env: Object.freeze({ ...deps.env }),
+    ...(deps.baseUrls ? { baseUrls: Object.freeze({ ...deps.baseUrls }) } : {}),
     stdio: Object.freeze({ ...deps.stdio }),
   };
   let closed = false;

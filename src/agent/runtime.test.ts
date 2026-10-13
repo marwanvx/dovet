@@ -33,6 +33,41 @@ describe("createRuntime", () => {
     await b.close();
   });
 
+  test("each Runtime keeps its own environment, directories, stdio, platform and base URLs", async () => {
+    const platformA = fakePlatform({ os: "linux" });
+    const platformB = fakePlatform({ os: "win32" });
+    const a = createRuntime(
+      deps({
+        env: { A: "1" },
+        dirs: { config: "/a/cfg", data: "/a/data", cache: "/a/cache" },
+        stdio: { isTTY: true },
+        platform: platformA,
+        baseUrls: { anthropic: "http://a" },
+      }),
+    );
+    const b = createRuntime(
+      deps({
+        env: { B: "2" },
+        dirs: { config: "/b/cfg", data: "/b/data", cache: "/b/cache" },
+        stdio: { isTTY: false },
+        platform: platformB,
+        baseUrls: { anthropic: "http://b" },
+      }),
+    );
+    expect(a.deps.env).toEqual({ A: "1" });
+    expect(b.deps.env).toEqual({ B: "2" });
+    expect(a.deps.dirs.config).toBe("/a/cfg");
+    expect(b.deps.dirs.config).toBe("/b/cfg");
+    expect(a.deps.stdio.isTTY).toBe(true);
+    expect(b.deps.stdio.isTTY).toBe(false);
+    expect(a.deps.platform).toBe(platformA);
+    expect(b.deps.platform).toBe(platformB);
+    expect(a.deps.baseUrls).toEqual({ anthropic: "http://a" });
+    expect(b.deps.baseUrls).toEqual({ anthropic: "http://b" });
+    await a.close();
+    await b.close();
+  });
+
   test("a Runtime created after another one closed starts fresh", async () => {
     const first = createRuntime(deps());
     await first.close();
@@ -43,9 +78,12 @@ describe("createRuntime", () => {
 
   test("the environment is a frozen copy taken once: later changes to the caller's object don't leak in", async () => {
     const source: Record<string, string> = { HOME: "/home/u" };
-    const runtime = createRuntime(deps({ env: source }));
+    const urls: Record<string, string> = { anthropic: "http://x" };
+    const runtime = createRuntime(deps({ env: source, baseUrls: urls }));
     source.HOME = "/elsewhere";
     source.NEW = "1";
+    urls.anthropic = "http://changed";
+    expect(runtime.deps.baseUrls).toEqual({ anthropic: "http://x" });
     expect(runtime.deps.env).toEqual({ HOME: "/home/u" });
     expect(Object.isFrozen(runtime.deps.env)).toBe(true);
     expect(Object.isFrozen(runtime.deps.dirs)).toBe(true);

@@ -2,10 +2,17 @@ language js
 
 `$x` as $s where {
   or {
-    and { $s <: JsAssignmentExpression(left=$l), $l <: r"(?s)process\.env.*" },
-    and { $s <: JsUnaryExpression(), $s <: r"(?s)delete .*process\.env.*" },
-    $s <: `Object.assign(process.env, $_)`,
-    $s <: `process.chdir($_)`
+    and {
+      $s <: JsAssignmentExpression(left=$l),
+      $l <: r"(?s)(?:globalThis\.)?(?:process(?:\.env\b|\[.env.\])|Bun\.env\b).*"
+    },
+    and { $s <: JsUnaryExpression(), $s <: r"(?s)delete .*(?:process(?:\.env\b|\[.env.\])|Bun\.env\b).*" },
+    and {
+      $s <: JsCallExpression(),
+      $s <: r"(?s)(?:Object\.(?:assign|defineProperty|defineProperties)|Reflect\.(?:set|deleteProperty|defineProperty))\((?:globalThis\.)?(?:process(?:\.env\b|\[.env.\])|Bun\.env\b).*"
+    },
+    $s <: `process.chdir($_)`,
+    and { $s <: JsImport(), $s <: r"(?s)import .*\b(?:env|chdir)\b.*from .(?:node:)?process..*" }
   },
-  register_diagnostic(span=$s, message="Never write process.env or call process.chdir: the cwd is Session state and child environments are built per spawn (architecture: State ownership, interfaces §9).")
+  register_diagnostic(span=$s, message="Never write process.env or Bun.env or call process.chdir: the cwd is Session state and child environments are built per spawn (architecture: State ownership, interfaces §9).")
 }

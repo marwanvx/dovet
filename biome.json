@@ -1,20 +1,11 @@
 {
   "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
-  "vcs": {
-    "enabled": true,
-    "clientKind": "git",
-    "useIgnoreFile": true
-  },
+  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
     "includes": ["**", "!docs", "!research-cache", "!test/fixtures", "!src/tui/vendor", "!.claude"]
   },
-  "formatter": {
-    "enabled": true,
-    "indentStyle": "space",
-    "indentWidth": 2,
-    "lineWidth": 120
-  },
+  "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
   "linter": {
     "enabled": true,
     "rules": {
@@ -24,23 +15,14 @@
         "noFocusedTests": "error",
         "noSkippedTests": "error"
       },
-      "style": {
-        "noNonNullAssertion": "error"
-      },
+      "style": { "noNonNullAssertion": "error" },
       "nursery": {
         "noFloatingPromises": "error",
         "noMisusedPromises": "error"
       }
     }
   },
-  "assist": {
-    "enabled": true,
-    "actions": {
-      "source": {
-        "organizeImports": "on"
-      }
-    }
-  },
+  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
     {
       "includes": ["src/**", "!src/**/*.test.ts"],

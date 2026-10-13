@@ -1,7 +1,7 @@
 // Shared primitives (interfaces §1).
 import { z } from "zod";
 
-export const Ulid = z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+export const Ulid = z.string().regex(/^[0-7][0-9A-HJKMNP-TV-Z]{25}$/);
 export const IsoTime = z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
 export const AbsPath = z.string().regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/);
 

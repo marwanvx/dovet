@@ -11,13 +11,13 @@ type Notice = { title: string; source: string; license: string; texts: string[] 
 const PackageJson = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
-  license: z.string().optional(),
-  homepage: z.string().optional(),
+  license: z.string().optional().catch(undefined),
+  homepage: z.string().optional().catch(undefined),
 });
 
 function packageJson(dir: string): { name: string; version: string; license?: string; homepage?: string } {
   const parsed = PackageJson.safeParse(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")));
-  if (!parsed.success) throw new Error(`${dir}/package.json has no name or version`);
+  if (!parsed.success) throw new Error(`${dir}/package.json has no name or version: ${parsed.error.message}`);
   const { name, version, license, homepage } = parsed.data;
   return { name, version, ...(license ? { license } : {}), ...(homepage ? { homepage } : {}) };
 }

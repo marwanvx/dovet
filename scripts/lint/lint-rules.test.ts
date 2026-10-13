@@ -1,9 +1,9 @@
-// The repository's own lint rules (biome.json plugins in scripts/lint/): no module-level mutable state and no writes to the
-// process environment or working directory in src/ (architecture "State ownership", interfaces §9).
+// The repository's own lint rules (biome.json plugins in scripts/lint/; architecture "State ownership", interfaces §9).
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { z } from "zod";
 
 const ROOT = join(import.meta.dir, "..", "..");
 const BIOME = join(ROOT, "node_modules", "@biomejs", "biome", "bin", "biome");
@@ -14,11 +14,11 @@ afterEach(() => {
   dir = "";
 });
 
-type BiomeConfig = {
-  plugins?: string[];
-  overrides?: Array<{ plugins?: string[] } & Record<string, unknown>>;
-  vcs?: unknown;
-} & Record<string, unknown>;
+const BiomeConfig = z.looseObject({
+  plugins: z.array(z.string()).optional(),
+  overrides: z.array(z.looseObject({ plugins: z.array(z.string()).optional() })).optional(),
+  vcs: z.unknown().optional(),
+});
 
 function absolute(paths: string[] | undefined): string[] | undefined {
   return paths?.map((p) => (isAbsolute(p) ? p : resolve(ROOT, p)));
@@ -27,7 +27,7 @@ function absolute(paths: string[] | undefined): string[] | undefined {
 /** The repository's biome.json with plugin paths made absolute, so it works from a temp directory. */
 function lint(files: Record<string, string>): { code: number; out: string } {
   dir = mkdtempSync(join(tmpdir(), "dovet-lint-"));
-  const config = JSON.parse(readFileSync(join(ROOT, "biome.json"), "utf8")) as BiomeConfig;
+  const config = BiomeConfig.parse(JSON.parse(readFileSync(join(ROOT, "biome.json"), "utf8")));
   delete config.vcs;
   if (config.plugins) config.plugins = absolute(config.plugins) ?? [];
   for (const o of config.overrides ?? []) if (o.plugins) o.plugins = absolute(o.plugins) ?? [];
@@ -88,6 +88,15 @@ describe("process environment and directory", () => {
     ["replacing the object", "process.env = {};\n"],
     ["a write inside a function", 'export function f(): void { process.env.A = "1"; }\n'],
     ["process.chdir", 'process.chdir("/tmp");\n'],
+    ["Bun.env", 'Bun.env.TOKEN = "x";\n'],
+    ["globalThis.process", 'globalThis.process.env.A = "1";\n'],
+    ["a quoted env key", 'process["env"].A = "1";\n'],
+    ["Reflect.set", 'Reflect.set(process.env, "A", "1");\n'],
+    ["Reflect.deleteProperty", 'Reflect.deleteProperty(process.env, "A");\n'],
+    ["Object.defineProperty", 'Object.defineProperty(process.env, "A", { value: "1" });\n'],
+    ["Object.assign on Bun.env", 'Object.assign(Bun.env, { A: "1" });\n'],
+    ["importing env from node:process", 'import { env } from "node:process";\nexport const e = env;\n'],
+    ["importing chdir from process", 'import { chdir } from "process";\nchdir("/tmp");\n'],
   ])("%s in src/ fails the lint", (_name, text) => {
     const r = lint({ "src/cli/main.ts": text });
     expect(r.code).not.toBe(0);

@@ -9,7 +9,9 @@ export const Settings = z.object({
   effort: z.enum(["low", "medium", "high", "xhigh", "max"]).optional(),
   permissions: z
     .object({
-      defaultMode: PermissionMode.exclude(["auto"]).optional(),
+      defaultMode: z
+        .union([PermissionMode.exclude(["auto"]), z.literal("manual").transform(() => "default" as const)])
+        .optional(),
       allow: z.array(z.string()).optional(),
       ask: z.array(z.string()).optional(),
       deny: z.array(z.string()).optional(),

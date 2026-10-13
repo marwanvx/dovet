@@ -1,6 +1,7 @@
-// Round-trips every example type of interfaces §1, §2 and §2b through its zod schema.
+// Round-trips the interfaces §1, §2 and §2b types that have schemas so far (primitives, parts, StoredResponse, envelope, settings).
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { z } from "zod";
 import {
   AbsPath,
   BlobRef,
@@ -9,6 +10,7 @@ import {
   IsoTime,
   Part,
   PermissionMode,
+  Protocol,
   ReplayData,
   Settings,
   StoredResponse,
@@ -37,6 +39,7 @@ describe("primitives", () => {
     expect(Ulid.safeParse("01J9Z3K4M5N6P7Q8R9S0T1V2W3").success).toBe(true);
     expect(Ulid.safeParse("01J9Z3K4M5N6P7Q8R9S0T1V2W").success).toBe(false);
     expect(Ulid.safeParse("01J9Z3K4M5N6P7Q8R9S0T1V2WI").success).toBe(false);
+    expect(Ulid.safeParse("81J9Z3K4M5N6P7Q8R9S0T1V2W3").success).toBe(false);
     expect(IsoTime.safeParse("2026-10-12T08:30:00.123Z").success).toBe(true);
     expect(IsoTime.safeParse("2026-10-12T08:30:00Z").success).toBe(false);
     expect(IsoTime.safeParse("2026-10-12 08:30:00.123").success).toBe(false);
@@ -54,6 +57,15 @@ describe("primitives", () => {
     roundTrip(BlobRef, { store: "git", id: "b".repeat(40) });
     expect(BlobRef.safeParse({ store: "blob", id: "b".repeat(40) }).success).toBe(false);
     expect(BlobRef.safeParse({ store: "git", id: "xyz" }).success).toBe(false);
+  });
+
+  test("Protocol lists exactly the four protocols", () => {
+    expect([...Protocol.options].sort()).toEqual([
+      "anthropic-messages",
+      "google-interactions",
+      "openai-chat",
+      "openai-responses",
+    ]);
   });
 
   test("PermissionMode takes the six modes and the manual alias is not a stored mode", () => {
@@ -101,6 +113,16 @@ describe("Part", () => {
   test("a tool result cannot nest a tool call or another tool result", () => {
     const nested = { kind: "tool_result", callId: "c", isError: false, content: [examples[6]] };
     expect(Part.safeParse(nested).success).toBe(false);
+  });
+
+  test("every image media type of the spec is accepted", () => {
+    for (const mediaType of ["image/png", "image/jpeg", "image/gif", "image/webp"]) {
+      expect(Part.safeParse({ kind: "image", blob, mediaType }).success).toBe(true);
+    }
+  });
+
+  test("a reasoning part must say whether it has a summary (string or null)", () => {
+    expect(Part.safeParse({ kind: "reasoning" }).success).toBe(false);
   });
 
   test("unknown kinds, bad media types and missing fields are refused", () => {
@@ -179,6 +201,7 @@ describe("EventEnvelope", () => {
     expect(EventEnvelope.safeParse({ ...envelope, epoch: -1 }).success).toBe(false);
     expect(EventEnvelope.safeParse({ ...envelope, turn: 1.5 }).success).toBe(false);
     expect(EventEnvelope.safeParse({ ...envelope, core: "yes" }).success).toBe(false);
+    expect(EventEnvelope.safeParse({ ...envelope, type: "" }).success).toBe(false);
   });
 });
 
@@ -196,6 +219,10 @@ describe("Settings", () => {
     roundTrip(Settings, {});
   });
 
+  test('accepts "manual" as an alias of "default" for the default permission mode', () => {
+    expect(Settings.parse({ permissions: { defaultMode: "manual" } }).permissions?.defaultMode).toBe("default");
+  });
+
   test("refuses a value of the wrong kind", () => {
     expect(Settings.safeParse({ effort: "extreme" }).success).toBe(false);
     expect(Settings.safeParse({ permissions: { defaultMode: "auto" } }).success).toBe(false);
@@ -205,11 +232,9 @@ describe("Settings", () => {
 
 describe("zod version", () => {
   test("every import of zod from src/ resolves to major version 4", () => {
-    const entry = Bun.resolveSync("zod", import.meta.dir);
-    const root = entry.slice(0, entry.lastIndexOf("node_modules/zod") + "node_modules/zod".length);
-    const manifest: unknown = JSON.parse(readFileSync(`${root}/package.json`, "utf8"));
-    const version =
-      typeof manifest === "object" && manifest !== null ? (manifest as { version?: unknown }).version : "";
-    expect(String(version)).toMatch(/^4\./);
+    const manifest = z
+      .object({ version: z.string() })
+      .parse(JSON.parse(readFileSync(Bun.resolveSync("zod/package.json", import.meta.dir), "utf8")));
+    expect(manifest.version).toMatch(/^4\./);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { streamText } from "ai";
 import { Ulid } from "../../src/schema/index.ts";
@@ -35,6 +35,7 @@ describe("tempProject", () => {
   test("creates the files, resolves symlinks in its root, and removes everything on dispose", async () => {
     const project = await tempProject({ "src/a.ts": "export const a = 1;\n", "README.md": "hi" });
     const root = project.root;
+    expect(realpathSync.native(root)).toBe(root);
     expect(readFileSync(join(root, "src", "a.ts"), "utf8")).toBe("export const a = 1;\n");
     await project.dispose();
     expect(existsSync(root)).toBe(false);
@@ -65,6 +66,13 @@ describe("scriptedModel", () => {
     expect(calls[0]?.toolName).toBe("Read");
     expect(await two.finishReason).toBe("tool-calls");
     expect(model.doStreamCalls).toHaveLength(2);
+  });
+
+  test("streams a reasoning step before the answer", async () => {
+    const model = scriptedModel([{ reasoning: "thinking it over", text: "answer" }]);
+    const result = streamText({ model, prompt: "go", maxRetries: 0 });
+    expect(await result.text).toBe("answer");
+    expect(await result.reasoningText).toBe("thinking it over");
   });
 
   test("fails loudly when the script runs out", async () => {
