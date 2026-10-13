@@ -3,7 +3,7 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!docs", "!research-cache", "!test/fixtures", "!src/tui/vendor", "!.claude"]
+    "includes": ["**", "!docs", "!research-cache", "!test/fixtures", "!schema", "!src/tui/vendor", "!.claude"]
   },
   "formatter": { "enabled": true, "indentStyle": "space", "indentWidth": 2, "lineWidth": 120 },
   "linter": {
