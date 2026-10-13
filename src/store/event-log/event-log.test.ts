@@ -75,8 +75,114 @@ describe("writer", () => {
 
   test("an event type Dovet doesn't know is a bug, not a line in the log", async () => {
     const w = await open(await location());
+    // @ts-expect-error: the type check is the first guard; this tests the second, for data from outside TypeScript
     expect(() => w.append({ type: "made.up", epoch: 0, turn: null, data: {} })).toThrow("made.up");
     await w.close();
+  });
+
+  test("reopening a session appends after the earlier lines and continues its metadata", async () => {
+    const loc = await location();
+    const first = await open(loc);
+    first.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "first title" } });
+    first.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+    await first.close();
+    const { log, meta } = sessionPaths(loc);
+    const before = await readFile(log, "utf8");
+    const second = await open(loc, { seed: "2" });
+    second.append({ type: "user.message", epoch: 0, turn: 2, data: { text: "second" } });
+    second.append({ type: "turn.end", epoch: 0, turn: 2, data: { reason: "end_turn" } });
+    await second.close();
+    expect((await readFile(log, "utf8")).startsWith(before)).toBe(true);
+    const sidecar = JSON.parse(await readFile(meta, "utf8"));
+    expect(sidecar).toMatchObject({ title: "first title", turns: 2 });
+    await rm(meta);
+    expect((await listSessions(loc))[0]).toEqual(sidecar);
+  });
+
+  test("reopening after a crash mid-line repairs the log without rewriting it, and it stays writable", async () => {
+    const loc = await location();
+    const first = await open(loc);
+    first.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+    await first.close();
+    const { log } = sessionPaths(loc);
+    await writeFile(log, `${await readFile(log, "utf8")}{"v":1,"id":"01J`);
+    const torn = await readFile(log, "utf8");
+    const second = await open(loc, { seed: "2" });
+    second.append({ type: "turn.end", epoch: 0, turn: 2, data: { reason: "end_turn" } });
+    await second.close();
+    expect((await readFile(log, "utf8")).startsWith(torn)).toBe(true);
+    const r = await readSession(loc);
+    expect(r.readOnly).toBeUndefined();
+    expect(r.warnings).toEqual(["line 2: ignored an incomplete line (Dovet stopped while writing it)"]);
+    expect(r.events.map((e) => e.type)).toEqual(["turn.end", "session.resume", "turn.end"]);
+    expect(r.events[1]?.data).toEqual({ reason: "crash-repair", tornLine: 2 });
+  });
+
+  test("a permission request reaches the disk without an explicit flush", async () => {
+    const loc = await location();
+    const w = await open(loc);
+    w.append({ type: "permission.request", epoch: 0, turn: 1, data: { kind: "tool" } });
+    await Bun.sleep(20);
+    expect(await Bun.file(sessionPaths(loc).log).text()).toContain("permission.request");
+    await w.close();
+  });
+
+  test("the lock heartbeat advances its mtime, and stops the writer if another process took the lock", async () => {
+    const loc = await location();
+    const { lock } = sessionPaths(loc);
+    const r = await openSession({
+      ...loc,
+      clock: fakeClock(),
+      ids: sequentialIds("1"),
+      pid: 1,
+      host: "h",
+      secrets: [],
+      heartbeatMs: 10,
+    });
+    if (r.mode !== "write") throw new Error(r.reason);
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    await Bun.sleep(50);
+    expect((await stat(lock)).mtimeMs).toBeGreaterThan(old.getTime() + 30_000);
+    await writeFile(lock, JSON.stringify({ pid: 9, host: "other" }));
+    await Bun.sleep(50);
+    expect(() => r.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: {} })).toThrow(
+      "another Dovet process took over",
+    );
+    await expect(r.writer.close()).rejects.toThrow("took over");
+    expect(await readFile(lock, "utf8")).toContain('"pid":9');
+  });
+
+  test("ids must increase, an event over 1 MB is refused, and a closed writer takes nothing", async () => {
+    const loc = await location();
+    const r = await openSession({
+      ...loc,
+      clock: fakeClock(),
+      ids: { ulid: () => "01J0000000000000000000000Z" },
+      pid: 1,
+      host: "h",
+      secrets: [],
+    });
+    if (r.mode !== "write") throw new Error(r.reason);
+    r.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: {} });
+    expect(() => r.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: {} })).toThrow("is not after");
+    await r.writer.close();
+    expect(() => r.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: {} })).toThrow("closed");
+    const w = await open({ ...loc, session: "01J0000000000000000000000C" });
+    const parts = Array.from({ length: 6 }, (_, i) => `${i}`.repeat(200 * 1024));
+    expect(() => w.append({ type: "tool.call", epoch: 0, turn: 1, data: { parts } })).toThrow("over 1 MB");
+    await w.close();
+  });
+
+  test("data that only looks like a blob reference is kept as data", async () => {
+    const loc = await location();
+    const w = await open(loc);
+    const lookalike = { $blob: "b".repeat(64), bytes: 3 };
+    w.append({ type: "tool.call", epoch: 0, turn: 1, data: { input: lookalike, other: { $lit: 1 } } });
+    await w.close();
+    const r = await readSession(loc);
+    expect(r.readOnly).toBeUndefined();
+    expect(r.events[0]?.data).toEqual({ input: lookalike, other: { $lit: 1 } });
   });
 
   // spec: AC-LOG-04
@@ -136,6 +242,8 @@ describe("writer", () => {
       DB_PASSWORD: "hunter2-FAKE-0003",
       HOME: "/home/someone",
       SHORT_KEY: "abc",
+      GIT_AUTHOR_NAME: "Someone Writing Code",
+      SSH_AUTH_SOCK: "/tmp/ssh-agent.socket",
     };
     const configKey = "nvapi-FAKE-CONFIG-SECRET-0004";
     const loc = await location();
@@ -153,10 +261,20 @@ describe("writer", () => {
       data: { output: `$ env\nGITHUB_TOKEN=${env.GITHUB_TOKEN}\n${configKey}` },
     });
     w.append({ type: "user.message", epoch: 0, turn: 1, data: { text: `my password is ${env.DB_PASSWORD}` } });
+    const big = `${"x".repeat(300 * 1024)}${env.NVIDIA_API_KEY}`;
+    w.append({ type: "tool.result", epoch: 0, turn: 1, data: { output: big } });
     await w.close();
+    const blobDir = join(loc.data, "blobs");
+    for (const sub of await readdir(blobDir)) {
+      for (const f of await readdir(join(blobDir, sub))) {
+        expect(await readFile(join(blobDir, sub, f), "utf8")).not.toContain(env.NVIDIA_API_KEY);
+      }
+    }
     const text = await readFile(sessionPaths(loc).log, "utf8");
     for (const s of [env.NVIDIA_API_KEY, env.GITHUB_TOKEN, env.DB_PASSWORD, configKey]) expect(text).not.toContain(s);
     expect(text).toContain("/home/someone");
+    expect(text).toContain("Someone Writing Code");
+    expect(text).toContain("/tmp/ssh-agent.socket");
     expect(text).toContain("[redacted]");
   });
 
@@ -194,8 +312,8 @@ describe("writer", () => {
       expect({ f, mode: (await stat(f)).mode & 0o777 }).toEqual({ f, mode: 0o600 });
     }
     expect(await checkDataPermissions(loc)).toEqual([]);
-    await chmod(loc.data, 0o755);
-    await chmod(paths.log, 0o644);
+    await chmod(loc.data, 0o750);
+    await chmod(paths.log, 0o640);
     const warnings = await checkDataPermissions(loc);
     expect(warnings).toEqual([
       expect.stringContaining(`${loc.data} can be read by other users`),
@@ -243,6 +361,11 @@ describe("reader", () => {
     expect(r.readOnly).toBeUndefined();
     expect(r.warnings).toEqual(['line 2: skipped unknown optional event type "future.note"']);
     expect(r.events.map((e) => e.type)).toEqual(["session.start", "turn.end"]);
+  });
+
+  test("a known event with the wrong core flag opens read-only", async () => {
+    const r = await readSession(await plant([ev(1, "turn.end", true), ""]));
+    expect(r.readOnly).toBe('line 1: event type "turn.end" has the wrong core flag');
   });
 
   test("an unsupported schema version opens read-only", async () => {

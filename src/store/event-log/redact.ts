@@ -1,13 +1,30 @@
 import { Secret } from "../secrets/index.ts";
 
-const SECRET_NAME = /KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|CREDENTIAL|AUTH/i;
+const SECRET_WORDS = new Set([
+  "KEY",
+  "APIKEY",
+  "TOKEN",
+  "SECRET",
+  "PASSWORD",
+  "PASSWD",
+  "PASSPHRASE",
+  "CREDENTIAL",
+  "CREDENTIALS",
+  "AUTH",
+]);
 const MIN_SECRET_LENGTH = 8;
 const REDACTED = "[redacted]";
+
+// Whole name segments, so GIT_AUTHOR_NAME and KEYBOARD_LAYOUT don't count; *_SOCK names hold socket paths.
+function namesSecret(name: string): boolean {
+  const words = name.toUpperCase().split(/[_\W]+/);
+  return words.at(-1) !== "SOCK" && words.some((w) => SECRET_WORDS.has(w));
+}
 
 /** Values of env vars whose names say they hold a secret; short values are skipped so common words aren't scrubbed. */
 export function secretValuesFromEnv(env: Readonly<Record<string, string | undefined>>): string[] {
   return Object.entries(env).flatMap(([name, value]) =>
-    value !== undefined && value.length >= MIN_SECRET_LENGTH && SECRET_NAME.test(name) ? [value] : [],
+    value !== undefined && value.length >= MIN_SECRET_LENGTH && namesSecret(name) ? [value] : [],
   );
 }
 

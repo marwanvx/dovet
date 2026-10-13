@@ -1,10 +1,11 @@
-import { type FileHandle, mkdir, open, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { type FileHandle, mkdir, open, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { isErrno } from "../../platform/index.ts";
-import { EVENT_TYPES, type EventEnvelope } from "../../schema/index.ts";
+import { EVENT_TYPES, type EventEnvelope, type EventType } from "../../schema/index.ts";
 import { type BlobStore, createBlobStore } from "../blobs/index.ts";
 import { writePrivateAtomic } from "./files.ts";
-import { emptyMeta, foldMeta, type SessionMeta } from "./meta.ts";
+import { emptyMeta, foldMeta, SessionMeta } from "./meta.ts";
 import { type SessionLocation, sessionPaths } from "./paths.ts";
+import { readSession } from "./reader.ts";
 import { orderSecrets, scrub } from "./redact.ts";
 
 export type OpenInput = SessionLocation & {
@@ -18,7 +19,7 @@ export type OpenInput = SessionLocation & {
   heartbeatMs?: number;
 };
 
-export type AppendInput = { type: string; epoch: number; turn: number | null; data: unknown };
+export type AppendInput = { type: EventType; epoch: number; turn: number | null; data: unknown };
 
 export interface SessionWriter {
   append(event: AppendInput): EventEnvelope;
@@ -44,7 +45,9 @@ function moveLargeStrings(value: unknown, blobs: BlobStore): unknown {
   }
   if (Array.isArray(value)) return value.map((v) => moveLargeStrings(v, blobs));
   if (typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype) {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, moveLargeStrings(v, blobs)]));
+    const out = Object.fromEntries(Object.entries(value).map(([k, v]) => [k, moveLargeStrings(v, blobs)]));
+    // Data that only looks like a blob reference (a model can write one) is wrapped so the reader keeps it as data.
+    return "$blob" in value || "$lit" in value ? { $lit: out } : out;
   }
   return value;
 }
@@ -55,16 +58,26 @@ function serialize(e: EventEnvelope): string {
 
 /** Exclusive-create; a lock without a heartbeat for 2 minutes is taken over (event-log "Writer rules" 1). */
 async function takeLock(lock: string, owner: string): Promise<string | undefined> {
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await writeFile(lock, owner, { flag: "wx", mode: 0o600 });
       return undefined;
     } catch (err) {
       if (!isErrno(err, "EEXIST")) throw err;
     }
-    const age = Date.now() - (await stat(lock)).mtimeMs;
-    if (age <= STALE_LOCK_MS || attempt > 0) break;
-    await rm(lock, { force: true });
+    const mtime = await stat(lock).then(
+      (st) => st.mtimeMs,
+      (err: unknown) => (isErrno(err, "ENOENT") ? undefined : Promise.reject(err)),
+    );
+    if (mtime !== undefined && Date.now() - mtime <= STALE_LOCK_MS) break;
+    if (mtime === undefined) continue;
+    // Rename, not delete: of two processes taking over the same stale lock, only one rename succeeds.
+    const stale = `${lock}.${crypto.randomUUID()}.stale`;
+    const moved = await rename(lock, stale).then(
+      () => true,
+      (err: unknown) => (isErrno(err, "ENOENT") ? false : Promise.reject(err)),
+    );
+    if (moved) await rm(stale, { force: true });
   }
   const holder = await readFile(lock, "utf8").then(
     (t) => {
@@ -95,18 +108,30 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
   const refused = await takeLock(paths.lock, owner);
   if (refused !== undefined) return { mode: "read-only", reason: refused };
 
+  let existing: Existing;
+  try {
+    existing = await readExisting(input, paths);
+  } catch (err) {
+    await rm(paths.lock, { force: true });
+    throw err;
+  }
+  if ("readOnly" in existing) {
+    await rm(paths.lock, { force: true });
+    return { mode: "read-only", reason: existing.readOnly };
+  }
   const blobs = createBlobStore(input.data);
   const secrets = orderSecrets(input.secrets);
   let handle: FileHandle;
   try {
     handle = await open(paths.log, "a", 0o600);
+    if (existing.tornLine !== undefined) await handle.appendFile("\n");
   } catch (err) {
     await rm(paths.lock, { force: true });
     throw err;
   }
   let queue: string[] = [];
-  let lastId = "";
-  let meta: SessionMeta = emptyMeta(input.session);
+  let meta: SessionMeta = existing.meta;
+  let lastId = meta.lastId;
   let chain: Promise<void> = Promise.resolve();
   let failure: unknown;
   let closed = false;
@@ -136,9 +161,16 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
   const flushTimer = setInterval(() => {
     if (queue.length > 0) write({ fsync: false }).catch(record);
   }, input.flushMs ?? FLUSH_MS);
-  const heartbeat = setInterval(() => {
+  const beat = async (): Promise<void> => {
+    const current = await readFile(paths.lock, "utf8").catch((err: unknown) =>
+      isErrno(err, "ENOENT") ? "" : Promise.reject(err),
+    );
+    if (current !== owner) throw new Error("another Dovet process took over this session; this one stopped writing");
     const now = new Date();
-    utimes(paths.lock, now, now).catch(record);
+    await utimes(paths.lock, now, now);
+  };
+  const heartbeat = setInterval(() => {
+    beat().catch(record);
   }, input.heartbeatMs ?? HEARTBEAT_MS);
   flushTimer.unref();
   heartbeat.unref();
@@ -153,7 +185,7 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
       lastId = id;
       const ts = new Date(input.clock.now()).toISOString();
       const clean = scrub(data, secrets);
-      meta = foldMeta(meta, { ts, type, data: clean });
+      meta = foldMeta(meta, { id, ts, type, data: clean });
       const envelope: EventEnvelope = {
         v: 1,
         id,
@@ -195,5 +227,39 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
       if (failure !== undefined) throw failure;
     },
   };
+  if (existing.tornLine !== undefined) {
+    writer.append({
+      type: "session.resume",
+      epoch: 0,
+      turn: null,
+      data: { reason: "crash-repair", tornLine: existing.tornLine },
+    });
+  }
   return { mode: "write", writer };
+}
+
+type Existing = { meta: SessionMeta; tornLine?: number } | { readOnly: string };
+
+/** What a reopened log already holds; a torn last line gets `\n` and a `session.resume` naming it, so the log stays readable. */
+async function readExisting(input: OpenInput, paths: { log: string; meta: string }): Promise<Existing> {
+  const size = await stat(paths.log).then(
+    (st) => st.size,
+    (err: unknown) => (isErrno(err, "ENOENT") ? 0 : Promise.reject(err)),
+  );
+  if (size === 0) return { meta: emptyMeta(input.session) };
+  const sidecar = await readFile(paths.meta, "utf8").then(
+    (t) => {
+      try {
+        return SessionMeta.safeParse(JSON.parse(t)).data;
+      } catch {
+        return undefined;
+      }
+    },
+    (err: unknown) => (isErrno(err, "ENOENT") ? undefined : Promise.reject(err)),
+  );
+  if (sidecar !== undefined && sidecar.bytes === size) return { meta: sidecar };
+  const read = await readSession(input);
+  if (read.readOnly !== undefined) return { readOnly: read.readOnly };
+  const meta = read.events.reduce(foldMeta, emptyMeta(input.session));
+  return read.tornLine === undefined ? { meta } : { meta, tornLine: read.tornLine };
 }

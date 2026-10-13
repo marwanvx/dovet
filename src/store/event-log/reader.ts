@@ -8,6 +8,8 @@ export type ReadResult = {
   warnings: string[];
   /** Set when the session can't be continued: the exact reason. Events before the problem are still returned. */
   readOnly?: string;
+  /** The incomplete last line a crash left, if any. */
+  tornLine?: number;
 };
 
 class ReadOnly extends Error {}
@@ -32,20 +34,24 @@ async function resolveBlobs(value: unknown, blobs: BlobStore): Promise<unknown> 
     if (bytes === undefined) throw new ReadOnly(`essential blob ${value.$blob} is missing`);
     return new TextDecoder().decode(bytes);
   }
+  if (Object.keys(value).length === 1 && "$lit" in value && typeof value.$lit === "object" && value.$lit !== null) {
+    const inner = await Promise.all(
+      Object.entries(value.$lit).map(async ([k, v]) => [k, await resolveBlobs(v, blobs)]),
+    );
+    return Object.fromEntries(inner);
+  }
   const entries = await Promise.all(Object.entries(value).map(async ([k, v]) => [k, await resolveBlobs(v, blobs)]));
   return Object.fromEntries(entries);
 }
 
-async function parseLine(line: string, last: boolean, blobs: BlobStore, warnings: string[], n: number) {
+const NOT_JSON = Symbol("not JSON");
+
+async function parseLine(line: string, blobs: BlobStore, warnings: string[], n: number) {
   let raw: unknown;
   try {
     raw = JSON.parse(line);
   } catch {
-    if (last) {
-      warnings.push(`line ${n}: ignored an incomplete last line (Dovet stopped while writing it)`);
-      return undefined;
-    }
-    throw new ReadOnly("the line is not valid JSON");
+    return NOT_JSON;
   }
   const v = (raw as { v?: unknown } | null)?.v;
   if (v !== 1) throw new ReadOnly(`unsupported event schema version ${JSON.stringify(v)}`);
@@ -70,16 +76,37 @@ export async function readSession(loc: SessionLocation): Promise<ReadResult> {
   const blobs = createBlobStore(loc.data);
   const result: ReadResult = { events: [], warnings: [] };
   let n = 0;
+  let torn: number | undefined;
+  const fail = (line: number, reason: string): false => {
+    result.readOnly = `line ${line}: ${reason}`;
+    return false;
+  };
   const handle = async (line: string, last: boolean): Promise<boolean> => {
     n += 1;
     try {
-      const event = await parseLine(line, last, blobs, result.warnings, n);
+      const event = await parseLine(line, blobs, result.warnings, n);
+      if (event === NOT_JSON) {
+        if (torn !== undefined) return fail(torn, "the line is not valid JSON");
+        if (last) {
+          result.warnings.push(`line ${n}: ignored an incomplete last line (Dovet stopped while writing it)`);
+          result.tornLine = n;
+        }
+        torn = n;
+        return true;
+      }
+      if (torn !== undefined) {
+        // A torn line is acceptable mid-file only when the writer that reopened the log said so right after it.
+        const data = event?.type === "session.resume" ? event.data : undefined;
+        const repair = typeof data === "object" && data !== null && "tornLine" in data && data.tornLine === torn;
+        if (!repair) return fail(torn, "the line is not valid JSON");
+        result.warnings.push(`line ${torn}: ignored an incomplete line (Dovet stopped while writing it)`);
+        torn = undefined;
+      }
       if (event !== undefined) result.events.push(event);
       return true;
     } catch (err) {
       if (!(err instanceof ReadOnly)) throw err;
-      result.readOnly = `line ${n}: ${err.message}`;
-      return false;
+      return fail(n, err.message);
     }
   };
 
@@ -99,5 +126,6 @@ export async function readSession(loc: SessionLocation): Promise<ReadResult> {
     throw err;
   }
   if (rest !== "") await handle(rest, true);
+  else if (torn !== undefined) fail(torn, "the line is not valid JSON");
   return result;
 }

@@ -1,7 +1,6 @@
 import { open, rename, rm } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
-/** Temp file plus rename, user-only. */
 export async function writePrivateAtomic(path: string, text: string): Promise<void> {
   const temp = join(dirname(path), `.${basename(path)}.${crypto.randomUUID()}.tmp`);
   try {
