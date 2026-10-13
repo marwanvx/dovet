@@ -20,9 +20,9 @@ import {
 const SHA = "a".repeat(64);
 const blob = { store: "blob", id: SHA } as const;
 const replay: ReplayData = {
-  provider: "anthropic",
-  protocol: "anthropic-messages",
-  modelId: "claude-opus-5-5",
+  provider: "nvidia",
+  protocol: "openai-chat",
+  modelId: "nvidia/nemotron-3.5-lightning-30b-a3b",
   fields: { signature: "EqQBCkYI", nested: { a: [1, null, true] } },
 };
 
@@ -147,11 +147,11 @@ describe("ReplayData", () => {
 
 describe("StoredResponse", () => {
   const stored = {
-    provider: "anthropic",
-    protocol: "anthropic-messages",
-    package: "@ai-sdk/anthropic",
+    provider: "nvidia",
+    protocol: "openai-chat",
+    package: "@ai-sdk/openai-compatible",
     packageVersion: "4.0.0",
-    modelId: "claude-opus-5-5",
+    modelId: "nvidia/nemotron-3.5-lightning-30b-a3b",
     parts: [
       { kind: "reasoning", summary: null, replay },
       { kind: "text", text: "done", phase: "final_answer" },
@@ -209,8 +209,8 @@ describe("Settings", () => {
   test("round-trips the skeleton keys", () => {
     const settings = {
       $version: 1,
-      provider: "anthropic",
-      model: "claude-opus-5-5",
+      provider: "nvidia",
+      model: "nvidia/nemotron-3.5-lightning-30b-a3b",
       effort: "high",
       permissions: { defaultMode: "acceptEdits", allow: ["Read"], ask: [], deny: ["Bash(rm -rf *)"] },
       budget: { session: 5, daily: null, turn: 0.5 },

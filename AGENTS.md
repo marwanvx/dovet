@@ -38,6 +38,8 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 
 ## Rules that always apply
 
+- **Owner rules (2026-10-13).** Dovet is the owner's provider-neutral product. No vendor attribution anywhere: no `Co-Authored-By` trailers, "Generated with …" lines or session links in commits, PRs or GitHub comments. Tests use the `nvidia` provider or made-up names (`example`) as examples. NVIDIA is the first provider; Anthropic is not planned unless the owner adds it (QUESTIONS Q23, M4-12).
+
 - **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
 - **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
