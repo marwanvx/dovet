@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import pkg from "../../package.json";
+import { tempProject } from "../../test/helpers/index.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -30,5 +31,37 @@ describe("dovet command line", () => {
     const r = dovet("update", "--rollbak");
     expect(r.code).toBe(2);
     expect(r.err).toBe("usage: dovet update [--rollback]\n");
+  });
+});
+
+describe("dovet auth status", () => {
+  const KEY = "nvapi-FAKE-USED-VALUE";
+  const OTHER = "nvapi-FAKE-SHADOWED-VALUE";
+
+  // spec: AC-CLI-17
+  test("shows which source each provider's key comes from and which are shadowed, without the keys", async () => {
+    const dir = await tempProject({
+      "config/settings.json": '{ "providers": { "nvidia": { "apiKey": "env:WORK_KEY" } } }',
+    });
+    try {
+      const r = Bun.spawnSync([process.execPath, MAIN, "auth", "status"], {
+        cwd: dir.root,
+        env: {
+          ...process.env,
+          DOVET_CONFIG_DIR: join(dir.root, "config"),
+          DOVET_DATA_DIR: join(dir.root, "data"),
+          WORK_KEY: KEY,
+          NVIDIA_API_KEY: OTHER,
+        },
+      });
+      const out = r.stdout.toString() + r.stderr.toString();
+      expect(r.exitCode).toBe(0);
+      expect(out).toContain("nvidia\n  used: env:WORK_KEY (settings)\n");
+      expect(out).toContain("  shadowed: environment variable NVIDIA_API_KEY\n");
+      expect(out).not.toContain(KEY);
+      expect(out).not.toContain(OTHER);
+    } finally {
+      await dir.dispose();
+    }
   });
 });

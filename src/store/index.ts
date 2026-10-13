@@ -2,4 +2,5 @@
 // Other modules import only from this file.
 
 export * from "./config/index.ts";
+export * from "./secrets/index.ts";
 export * from "./snapshots/index.ts";
