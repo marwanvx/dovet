@@ -180,3 +180,11 @@ Learned:
 - `src/cli/update.test.ts` timed out once on Windows CI (its `tar` call failed with empty stderr after 5 s); the re-run passed. If it repeats, give that test a longer timeout or look at Windows `tar`.
 - Left for later tasks (QUESTIONS Q22): per-type `data` schemas come with each event's first writer; invalid state transitions are checked by the transcript builder (M1-12); Q22's spec-change PR is still to do.
 Next: M1-06 (AI SDK adapter, NVIDIA through `@ai-sdk/openai-compatible`).
+
+## 2026-10-13 — M1-06 AI SDK adapter: rendering, streaming, stored responses
+Done: `src/ai/sdk-adapter.ts` is the one generic adapter (render, stream, toStored/fromStored, classifyError, capturingFetch) with `@ai-sdk/openai-compatible` 3.0.68 as the first package; `bun run record` records scenarios live on NVIDIA (`z-ai/glm-5.3-flash`, free) into `test/fixtures/nvidia/`, and `test/helpers/fixture-server.ts` replays them. The adapter's requests equal the recorded direct-SDK requests byte for byte (reasoning replayed as `reasoning_content`, parallel tool calls, an error result), and SDK messages round-trip losslessly. PR: #40 (merged, CI green on Linux, macOS and Windows). The fresh reviewer's two majors (malformed tool calls crashed the stream; same-provider model switch untested) are fixed.
+Learned:
+- `streamText` needs `allowSystemInMessages: true` for a system message in `messages`, and prints errors to the terminal unless `onError` is set. For an invalid tool call the SDK puts `{}` in its response messages; the raw text is only in the stream's `tool-call` part (`invalid: true`). Bun's `fetch` type has `preconnect`, so a wrapped fetch needs `Object.assign(fn, { preconnect })`.
+- Re-recording changes fixture bytes (new ids and text); tests compare against whatever was recorded, so re-record all scenarios together with `bun run record`.
+- Decisions in QUESTIONS Q24 (refusal category in `stored.finishReason`, raw input for invalid calls, what counts as a network error, no printing).
+Next: M1-07 (NVIDIA settings: reasoning, effort and tool calls over Chat Completions).
