@@ -517,6 +517,7 @@ describe("stream with a scripted model", () => {
     expect(events.at(-1)).toEqual({
       type: "error",
       error: { kind: "rate_limit", retryable: true, retryAfterMs: 3000, status: 429, message: "slow down" },
+      completed: null,
     });
   });
 });

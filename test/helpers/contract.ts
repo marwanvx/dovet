@@ -2,6 +2,7 @@
 import {
   createSdkAdapter,
   endpointOf,
+  type FetchFunction,
   type ProviderRequest,
   providerRecord,
   type RenderInput,
@@ -15,10 +16,14 @@ import { type Fixture, MAX_TOKENS, type Scenario } from "./nvidia-scenarios.ts";
 export const FAKE_KEY = "test-key-not-real";
 
 /** The real nvidia record pointed at `baseURL`; effort is sent only when the probe found the model reasoning. */
-export function nvidiaAdapter(baseURL: string, opts: { reasons?: boolean; levels?: string[] } = {}) {
+export function nvidiaAdapter(
+  baseURL: string,
+  opts: { reasons?: boolean; levels?: string[]; fetch?: FetchFunction } = {},
+) {
   const nvidia = endpointOf(providerRecord("nvidia"));
   return createSdkAdapter({
     endpoint: () => ({ ...nvidia, baseURL, apiKey: new Secret(FAKE_KEY) }),
+    ...(opts.fetch === undefined ? {} : { fetch: opts.fetch }),
     modelInfo: () => (opts.reasons === true ? { effortLevels: opts.levels ?? nvidia.effortLevels } : undefined),
   });
 }

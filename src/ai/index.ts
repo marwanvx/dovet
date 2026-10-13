@@ -2,6 +2,16 @@
 // Other modules import only from this file.
 export { endpointOf, PROVIDER_AUTH, providerRecord } from "./registry.ts";
 export {
+  type CallEvent,
+  CONTINUE_AFTER_DROP,
+  callModel,
+  MAX_ATTEMPTS,
+  NOT_RUN_AFTER_DROP,
+  type RetryDeps,
+  STREAM_IDLE_TIMEOUT_MS,
+  timedFetch,
+} from "./retry.ts";
+export {
   type AdapterDeps,
   capturingFetch,
   classifyError,
