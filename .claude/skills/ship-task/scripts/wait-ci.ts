@@ -17,7 +17,8 @@ async function checks(): Promise<Check[]> {
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  // gh exits 8 while checks are pending; any other non-zero exit is a real error.
+  // gh exits 8 while checks are pending, and 1 with "no checks reported" just after the PR opens.
+  if (code === 1 && err.includes("no checks reported")) return [];
   if (code !== 0 && code !== 8) throw new Error(`gh pr checks failed (${code}): ${err.trim()}`);
   return out.trim() === "" ? [] : (JSON.parse(out) as Check[]);
 }
