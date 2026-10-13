@@ -23,4 +23,8 @@ describe("provider registry", () => {
     ];
     expect(() => parseRecords(bad)).toThrow("endpoints.0.baseUrl");
   });
+
+  test("a misspelled field is refused, not ignored", () => {
+    expect(() => parseRecords([{ ...providerRecord("nvidia"), envVar: "X" }])).toThrow("envVar");
+  });
 });

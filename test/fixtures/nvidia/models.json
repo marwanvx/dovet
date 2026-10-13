@@ -1,0 +1,45 @@
+{
+  "probed": "2026-10-13",
+  "models": [
+    {
+      "model": "z-ai/glm-5.3-flash",
+      "date": "2026-10-13",
+      "ok": true,
+      "reasons": true
+    },
+    {
+      "model": "nvidia/nemotron-3.5-lightning-30b-a3b",
+      "date": "2026-10-13",
+      "ok": true,
+      "reasons": true
+    },
+    {
+      "model": "poolside/laguna-xs-2.1",
+      "ok": false,
+      "skipped": "rate limited: unknown: ResourceExhausted: Worker local total request limit reached (38/32)"
+    },
+    {
+      "model": "moonshotai/kimi-k3",
+      "date": "2026-10-13",
+      "ok": true,
+      "reasons": true
+    },
+    {
+      "model": "z-ai/glm-5.3",
+      "date": "2026-10-13",
+      "ok": true,
+      "reasons": true
+    },
+    {
+      "model": "deepseek-ai/deepseek-v4.1-flash",
+      "ok": false,
+      "skipped": "outage: no answer within 3 minutes"
+    },
+    {
+      "model": "nvidia/nemotron-3-ultra-550b-a55b",
+      "date": "2026-10-13",
+      "ok": true,
+      "reasons": true
+    }
+  ]
+}

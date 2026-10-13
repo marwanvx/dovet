@@ -11,7 +11,6 @@ export type Scenario = {
   results?: Array<{ output: string; isError: boolean }>;
   /** Dovet effort level; sent only when the probe found the model reasoning. */
   effort?: string;
-  /** A second user turn after the answer. */
   followUp?: string;
 };
 
@@ -75,7 +74,6 @@ export type Fixture = {
   scenario: string;
   model: string;
   recorded: string;
-  /** What the model probe found before recording. */
   probe?: { reasons: boolean };
   exchanges: Exchange[];
 };

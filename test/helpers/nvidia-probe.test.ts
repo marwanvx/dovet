@@ -76,6 +76,21 @@ describe("model probe", () => {
     });
   });
 
+  test("a full worker reported inside the stream is a rate limit", async () => {
+    const full = stream([
+      { error: { message: "ResourceExhausted: Worker local total request limit reached (35/32)" } },
+    ]);
+    expect((await probe([full])).result).toMatchObject({ ok: false, skipped: expect.stringMatching(/^rate limited/) });
+  });
+
+  test("a 'function not found' answer means the model is gone", async () => {
+    const body = '{"error":{"message":"Function \'abc-123\': Not found for account"}}';
+    expect((await probe([reply(400, body)])).result).toMatchObject({
+      ok: false,
+      skipped: expect.stringMatching(/^retired or unknown model: HTTP 400/),
+    });
+  });
+
   test("an outage is skipped; a model that makes no tool call is skipped", async () => {
     expect((await probe([reply(503, '{"error":{"message":"down"}}')])).result).toMatchObject({
       ok: false,

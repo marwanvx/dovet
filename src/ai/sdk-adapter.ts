@@ -135,16 +135,19 @@ export function classifyError(err: unknown, secrets: readonly string[] = []): Pr
 }
 
 const ProblemDetail = z.object({ detail: z.string() });
+const JsonText = z.string().transform((text, ctx) => {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    ctx.addIssue({ code: "custom", message: "not JSON" });
+    return z.NEVER;
+  }
+});
 
 /** RFC 9457 problem bodies (NVIDIA's 410 for a retired model) carry the reason outside the SDK's error schema. */
 function withDetail(message: string, body: string | undefined): string {
-  if (body === undefined) return message;
-  try {
-    const parsed = ProblemDetail.safeParse(JSON.parse(body));
-    return parsed.success && !message.includes(parsed.data.detail) ? `${message}: ${parsed.data.detail}` : message;
-  } catch {
-    return message;
-  }
+  const parsed = JsonText.pipe(ProblemDetail).safeParse(body);
+  return parsed.success && !message.includes(parsed.data.detail) ? `${message}: ${parsed.data.detail}` : message;
 }
 
 function classify(err: unknown): ProviderErrorInfo {
@@ -290,17 +293,16 @@ function toolSet(defs: readonly ToolDef[]): ToolSet {
 
 const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
 
-/** providers "Effort mapping": the nearest lower supported level, `max` the highest; below every level, the lowest. */
+/** providers "Effort mapping": the nearest lower supported level (so `max` is the highest); below every level, the lowest. */
 function effortFor(asked: string, levels: readonly string[]): string | undefined {
   const supported = EFFORT_ORDER.filter((l) => levels.includes(l));
-  if (asked === "max") return supported.at(-1);
   const rank = EFFORT_ORDER.indexOf(asked);
   return supported.filter((l) => EFFORT_ORDER.indexOf(l) <= rank).at(-1) ?? supported[0];
 }
 
-/** Index of the last user item that starts a turn (not only tool results); reasoning before it is outside the tool loop. */
+/** Index of the last user item without tool results; text queued after tool results stays inside the tool loop. */
 function lastTurnStart(transcript: RenderInput["transcript"]): number {
-  return transcript.findLastIndex((t) => t.kind === "user" && t.parts.some((p) => p.kind !== "tool_result"));
+  return transcript.findLastIndex((t) => t.kind === "user" && !t.parts.some((p) => p.kind === "tool_result"));
 }
 
 export function createSdkAdapter(deps: AdapterDeps) {

@@ -28,7 +28,8 @@ const ECHO: ToolDef = {
 function skipReason(e: ProviderErrorInfo): string | undefined {
   const what = `${e.status === undefined ? e.kind : `HTTP ${e.status}`}: ${e.message}`;
   if (e.kind === "not_found" || /function .*not found/i.test(e.message)) return `retired or unknown model: ${what}`;
-  if (e.kind === "rate_limit") return `rate limited: ${what}`;
+  // NVIDIA also reports a full worker inside a 200 stream: "ResourceExhausted: Worker local total request limit reached".
+  if (e.kind === "rate_limit" || /ResourceExhausted/.test(e.message)) return `rate limited: ${what}`;
   if (["overloaded", "server", "network", "timeout"].includes(e.kind)) return `outage: ${what}`;
   return undefined;
 }

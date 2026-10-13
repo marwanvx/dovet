@@ -156,6 +156,7 @@ describe("render", () => {
   });
 });
 
+// spec: providers "Effort mapping" (chat fallback: quirk effortField)
 describe("effort", () => {
   const s = scenario("text");
   const first: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: "hi" }] }];
@@ -192,6 +193,7 @@ describe("effort", () => {
   });
 });
 
+// spec: providers §6 "Reasoning replay for chat-protocol reasoning models" (quirk reasoningReplay)
 describe("reasoning replay on chat endpoints", () => {
   const s = scenario("parallel-tools");
   const turn = (id: string): StoredResponse => {
@@ -224,11 +226,11 @@ describe("reasoning replay on chat endpoints", () => {
     { kind: "assistant", stored: turn("c2") },
     result("c2"),
   ];
-  const reasoningSent = (replay: "in-tool-loop" | "always" | "never") => {
-    const adapter = createSdkAdapter({
-      endpoint: () => ({ ...NVIDIA, baseURL: "http://unused", quirks: { ...NVIDIA.quirks, reasoningReplay: replay } }),
-    });
-    return (adapter.render(input(s, transcript)).messages as ModelMessage[]).flatMap((m) =>
+  const reasoningSent = (replay: "in-tool-loop" | "always" | "never" | undefined, items = transcript) => {
+    const { reasoningReplay: _, ...rest } = NVIDIA.quirks;
+    const quirks = replay === undefined ? rest : { ...rest, reasoningReplay: replay };
+    const adapter = createSdkAdapter({ endpoint: () => ({ ...NVIDIA, baseURL: "http://unused", quirks }) });
+    return (adapter.render(input(s, items)).messages as ModelMessage[]).flatMap((m) =>
       m.role === "assistant" && Array.isArray(m.content)
         ? m.content.flatMap((p) => (p.type === "reasoning" ? [p.text] : []))
         : [],
@@ -239,12 +241,22 @@ describe("reasoning replay on chat endpoints", () => {
     expect(reasoningSent("in-tool-loop")).toEqual(["thinking c2"]);
   });
 
-  test("always and never", () => {
+  test("in-tool-loop: text queued after tool results stays in the loop and keeps the reasoning", () => {
+    const queued = [
+      ...transcript.slice(0, 2),
+      { kind: "user" as const, parts: [...result("c1").parts, { kind: "text" as const, text: "also check B" }] },
+    ];
+    expect(reasoningSent("in-tool-loop", queued)).toEqual(["thinking c1"]);
+  });
+
+  test("always and never; a record without the quirk replays always", () => {
     expect(reasoningSent("always")).toEqual(["thinking c1", "thinking c2"]);
     expect(reasoningSent("never")).toEqual([]);
+    expect(reasoningSent(undefined)).toEqual(["thinking c1", "thinking c2"]);
   });
 });
 
+// spec: providers §6 (tool calls stream as fragments keyed by index)
 describe("tool-call fragments", () => {
   const delta = (d: unknown, finish: string | null = null) => ({
     id: "c",
@@ -656,7 +668,8 @@ describe("classifyError", () => {
     ]);
   });
 
-  test("an RFC 9457 problem body adds its detail to the message", () => {
+  // spec: providers "Model lifecycle" (a retired model; NVIDIA answers 410 with a problem body)
+  test("an RFC 9457 problem body adds its detail to the message, once", () => {
     const err = new APICallError({
       message: "Gone",
       url: "u",
@@ -665,6 +678,14 @@ describe("classifyError", () => {
       responseBody: JSON.stringify({ status: 410, title: "Gone", detail: "The model reached its end of life." }),
     });
     expect(adapter.classifyError(err).message).toBe("Gone: The model reached its end of life.");
+    const repeated = new APICallError({
+      message: "The model reached its end of life.",
+      url: "u",
+      requestBodyValues: {},
+      statusCode: 410,
+      responseBody: JSON.stringify({ detail: "The model reached its end of life." }),
+    });
+    expect(adapter.classifyError(repeated).message).toBe("The model reached its end of life.");
   });
 
   test("a network failure is retryable; a programming error or anything else is unknown", () => {
