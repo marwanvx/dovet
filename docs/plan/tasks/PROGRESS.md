@@ -234,3 +234,23 @@ Learned:
 - This machine (Ubuntu with an AppArmor user-namespace restriction, a Secret Service, slow network) fails the sandbox, SPIKE-5 file-fallback and ripgrep download tests on `main` too; CI is the judge.
 - Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28 (interfaces §3 `error.completed`, providers §6b connect timeout, the non-streamed row's M1 fallback, AC-PROV-09 wording).
 Next: M1-10.
+
+## 2026-10-14 — M1-10 Prompt assembly, epochs and mid-epoch instructions
+Done: `src/agent/transcript/` builds the epoch header.
+- The system prompt is rendered from the embedded `docs/prompts` files: base, mode, sandbox, headless, conditional sections, `## Environment`, `## Project instructions`. `PROMPT_VERSION` is the hash of every prompt file.
+- `serializeTools` sorts tools by name and their schema keys. `startEpoch`/`headerOf` store and replay the exact bytes in `epoch.start` (`EpochStartData` in `src/schema/event-data.ts`).
+- `changedInstructions` turns an edited instruction file into an `instructions-updated` part. Reserved markers are escaped.
+- `src/platform/git.ts` is the one hardened git runner, now also used by snapshots. `readGitHead` uses plumbing only. `describeOs` gives the OS line.
+
+PR: #49 (merged, CI green on Linux, macOS and Windows). Two fresh reviews; their majors are fixed (askpass and env hardening untested; AC-CTX-18's receipt clause had no home).
+Learned:
+- Owner decision 2026-10-13: the marker is `[Dovet instruction]` and the label `▸ dovet:`, everywhere.
+- `GIT_TERMINAL_PROMPT=0` plus an empty `credential.helper` still lets a configured `core.askPass` or `GIT_ASKPASS` run (git 2.53). Every Dovet git call also passes `-c core.askPass=` and drops `GIT_*` and `SSH_ASKPASS`.
+- `git status` runs a clean filter only when a tracked file's size is unchanged and its mtime moved, so filter-trap tests must keep the size the same.
+- `instructionDelivery(protocol)` in the adapter is the single place for per-protocol delivery. The developer-message path throws until an openai-responses package is bundled and its conversion is verified.
+- AC-CTX-18's receipt clause is now AC-RCPT-11, in M3-08. The model's compliance with the attribution rule is for evals.
+- `bun check -b` here runs the whole `check` script; the type check alone is `bunx tsc -b`.
+- Snapshots still spawn a bare `git` from PATH (predates M1-10). The platforms spec wants it resolved, skipping project directories; do this with the next task that touches snapshots or in M1-25 wiring.
+- Claude Code setup merged (#48): attribution-guard and Biome hooks, `/ship-task`, `plan-checker`.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28, Q29.
+Next: M1-11 (instruction files).
