@@ -8,8 +8,10 @@ export type ChildHandle = {
   exited: Promise<number | null>;
 };
 
+export type Os = "linux" | "darwin" | "win32";
+
 export interface Platform {
-  os: "linux" | "darwin" | "win32";
+  os: Os;
   arch: string;
   canonicalize(p: string, cwd: AbsPath): AbsPath;
   spawn(cmd: {
@@ -24,4 +26,6 @@ export interface Platform {
   shells(): { bash?: AbsPath; powershell?: AbsPath; gitBash?: AbsPath };
   clipboard: { readImage(): Promise<Uint8Array | null>; writeText(t: string): Promise<void> };
   libexec(name: "rg" | "srt"): AbsPath;
+  // ASSUMPTION (QUESTIONS Q18): not yet in interfaces §2b
+  resolve(program: string): Promise<AbsPath | undefined>;
 }

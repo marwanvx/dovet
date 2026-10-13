@@ -1341,3 +1341,10 @@ How the CI timings were found: the first benchmark printed only totals, hit the 
 - Tiers seen in `getPlatformSupport()`: Windows 11 Enterprise 25H2: `base-container`; Windows Server 2025 Datacenter: `appcontainer-dacl` with three warnings (no BaseContainer, system-drive root metadata, NUL device; the last two are fixed by an elevated `wxc-host-prep`); there `curl -o NUL` failed with exit 23 even with egress allowed.
 - The runners' user is `runneradmin`, an administrator: a standard user is untested.
 
+
+## SPIKE-10 case-insensitive volumes (M1-02, 2026-10-13)
+
+- Decision: no probe. `pathKey()` in `src/platform/paths.ts` lower-cases on macOS and Windows (and turns `/` into `\` on Windows); Linux compares exactly. `projectId` hashing (event-log, M1-05) will use the same key.
+- Why not probe: a probe writes a file into the user's volume (or the project) at startup, and a volume's answer differs per mount (a case-sensitive APFS volume, a Windows directory with per-directory case sensitivity enabled, WSL mounts). The only cost of the blanket rule is that two paths differing only in case count as the same on a case-sensitive macOS volume, which errs towards applying a permission rule rather than missing one.
+- Check on each OS: `src/platform/paths.test.ts` creates `Probe.txt` in a temp directory and expects `pROBE.txt` to exist on macOS and Windows and not on Linux (default volumes of the CI runners).
+- Left alone: Windows folds with `toLowerCase()`, not NTFS's own upcase table, so rare non-ASCII letters that NTFS treats as equal may compare as different (the safe direction for a "same file" check is the realpath, which the file tools also use).
