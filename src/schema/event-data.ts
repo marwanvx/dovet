@@ -23,5 +23,20 @@ export const SystemInjectedData = z.object({
   delivery: z.enum(["system-message", "reminder-block"]),
 });
 
+export const InstructionsLoadedData = z.object({
+  files: z.array(
+    z.object({
+      /** Canonical path; resume rebuilds the loaded set from it. */
+      path: z.string().min(1),
+      sha256: z.string().regex(/^[0-9a-f]{64}$/),
+      bytes: z.number().int().nonnegative(),
+      lines: z.number().int().nonnegative(),
+      trigger: z.enum(["launch", "lazy-subdir", "path-rule", "changed", "import"]),
+    }),
+  ),
+  warnings: z.array(z.string()),
+});
+
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
+export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;

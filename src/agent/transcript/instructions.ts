@@ -53,3 +53,11 @@ export async function changedInstructions(
   }
   return { loaded: next, instructions };
 }
+
+export function lazyInstructions(displayPath: string, content: string): InstructionPart {
+  return {
+    kind: "instruction",
+    reason: "lazy-instructions",
+    text: `Instructions for ${escapeReservedMarkers(displayPath)} (loaded because you worked with files there):\n${escapeReservedMarkers(content.replace(/\r?\n$/, ""))}`,
+  };
+}
