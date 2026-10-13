@@ -16,4 +16,6 @@ You review one Dovet task with fresh eyes. You did not write the code. Follow [b
 
 Never commit or push. When you finish, `git status` and `git diff` must show exactly what they showed when you started.
 
+Report only real gaps: wrong behavior, a criterion without a real test, a broken rule. Style preferences and cases that can't happen are not findings.
+
 Report findings ranked blocker / major / minor / nit, each with `file:line`, what fails and a concrete fix. Be concise.
