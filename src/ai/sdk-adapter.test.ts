@@ -8,11 +8,13 @@ import {
   SCENARIOS,
   type Scenario,
   scriptedModel,
+  sseBody,
   startFixtureServer,
 } from "../../test/helpers/index.ts";
 import type { StoredResponse } from "../schema/index.ts";
 import { Secret } from "../store/index.ts";
 import { capturingFetch, createSdkAdapter, type ProviderRequest, type RenderInput, type StreamEvent } from "./index.ts";
+import { endpointOf, providerRecord } from "./registry.ts";
 
 const servers: Array<{ stop(): Promise<void> }> = [];
 afterEach(async () => {
@@ -29,7 +31,7 @@ function scenario(name: string): Scenario {
   return s;
 }
 
-function input(s: Scenario, transcript: RenderInput["transcript"]): RenderInput {
+function input(s: Scenario, transcript: RenderInput["transcript"], effort = s.effort): RenderInput {
   return {
     header: {
       epoch: 0,
@@ -40,15 +42,19 @@ function input(s: Scenario, transcript: RenderInput["transcript"]): RenderInput 
       toolsJson: JSON.stringify(s.tools),
       thinking: { mode: "off" },
     },
-    params: { maxTokens: MAX_TOKENS },
+    params: { maxTokens: MAX_TOKENS, ...(effort === undefined ? {} : { effort }) },
     transcript,
     cache: { breakpoints: "auto", ttl: "auto" },
   };
 }
 
-function nvidiaAdapter(baseURL: string) {
+const NVIDIA = endpointOf(providerRecord("nvidia"));
+
+/** The real nvidia record pointed at `baseURL`; `reasons` is what the model probe found (no effort is sent otherwise). */
+function nvidiaAdapter(baseURL: string, opts: { reasons?: boolean; levels?: string[] } = {}) {
   return createSdkAdapter({
-    endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL, apiKey: new Secret("test-key-not-real") }),
+    endpoint: () => ({ ...NVIDIA, baseURL, apiKey: new Secret("test-key-not-real") }),
+    modelInfo: () => (opts.reasons === true ? { effortLevels: opts.levels ?? NVIDIA.effortLevels } : undefined),
   });
 }
 
@@ -147,6 +153,153 @@ describe("render", () => {
         ],
       },
     ]);
+  });
+});
+
+// spec: providers "Effort mapping" (chat fallback: quirk effortField)
+describe("effort", () => {
+  const s = scenario("text");
+  const first: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: "hi" }] }];
+  const sent = (adapter: ReturnType<typeof nvidiaAdapter>, effort: string) => {
+    const call = adapter.render(input(s, first, effort));
+    return { effort: call.effort, providerOptions: call.providerOptions };
+  };
+
+  test("a reasoning model gets reasoning_effort with the level asked for", () => {
+    expect(sent(nvidiaAdapter("http://unused", { reasons: true }), "low")).toEqual({
+      effort: "low",
+      providerOptions: { nvidia: { reasoningEffort: "low" } },
+    });
+  });
+
+  test("a model the probe found not reasoning gets no effort field at all", () => {
+    expect(sent(nvidiaAdapter("http://unused"), "high")).toEqual({ effort: undefined, providerOptions: {} });
+  });
+
+  test("an unsupported level maps to the nearest lower one, max to the highest, and the sent value is reported", () => {
+    const adapter = nvidiaAdapter("http://unused", { reasons: true, levels: ["low", "high"] });
+    expect(sent(adapter, "medium").effort).toBe("low");
+    expect(sent(adapter, "xhigh").effort).toBe("high");
+    expect(sent(adapter, "max")).toEqual({ effort: "high", providerOptions: { nvidia: { reasoningEffort: "high" } } });
+    expect(sent(nvidiaAdapter("http://unused", { reasons: true, levels: ["high"] }), "low").effort).toBe("high");
+  });
+
+  test("an endpoint without an effort field gets none", () => {
+    const adapter = createSdkAdapter({
+      endpoint: () => ({ ...NVIDIA, baseURL: "http://unused", quirks: { ...NVIDIA.quirks, effortField: null } }),
+      modelInfo: () => ({ effortLevels: ["low"] }),
+    });
+    expect(sent(adapter, "low")).toEqual({ effort: undefined, providerOptions: {} });
+  });
+});
+
+// spec: providers §6 "Reasoning replay for chat-protocol reasoning models" (quirk reasoningReplay)
+describe("reasoning replay on chat endpoints", () => {
+  const s = scenario("parallel-tools");
+  const turn = (id: string): StoredResponse => {
+    const replay = { provider: "nvidia", protocol: "openai-chat" as const, modelId: s.model, fields: {} };
+    return {
+      provider: "nvidia",
+      protocol: "openai-chat",
+      package: "@ai-sdk/openai-compatible",
+      packageVersion: "x",
+      modelId: s.model,
+      parts: [
+        { kind: "reasoning", summary: `thinking ${id}`, replay },
+        { kind: "tool_call", id, name: "read", inputJson: '{"path":"a"}' },
+      ],
+      usage: {},
+      finishReason: "tool_calls",
+    };
+  };
+  const result = (id: string) => ({
+    kind: "user" as const,
+    parts: [
+      { kind: "tool_result" as const, callId: id, isError: false, content: [{ kind: "text" as const, text: "A" }] },
+    ],
+  });
+  const transcript: RenderInput["transcript"] = [
+    { kind: "user", parts: [{ kind: "text", text: "one" }] },
+    { kind: "assistant", stored: turn("c1") },
+    result("c1"),
+    { kind: "user", parts: [{ kind: "text", text: "two" }] },
+    { kind: "assistant", stored: turn("c2") },
+    result("c2"),
+  ];
+  const reasoningSent = (replay: "in-tool-loop" | "always" | "never" | undefined, items = transcript) => {
+    const { reasoningReplay: _, ...rest } = NVIDIA.quirks;
+    const quirks = replay === undefined ? rest : { ...rest, reasoningReplay: replay };
+    const adapter = createSdkAdapter({ endpoint: () => ({ ...NVIDIA, baseURL: "http://unused", quirks }) });
+    return (adapter.render(input(s, items)).messages as ModelMessage[]).flatMap((m) =>
+      m.role === "assistant" && Array.isArray(m.content)
+        ? m.content.flatMap((p) => (p.type === "reasoning" ? [p.text] : []))
+        : [],
+    );
+  };
+
+  test("in-tool-loop: only the current tool loop's reasoning goes back; an earlier user turn's is dropped", () => {
+    expect(reasoningSent("in-tool-loop")).toEqual(["thinking c2"]);
+  });
+
+  test("in-tool-loop: text queued after tool results stays in the loop and keeps the reasoning", () => {
+    const queued = [
+      ...transcript.slice(0, 2),
+      { kind: "user" as const, parts: [...result("c1").parts, { kind: "text" as const, text: "also check B" }] },
+    ];
+    expect(reasoningSent("in-tool-loop", queued)).toEqual(["thinking c1"]);
+  });
+
+  test("always and never; a record without the quirk replays always", () => {
+    expect(reasoningSent("always")).toEqual(["thinking c1", "thinking c2"]);
+    expect(reasoningSent("never")).toEqual([]);
+    expect(reasoningSent(undefined)).toEqual(["thinking c1", "thinking c2"]);
+  });
+});
+
+// spec: providers §6 (tool calls stream as fragments keyed by index)
+describe("tool-call fragments", () => {
+  const delta = (d: unknown, finish: string | null = null) => ({
+    id: "c",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "example/model",
+    choices: [{ index: 0, delta: d, finish_reason: finish }],
+  });
+  const call = (index: number, fn: Record<string, string>, id?: string) => ({
+    tool_calls: [{ index, ...(id === undefined ? {} : { id, type: "function" }), function: fn }],
+  });
+
+  test("two parallel calls whose arguments arrive interleaved in pieces are put back together per index", async () => {
+    const body = sseBody([
+      delta(call(0, { name: "read", arguments: "" }, "call-a")),
+      delta(call(1, { name: "list", arguments: '{"pa' }, "call-b")),
+      delta(call(0, { arguments: '{"path":' })),
+      delta(call(1, { arguments: 'th":"src"}' })),
+      delta(call(0, { arguments: '"README.md"}' })),
+      delta({}, "tool_calls"),
+    ]);
+    const server = startFixtureServer([
+      {
+        request: { path: "/v1/chat/completions", body: "" },
+        response: { status: 200, contentType: "text/event-stream", body },
+      },
+    ]);
+    servers.push(server);
+    const adapter = nvidiaAdapter(server.baseURL);
+    const events = await collect(
+      adapter.stream(
+        adapter.render(input(scenario("parallel-tools"), [{ kind: "user", parts: [{ kind: "text", text: "go" }] }])),
+        { signal: new AbortController().signal, onRequest: () => {} },
+      ),
+    );
+    const calls = storedOf(events).parts.flatMap((p) =>
+      p.kind === "tool_call" ? [[p.id, p.name, JSON.parse(p.inputJson)]] : [],
+    );
+    expect(calls).toEqual([
+      ["call-a", "read", { path: "README.md" }],
+      ["call-b", "list", { path: "src" }],
+    ]);
+    expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "tool_use" });
   });
 });
 
@@ -285,13 +438,13 @@ describe("capturingFetch", () => {
 });
 
 describe("recorded NVIDIA sessions", () => {
-  for (const name of ["text", "parallel-tools"]) {
+  for (const name of ["text", "parallel-tools", "session"]) {
     test(`${name}: every request the adapter sends equals the recorded direct-SDK request byte for byte`, async () => {
       const fx = await fixture(name);
       const s = scenario(name);
       const server = startFixtureServer(fx.exchanges);
       servers.push(server);
-      const adapter = nvidiaAdapter(server.baseURL);
+      const adapter = nvidiaAdapter(server.baseURL, { reasons: fx.probe?.reasons === true });
       const captured: ProviderRequest[] = [];
       const run = (transcript: RenderInput["transcript"]) =>
         collect(
@@ -301,34 +454,36 @@ describe("recorded NVIDIA sessions", () => {
           }),
         );
 
-      const first: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: s.user }] }];
-      const events = await run(first);
+      const transcript: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: s.user }] }];
+      const events = await run(transcript);
       const stored = storedOf(events);
       expect(stored).toMatchObject({ provider: "nvidia", protocol: "openai-chat", modelId: s.model });
       expect(stored.package).toBe("@ai-sdk/openai-compatible");
+      transcript.push({ kind: "assistant", stored });
       if (s.results !== undefined) {
         const results = s.results;
         const calls = stored.parts.filter((p) => p.kind === "tool_call");
         expect(calls.length).toBeGreaterThan(0);
         expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "tool_use" });
-        await run([
-          ...first,
-          { kind: "assistant", stored },
-          {
-            kind: "user",
-            parts: calls.map((c, i) => {
-              const r = results[i % results.length] ?? { output: "", isError: false };
-              return {
-                kind: "tool_result" as const,
-                callId: c.id,
-                isError: r.isError,
-                content: [{ kind: "text" as const, text: r.output }],
-              };
-            }),
-          },
-        ]);
+        transcript.push({
+          kind: "user",
+          parts: calls.map((c, i) => {
+            const r = results[i % results.length] ?? { output: "", isError: false };
+            return {
+              kind: "tool_result" as const,
+              callId: c.id,
+              isError: r.isError,
+              content: [{ kind: "text" as const, text: r.output }],
+            };
+          }),
+        });
+        transcript.push({ kind: "assistant", stored: storedOf(await run(transcript)) });
       } else {
         expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "end_turn" });
+      }
+      if (s.followUp !== undefined) {
+        transcript.push({ kind: "user", parts: [{ kind: "text", text: s.followUp }] });
+        storedOf(await run(transcript));
       }
       expect(server.received).toEqual(fx.exchanges.map((x) => x.request.body));
       expect(captured.map((c) => c.body)).toEqual(server.received);
@@ -378,6 +533,21 @@ describe("recorded NVIDIA sessions", () => {
       expect(adapter.fromStored(stored, { provider: "nvidia", model: s.model })).toEqual(messages);
     });
   }
+
+  test("session: the recording has effort, reasoning, two parallel calls, an error result and a follow-up", async () => {
+    const fx = await fixture("session");
+    const [first, loop, followUp] = fx.exchanges.map((x) => JSON.parse(x.request.body));
+    expect(fx.probe).toMatchObject({ reasons: true });
+    expect(first.reasoning_effort).toBe(scenario("session").effort);
+    const assistant = loop.messages.find((m: { role: string }) => m.role === "assistant");
+    expect(assistant.reasoning_content.length).toBeGreaterThan(0);
+    expect(assistant.tool_calls).toHaveLength(2);
+    expect(loop.messages.filter((m: { role: string }) => m.role === "tool")).toHaveLength(2);
+    expect(followUp.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(2);
+    expect(followUp.messages.some((m: { reasoning_content?: string }) => m.reasoning_content !== undefined)).toBe(
+      false,
+    );
+  });
 
   test("text: deltas add up to the stored text and every block is closed", async () => {
     const fx = await fixture("text");
@@ -479,7 +649,7 @@ describe("classifyError", () => {
     new APICallError({ message, url: "u", requestBodyValues: {}, statusCode, isRetryable: false });
 
   test("maps HTTP statuses to kinds and retryability", () => {
-    const kinds = [400, 401, 402, 403, 404, 413, 429, 500, 503, 529].map((s) => {
+    const kinds = [400, 401, 402, 403, 404, 410, 413, 429, 500, 503, 529].map((s) => {
       const e = adapter.classifyError(api(s));
       return [s, e.kind, e.retryable];
     });
@@ -489,12 +659,33 @@ describe("classifyError", () => {
       [402, "billing", false],
       [403, "auth", false],
       [404, "not_found", false],
+      [410, "not_found", false],
       [413, "too_large", false],
       [429, "rate_limit", true],
       [500, "server", true],
       [503, "overloaded", true],
       [529, "overloaded", true],
     ]);
+  });
+
+  // spec: providers "Model lifecycle" (a retired model; NVIDIA answers 410 with a problem body)
+  test("an RFC 9457 problem body adds its detail to the message, once", () => {
+    const err = new APICallError({
+      message: "Gone",
+      url: "u",
+      requestBodyValues: {},
+      statusCode: 410,
+      responseBody: JSON.stringify({ status: 410, title: "Gone", detail: "The model reached its end of life." }),
+    });
+    expect(adapter.classifyError(err).message).toBe("Gone: The model reached its end of life.");
+    const repeated = new APICallError({
+      message: "The model reached its end of life.",
+      url: "u",
+      requestBodyValues: {},
+      statusCode: 410,
+      responseBody: JSON.stringify({ detail: "The model reached its end of life." }),
+    });
+    expect(adapter.classifyError(repeated).message).toBe("The model reached its end of life.");
   });
 
   test("a network failure is retryable; a programming error or anything else is unknown", () => {

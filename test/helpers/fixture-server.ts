@@ -22,3 +22,8 @@ export function startFixtureServer(exchanges: readonly Exchange[]): {
   });
   return { baseURL: `http://127.0.0.1:${server.port}/v1`, received, stop: () => server.stop(true) };
 }
+
+/** A Chat Completions event stream of these chunks, as a server sends it. */
+export function sseBody(chunks: readonly unknown[]): string {
+  return `${chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("")}data: [DONE]\n\n`;
+}

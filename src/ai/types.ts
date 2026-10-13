@@ -33,6 +33,8 @@ export type SdkCall = {
   messages: unknown;
   tools: ToolDef[];
   providerOptions: Record<string, unknown>;
+  /** The effort level actually sent, after mapping to the model's levels (shown by the status bar and /why). */
+  effort?: string;
   maxOutputTokens?: number;
   headers?: Record<string, string>;
 };

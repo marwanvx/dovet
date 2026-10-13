@@ -3,10 +3,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { jsonSchema, type ModelMessage, streamText, type ToolSet, tool } from "ai";
-import { sortTools } from "../src/ai/index.ts";
+import { endpointOf, providerRecord, sortTools } from "../src/ai/index.ts";
+import { Secret } from "../src/store/index.ts";
+import { probeModel } from "../test/helpers/nvidia-probe.ts";
 import { type Exchange, type Fixture, MAX_TOKENS, SCENARIOS, type Scenario } from "../test/helpers/nvidia-scenarios.ts";
 
-const BASE_URL = "https://integrate.api.nvidia.com/v1";
+const BASE_URL = endpointOf(providerRecord("nvidia")).baseURL;
 const OUT = join(import.meta.dir, "..", "test", "fixtures", "nvidia");
 
 function toolSet(s: Scenario): ToolSet {
@@ -16,7 +18,19 @@ function toolSet(s: Scenario): ToolSet {
   );
 }
 
+/** The nvidia record's `in-tool-loop` replay rule: a new user turn drops the reasoning of every earlier answer. */
+function withoutReasoning(messages: ModelMessage[]): ModelMessage[] {
+  return messages.map((m) =>
+    m.role === "assistant" && Array.isArray(m.content)
+      ? { ...m, content: m.content.filter((p) => p.type !== "reasoning") }
+      : m,
+  );
+}
+
 async function record(s: Scenario, apiKey: string): Promise<Fixture> {
+  const probe = await probeModel(s.model, { baseURL: BASE_URL, apiKey: new Secret(apiKey) });
+  if (!probe.ok) throw new Error(`${s.name}: ${s.model} failed the probe (${probe.skipped}); pick another model`);
+  const effort = probe.reasons && s.effort !== undefined ? { nvidia: { reasoningEffort: s.effort } } : undefined;
   // Only request bodies and response streams are saved; the key travels in a header, and no header is written.
   const exchanges: Exchange[] = [];
   const provider = createOpenAICompatible({
@@ -45,6 +59,7 @@ async function record(s: Scenario, apiKey: string): Promise<Fixture> {
       maxRetries: 0,
       allowSystemInMessages: true,
       maxOutputTokens: MAX_TOKENS,
+      ...(effort === undefined ? {} : { providerOptions: effort }),
     });
     for await (const part of r.fullStream) if (part.type === "error") throw part.error;
     return (await r.response).messages;
@@ -55,6 +70,7 @@ async function record(s: Scenario, apiKey: string): Promise<Fixture> {
     { role: "user", content: [{ type: "text", text: s.user }] },
   ];
   const answer = await step(first);
+  let history = [...first, ...answer];
   if (s.results !== undefined) {
     const results = s.results;
     const calls = answer.flatMap((m) =>
@@ -76,9 +92,26 @@ async function record(s: Scenario, apiKey: string): Promise<Fixture> {
         };
       }),
     };
-    await step([...first, ...answer, toolMessage]);
+    history = [...history, toolMessage];
+    const final = await step(history);
+    if (
+      final.some(
+        (m) => m.role === "assistant" && Array.isArray(m.content) && m.content.some((p) => p.type === "tool-call"),
+      )
+    )
+      throw new Error(`${s.name}: the model called tools again after the results; record again`);
+    history = [...history, ...final];
   }
-  return { scenario: s.name, model: s.model, recorded: new Date().toISOString().slice(0, 10), exchanges };
+  if (s.followUp !== undefined) {
+    await step([...withoutReasoning(history), { role: "user", content: [{ type: "text", text: s.followUp }] }]);
+  }
+  return {
+    scenario: s.name,
+    model: s.model,
+    recorded: probe.date,
+    probe: { reasons: probe.reasons },
+    exchanges,
+  };
 }
 
 const apiKey = process.env.NVIDIA_API_KEY;

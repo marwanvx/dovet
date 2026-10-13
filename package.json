@@ -24,7 +24,8 @@
     "docs:boxes": "bun scripts/docs-context.ts",
     "docs:check": "bun scripts/check-docs.ts",
     "next": "bun scripts/next.ts",
-    "record": "bun scripts/record.ts"
+    "record": "bun scripts/record.ts",
+    "probe": "bun scripts/probe.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
