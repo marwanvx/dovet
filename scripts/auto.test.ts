@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { claudeArgs, decide, lastEntry, parseArgs, parseRun, type RunResult } from "./auto.ts";
+import {
+  claudeArgs,
+  decide,
+  describeEvent,
+  type Feed,
+  lastEntry,
+  limitsLine,
+  newFeed,
+  parseArgs,
+  parseRun,
+  type RunResult,
+} from "./auto.ts";
 
 const ok: RunResult = { isError: false, subtype: "success", result: "Shipped M1-12.", costUsd: 4.2, sessionId: "s1" };
 
@@ -28,7 +39,15 @@ describe("claudeArgs", () => {
     expect(args[2]).toContain("reviewer agent");
     expect(args[2]).toContain("Context7");
     expect(args).toEqual(
-      expect.arrayContaining(["--permission-mode", "auto", "--permission-prompts", "none", "--output-format", "json"]),
+      expect.arrayContaining([
+        "--permission-mode",
+        "auto",
+        "--permission-prompts",
+        "none",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+      ]),
     );
     expect(args.join(" ")).toContain("--model sonnet");
     expect(args.join(" ")).toContain("--max-budget-usd 20");
@@ -111,5 +130,88 @@ describe("decide", () => {
     expect(decide({ exitCode: 0, run: ok, before: 10, after: entry("M2-01 (waiting for owner).") }).action).toBe(
       "stop",
     );
+  });
+});
+
+describe("live feed", () => {
+  const ROOT = "/home/u/dovet";
+  const tool = (name: string, input: Record<string, unknown>, parent: string | null = null) => ({
+    type: "assistant",
+    parent_tool_use_id: parent,
+    message: { content: [{ type: "tool_use", id: `id-${name}`, name, input }] },
+  });
+  const lines = (feed: Feed, ev: unknown) => describeEvent(ev, feed, ROOT);
+
+  test("tool calls read as plain actions, with paths relative to the project", () => {
+    const feed = newFeed();
+    expect(lines(feed, tool("Read", { file_path: `${ROOT}/src/a.ts` }))).toEqual(["read   src/a.ts"]);
+    expect(lines(feed, tool("Edit", { file_path: `${ROOT}/src/a.ts` }))).toEqual(["edit   src/a.ts"]);
+    expect(lines(feed, tool("Bash", { command: "bun test src/agent\necho done" }))).toEqual([
+      "run    bun test src/agent",
+    ]);
+    expect(lines(feed, tool("mcp__claude_ai_Context7__query-docs", { query: "zod" }))).toEqual([
+      "docs   Context7 query-docs",
+    ]);
+    expect(lines(feed, tool("Grep", { pattern: "isWithin" }))).toEqual(['search "isWithin"']);
+  });
+
+  test("helper agents are named, and their own steps are marked with that name", () => {
+    const feed = newFeed();
+    expect(lines(feed, tool("Agent", { subagent_type: "reviewer", description: "Review M1-12" }))).toEqual([
+      "agent  reviewer: Review M1-12",
+    ]);
+    expect(lines(feed, tool("Read", { file_path: `${ROOT}/x.ts` }, "id-Agent"))).toEqual(["  [reviewer] read   x.ts"]);
+  });
+
+  test("what Claude says is shown as one line; thinking is not", () => {
+    const feed = newFeed();
+    const say = {
+      type: "assistant",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "text", text: "Tests pass.\nShipping." },
+        ],
+      },
+    };
+    expect(lines(feed, say)).toEqual(["says   Tests pass."]);
+  });
+
+  test("a failed tool result is shown", () => {
+    const feed = newFeed();
+    lines(feed, tool("Bash", { command: "bun test" }));
+    const result = {
+      type: "user",
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          { type: "tool_result", tool_use_id: "id-Bash", is_error: true, content: "error: 2 tests failed\nmore" },
+        ],
+      },
+    };
+    expect(lines(feed, result)).toEqual(["  ✗ Bash failed: error: 2 tests failed"]);
+  });
+
+  test("usage limits are kept and shown as percentages", () => {
+    const feed = newFeed();
+    const ev = {
+      type: "rate_limit_event",
+      rate_limit_info: {
+        status: "allowed_warning",
+        unifiedWindows: {
+          five_hour: { utilization: 0.24, resetsAt: 1791945600 },
+          seven_day: { utilization: 0.68, resetsAt: 1792400400 },
+        },
+      },
+    };
+    expect(lines(feed, ev)).toEqual([]);
+    expect(limitsLine(feed)).toMatch(/^plan usage: 5-hour 24% \(resets .+\) · week 68% \(resets .+\)$/);
+    expect(feed.fiveHourResetMs).toBe(1791945600 * 1000);
+  });
+
+  test("unknown events are ignored, not guessed at", () => {
+    expect(lines(newFeed(), { type: "something_new" })).toEqual([]);
+    expect(lines(newFeed(), "not an object")).toEqual([]);
   });
 });
