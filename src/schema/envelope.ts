@@ -2,7 +2,7 @@
 import { z } from "zod";
 import { IsoTime, Ulid } from "./primitives.ts";
 
-// `type` is narrowed to the event-type union, and `data` per type, by the event-log task.
+// `type` stays a string so a reader can report unknown types (event-log "Core vs optional events"); `data` per type comes with each event's first writer (QUESTIONS Q22).
 export const EventEnvelope = z.object({
   v: z.literal(1),
   id: Ulid,
