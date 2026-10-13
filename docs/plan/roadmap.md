@@ -36,7 +36,7 @@ OpenAI Responses, Sign in with ChatGPT, generic provider records from models.dev
 
 ## M5 — v0.1 release
 
-Eval suite on `@vercel/agent-eval` (40+ tasks incl. adversarial, with Claude Code and Codex baselines), per-family A/B of the shared tools and prompt (SPIKE-13), soak tests, docs.
+Eval suite on `@vercel/agent-eval` (40+ tasks incl. adversarial, on free NVIDIA models; paid baselines only with owner approval), per-family A/B of the shared tools and prompt (SPIKE-13), soak tests, docs.
 
 **Exit evidence:** the release gates of [testing](../specs/testing.md).
 

@@ -18,7 +18,7 @@
 | Property | `fast-check` (dev dep) | Prefix property, receipt ⇔ events equivalence, path canonicalization invariants | Every PR |
 | Recorded-stream integration | A local **fixture server** (`Bun.serve` on `127.0.0.1:0`) replaying real SSE captures; adapters point at it via `RuntimeDeps.baseUrls` ([interfaces §9](interfaces.md)). Every AI SDK provider package takes a `baseURL` setting, so the real provider package and HTTP path are exercised and no request-interception library is needed | Full turns per provider without network; stop-reason handling; quirks | Every PR |
 | Platform integration | real processes | Bash/PowerShell tools, process-tree kill, sandbox, atomic writes, encodings | Every PR, all OSes |
-| Live API | real providers, tiny budgets | Preserved-thinking enforcement (`prefix_mismatch_behavior: "error"`), caching hit check, Gemini signatures, OpenAI reasoning replay | Nightly; hard spend cap $3/night |
+| Live API | the free NVIDIA provider (below); a paid provider only with the owner's approval (QUESTIONS Q23) | Streaming, reasoning and tool-call replay on probed models, a 10-turn tool-using session | Nightly; free |
 | Soak | scripted 4 h session against a scripted model (`MockLanguageModelV4` from `ai/test`) | Memory growth < 200 MB, no FD leaks, disk-write budget | Nightly (Linux), weekly (all OSes) |
 | Evals | `@vercel/agent-eval` (Docker sandboxes) | Agent quality and cost | Before releases and for prompt/tool changes |
 
@@ -106,10 +106,10 @@ Experiments (`evals/experiments/*.ts`) set the agent, model, `runs`, `timeout` a
 **Protocol:**
 - Run each task 3× per configuration (variance is large; single runs mislead).
 - Compare configurations with a paired comparison per task; report the mean and the spread.
-- External baseline: the same tasks run with agent-eval's built-in Claude Code and Codex agents and the same model, where licensing allows, for the v0.1 success metrics ([vision](../product/vision.md)).
+- External baseline (optional, owner-approved only): the same tasks with agent-eval's built-in agents of other tools, which need paid subscriptions; the default comparison is Dovet against itself across configurations and free NVIDIA models.
 - Optional: Terminal-Bench 2.0 for comparability with published results.
 
-**Eval budget:** each full run is capped (start at $40) and needs owner approval to run.
+**Eval budget:** evals run on free NVIDIA models (testing "Free test provider: NVIDIA"). No paid model runs in any test or eval unless the owner approves it first, with a cap (QUESTIONS Q23).
 
 ## Release gates (v0.1)
 

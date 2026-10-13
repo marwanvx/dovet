@@ -41,7 +41,7 @@ That's all, every time. The agent reads where things stand from the repository (
 | M0-09 | Create the release signing key (the agent gives every step) | — |
 | M1-30 | Your free NVIDIA key (`NVIDIA_API_KEY`) as a GitHub secret for nightly tests | free |
 | M3-14 | Use Dovet as your daily coding agent for two weeks | — |
-| M5-01 / M5-02 | Install Docker; approve the eval budget | ~$40 per full eval run |
+| M5-01 | Install Docker | free (evals use free NVIDIA models) |
 | M5-05 / M5-06 | Follow the docs on a fresh setup; approve the release | — |
 
 GitHub Actions (tests on Linux, macOS and Windows for every PR) is free for public repositories.
