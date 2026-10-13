@@ -1,5 +1,4 @@
-// The adapter contract per bundled provider package (providers §1 and "Acceptance criteria", SPIKE-44).
-// Each package added later gets an entry in CASES and must pass the same tests (QUESTIONS Q26).
+// The adapter contract per bundled provider package (providers §1, "Acceptance criteria", SPIKE-44, QUESTIONS Q26).
 import { afterEach, describe, expect, test } from "bun:test";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { jsonSchema, type ModelMessage, streamText, tool } from "ai";
@@ -27,9 +26,14 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.stop()));
 });
 
+// A package added later adds an entry here with its own adapter, scenarios and fixtures.
+// An `in-tool-loop` endpoint passes the 30-turn prefix test only within a tool loop (QUESTIONS Q27).
 const CASES = [
   {
     package: "@ai-sdk/openai-compatible",
+    provider: "nvidia",
+    providerKey: "nvidia",
+    adapter: nvidiaAdapter,
     fixtureDir: "nvidia",
     scenarios: ["text", "parallel-tools", "session"],
     direct: (baseURL: string, model: string) =>
@@ -53,10 +57,17 @@ function extendsRequest(a: string, b: string): boolean {
 }
 
 const SDK_MESSAGE_KEYS = new Set(["role", "providerOptions", "providerMetadata", "toolCallId", "toolName"]);
-function sdkKeysIn(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap(sdkKeysIn);
+const SDK_PART_TYPES = new Set(["text", "reasoning", "tool-call", "tool-result", "file"]);
+/** Keys and part shapes of AI SDK messages anywhere in a stored value. */
+function sdkShapesIn(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(sdkShapesIn);
   if (typeof value !== "object" || value === null) return [];
-  return Object.entries(value).flatMap(([k, v]) => [...(SDK_MESSAGE_KEYS.has(k) ? [k] : []), ...sdkKeysIn(v)]);
+  const part =
+    "type" in value && typeof value.type === "string" && SDK_PART_TYPES.has(value.type) ? [`type:${value.type}`] : [];
+  return [
+    ...part,
+    ...Object.entries(value).flatMap(([k, v]) => [...(SDK_MESSAGE_KEYS.has(k) ? [k] : []), ...sdkShapesIn(v)]),
+  ];
 }
 
 for (const c of CASES) {
@@ -79,8 +90,9 @@ for (const c of CASES) {
       });
 
       // spec: AC-PROV-02
-      test(`${name}: each request extends the one before it`, async () => {
-        const bodies = (await fixture(name)).exchanges.map((x) => x.request.body);
+      test(`${name}: each request the adapter sends extends the one before it`, async () => {
+        const fx = await fixture(name);
+        const bodies = (await replaySession(scenario(name), fx)).captured.map((x) => x.body);
         for (let i = 1; i < bodies.length; i++) expect(extendsRequest(bodies[i - 1] ?? "", bodies[i] ?? "")).toBe(true);
       });
 
@@ -88,7 +100,7 @@ for (const c of CASES) {
       test(`${name}: every recorded response survives SDK messages → stored parts → SDK messages`, async () => {
         const fx = await fixture(name);
         const s = scenario(name);
-        const adapter = nvidiaAdapter("http://unused");
+        const adapter = c.adapter("http://unused");
         for (const exchange of fx.exchanges) {
           const server = startFixtureServer([exchange]);
           servers.push(server);
@@ -110,10 +122,27 @@ for (const c of CASES) {
           });
           await r.consumeStream();
           const messages = (await r.response).messages.filter((m: ModelMessage) => m.role === "assistant");
-          const ctx = { provider: "nvidia", package: c.package, packageVersion: "pinned", modelId: s.model };
+          const ctx = { provider: c.provider, package: c.package, packageVersion: "pinned", modelId: s.model };
           const stored = adapter.toStored({ messages }, ctx);
           expect(stored.parts.length).toBeGreaterThan(0);
-          expect(adapter.fromStored(stored, { provider: "nvidia", model: s.model })).toEqual(messages);
+          expect(adapter.fromStored(stored, { provider: c.provider, model: s.model })).toEqual(messages);
+          // A metadata field Dovet doesn't know, on every part, comes back unchanged.
+          const marked = messages.map((m) =>
+            m.role === "assistant" && Array.isArray(m.content)
+              ? {
+                  ...m,
+                  content: m.content.map((p) => ({
+                    ...p,
+                    providerOptions: {
+                      ...("providerOptions" in p ? p.providerOptions : {}),
+                      [c.providerKey]: { dovetUnknownField: `x-${p.type}` },
+                    },
+                  })),
+                }
+              : m,
+          ) as ModelMessage[];
+          const again = adapter.toStored({ messages: marked }, ctx);
+          expect(adapter.fromStored(again, { provider: c.provider, model: s.model })).toEqual(marked);
         }
       });
     }
@@ -212,7 +241,7 @@ for (const c of CASES) {
         expect(data).toEqual(r.steps.map((s) => s.stored));
         for (const d of data) {
           expect(StoredResponse.parse(d)).toEqual(d as StoredResponse);
-          expect(sdkKeysIn(d)).toEqual([]);
+          expect(sdkShapesIn(d)).toEqual([]);
         }
       } finally {
         await project.dispose();

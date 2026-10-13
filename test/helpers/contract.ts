@@ -74,6 +74,7 @@ export async function replaySession(s: Scenario, fx: Fixture): Promise<Replay> {
     if (s.results !== undefined) {
       const results = s.results;
       const calls = first.parts.filter((p) => p.kind === "tool_call");
+      if (calls.length === 0) throw new Error(`${s.name}: the recorded answer has no tool call to answer`);
       transcript.push({
         kind: "user",
         parts: calls.map((c, i) => {
