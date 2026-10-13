@@ -1,6 +1,9 @@
 // Dovet's entry point and composition root: the only file that touches `process.*` (architecture "Modules").
 import { realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import pkg from "../../package.json";
+import type { Os } from "../platform/index.ts";
+import { authStatus } from "./auth.ts";
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
@@ -29,10 +32,23 @@ async function runUpdate(rollingBack: boolean): Promise<void> {
     for (const e of result.pruneErrors) console.error(`dovet: could not remove an old version: ${e}`);
 }
 
+function hostOs(): Os {
+  const p = process.platform;
+  if (p === "linux" || p === "darwin" || p === "win32") return p;
+  throw new Error(`${p} is not a supported platform`);
+}
+
 const args = process.argv.slice(2);
 if (args[0] === "update" && (args.length === 1 || (args.length === 2 && args[1] === "--rollback"))) {
   try {
     await runUpdate(args.length === 2);
+  } catch (err) {
+    console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+} else if (args[0] === "auth" && args[1] === "status" && args.length === 2) {
+  try {
+    process.stdout.write(await authStatus({ os: hostOs(), home: homedir(), cwd: process.cwd(), env: process.env }));
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;

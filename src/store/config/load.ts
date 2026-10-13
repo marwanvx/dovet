@@ -12,7 +12,7 @@ import {
   type SourcedRule,
 } from "./merge.ts";
 import { fileVersion, MIGRATIONS, type Migration, migrateText, type PendingMigration } from "./migrate.ts";
-import { type Parsed, parseSettingsText } from "./parse.ts";
+import { formatKey, locate, type Parsed, parseSettingsText } from "./parse.ts";
 import { readSettingsText } from "./read.ts";
 import { validateSettings } from "./validate.ts";
 import { writeFileAtomic } from "./write.ts";
@@ -74,6 +74,17 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
     });
     out.warnings.push(...result.warnings);
     out.problems.push(...result.problems);
+    if (source !== "user") {
+      for (const [name, provider] of Object.entries(result.value.providers ?? {})) {
+        if (!provider.apiKey?.startsWith("cmd:")) continue;
+        out.problems.push({
+          file: path,
+          line: located ? locate(text, parsed.tree, ["providers", name, "apiKey"]) : undefined,
+          key: formatKey(["providers", name, "apiKey"]),
+          message: "cmd: keys run a program, so they are allowed only in user settings",
+        });
+      }
+    }
     out.layers.push({ source, file: path, settings: result.value });
   } catch (err) {
     if (!(err instanceof SettingsError)) throw err;
