@@ -139,7 +139,6 @@ describe("AC-CLI-14: Dovet's own git calls", () => {
         };
         git(repo, "config", "core.askPass", script(askMarker));
         askEnv.GIT_ASKPASS = script(envAskMarker);
-        askEnv.SSH_ASKPASS = script(envAskMarker);
       }
       const call: GitCall = { git: gitPath, cwd: repo, env: { ...env, ...askEnv, GCM_INTERACTIVE: "always" } };
 

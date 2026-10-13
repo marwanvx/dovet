@@ -86,7 +86,6 @@ export function capturingFetch(onRequest: (req: ProviderRequest) => void, base: 
   return Object.assign(capture, { preconnect: base.preconnect });
 }
 
-/** Tool order is part of the prefix (context §7): plain code-unit order, the same for every caller. */
 /**
  * How a mid-epoch instruction reaches the model (context §4): its own system (developer) message after the user's
  * content, or a text block in the user message, marked where the protocol has no other way to tell it apart.
@@ -100,6 +99,7 @@ export function instructionDelivery(
   return { form: "reminder-block", prefix: "[Dovet instruction] " };
 }
 
+/** Tool order is part of the prefix (context §7): plain code-unit order, the same for every caller. */
 export function sortTools<T extends { name: string }>(defs: readonly T[]): T[] {
   return [...defs].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
@@ -470,21 +470,18 @@ export function createSdkAdapter(deps: AdapterDeps) {
             }),
           });
         }
-        const asSystem: string[] = [];
         const rest = item.parts.flatMap((p) => {
           if (p.kind === "tool_result") return [];
           if (p.kind === "text") return [{ type: "text" as const, text: p.text }];
           if (p.kind === "instruction") {
-            if (delivery.form === "system-message") {
-              asSystem.push(p.text);
-              return [];
-            }
+            // A developer message needs a bundled openai-responses package, whose conversion isn't verified yet.
+            if (delivery.form === "system-message")
+              throw new Error(`instructions on ${protocol} are not supported yet`);
             return [{ type: "text" as const, text: `${delivery.prefix}${p.text}` }];
           }
           throw new Error(`a ${p.kind} part in a prompt is not supported yet`);
         });
         if (rest.length > 0) messages.push({ role: "user", content: rest });
-        for (const text of asSystem) messages.push({ role: "system", content: text });
       }
     }
     const tools = sortTools(ToolDefs.parse(JSON.parse(header.toolsJson)));

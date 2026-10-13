@@ -138,9 +138,8 @@ describe("render", () => {
   });
 });
 
-// spec: providers "Effort mapping" (chat fallback: quirk effortField)
 describe("mid-epoch instructions per protocol (context §4)", () => {
-  test("a developer message on openai-responses; a marked text block on chat and interactions; plain on messages", () => {
+  test("the delivery form each protocol gets: developer message, marked text block or plain text block", () => {
     expect(instructionDelivery("openai-responses")).toEqual({ form: "system-message" });
     expect(instructionDelivery("openai-chat")).toEqual({ form: "reminder-block", prefix: "[Dovet instruction] " });
     expect(instructionDelivery("google-interactions")).toEqual({
@@ -151,6 +150,7 @@ describe("mid-epoch instructions per protocol (context §4)", () => {
   });
 });
 
+// spec: providers "Effort mapping" (chat fallback: quirk effortField)
 describe("effort", () => {
   const s = scenario("text");
   const first: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: "hi" }] }];
