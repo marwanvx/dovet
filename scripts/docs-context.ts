@@ -21,7 +21,7 @@ const MILESTONES: Record<string, string> = {
     "M0 (install layout, release pipeline, import-boundary check); later milestones follow the module rules",
   "event-log": "M1 (event log, resume, crash recovery); M2 (blob GC, disk use)",
   providers:
-    "M1 (Anthropic adapter, retries, adapter-contract proof for 3 protocols); M4 (OpenAI/Open Responses, Chinese providers, Chat fallback, registry, catalog, failover; Google §5 applies to Gemini like any other registry provider)",
+    "M1 (NVIDIA through `@ai-sdk/openai-compatible`, retries, adapter-contract proof on NVIDIA); M4 (OpenAI/Open Responses, Chinese providers, Chat fallback, registry, catalog, failover); Anthropic (M4-12) and Gemini (M4-08) only if the owner adds them",
   "agent-loop": "M1",
   tools:
     "M1 (Read, Write, Edit, Bash/PowerShell, Grep, Glob, AskUserQuestion, TodoWrite, plan-mode tools); M2 (WebFetch, WebSearch); M3 (dialogs)",

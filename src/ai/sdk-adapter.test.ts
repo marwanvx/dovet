@@ -5,6 +5,8 @@ import { MockLanguageModelV4 } from "ai/test";
 import {
   type Fixture,
   MAX_TOKENS,
+  nvidiaAdapter,
+  renderInput,
   SCENARIOS,
   type Scenario,
   scriptedModel,
@@ -31,32 +33,8 @@ function scenario(name: string): Scenario {
   return s;
 }
 
-function input(s: Scenario, transcript: RenderInput["transcript"], effort = s.effort): RenderInput {
-  return {
-    header: {
-      epoch: 0,
-      provider: "nvidia",
-      model: s.model,
-      promptVersion: "test",
-      systemText: s.systemText,
-      toolsJson: JSON.stringify(s.tools),
-      thinking: { mode: "off" },
-    },
-    params: { maxTokens: MAX_TOKENS, ...(effort === undefined ? {} : { effort }) },
-    transcript,
-    cache: { breakpoints: "auto", ttl: "auto" },
-  };
-}
-
 const NVIDIA = endpointOf(providerRecord("nvidia"));
-
-/** The real nvidia record pointed at `baseURL`; `reasons` is what the model probe found (no effort is sent otherwise). */
-function nvidiaAdapter(baseURL: string, opts: { reasons?: boolean; levels?: string[] } = {}) {
-  return createSdkAdapter({
-    endpoint: () => ({ ...NVIDIA, baseURL, apiKey: new Secret("test-key-not-real") }),
-    modelInfo: () => (opts.reasons === true ? { effortLevels: opts.levels ?? NVIDIA.effortLevels } : undefined),
-  });
-}
+const input = renderInput;
 
 async function collect(events: AsyncIterable<StreamEvent>): Promise<StreamEvent[]> {
   const out: StreamEvent[] = [];
@@ -438,103 +416,7 @@ describe("capturingFetch", () => {
 });
 
 describe("recorded NVIDIA sessions", () => {
-  for (const name of ["text", "parallel-tools", "session"]) {
-    test(`${name}: every request the adapter sends equals the recorded direct-SDK request byte for byte`, async () => {
-      const fx = await fixture(name);
-      const s = scenario(name);
-      const server = startFixtureServer(fx.exchanges);
-      servers.push(server);
-      const adapter = nvidiaAdapter(server.baseURL, { reasons: fx.probe?.reasons === true });
-      const captured: ProviderRequest[] = [];
-      const run = (transcript: RenderInput["transcript"]) =>
-        collect(
-          adapter.stream(adapter.render(input(s, transcript)), {
-            signal: new AbortController().signal,
-            onRequest: (r) => captured.push(r),
-          }),
-        );
-
-      const transcript: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: s.user }] }];
-      const events = await run(transcript);
-      const stored = storedOf(events);
-      expect(stored).toMatchObject({ provider: "nvidia", protocol: "openai-chat", modelId: s.model });
-      expect(stored.package).toBe("@ai-sdk/openai-compatible");
-      transcript.push({ kind: "assistant", stored });
-      if (s.results !== undefined) {
-        const results = s.results;
-        const calls = stored.parts.filter((p) => p.kind === "tool_call");
-        expect(calls.length).toBeGreaterThan(0);
-        expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "tool_use" });
-        transcript.push({
-          kind: "user",
-          parts: calls.map((c, i) => {
-            const r = results[i % results.length] ?? { output: "", isError: false };
-            return {
-              kind: "tool_result" as const,
-              callId: c.id,
-              isError: r.isError,
-              content: [{ kind: "text" as const, text: r.output }],
-            };
-          }),
-        });
-        transcript.push({ kind: "assistant", stored: storedOf(await run(transcript)) });
-      } else {
-        expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "end_turn" });
-      }
-      if (s.followUp !== undefined) {
-        transcript.push({ kind: "user", parts: [{ kind: "text", text: s.followUp }] });
-        storedOf(await run(transcript));
-      }
-      expect(server.received).toEqual(fx.exchanges.map((x) => x.request.body));
-      expect(captured.map((c) => c.body)).toEqual(server.received);
-      for (const c of captured) {
-        expect(c.bodySha256).toBe(new Bun.CryptoHasher("sha256").update(c.body).digest("hex"));
-        expect(JSON.stringify(c.headers)).not.toContain("test-key-not-real");
-      }
-    });
-
-    test(`${name}: SDK response messages → stored parts → SDK messages is lossless`, async () => {
-      const fx = await fixture(name);
-      const s = scenario(name);
-      const server = startFixtureServer(fx.exchanges);
-      servers.push(server);
-      const provider = createOpenAICompatible({
-        name: "nvidia",
-        baseURL: server.baseURL,
-        apiKey: "x",
-        includeUsage: true,
-      });
-      const r = streamText({
-        model: provider.chatModel(s.model),
-        messages: [
-          { role: "system", content: s.systemText },
-          { role: "user", content: [{ type: "text", text: s.user }] },
-        ],
-        tools: Object.fromEntries(
-          s.tools.map((d) => [d.name, tool({ description: d.description, inputSchema: jsonSchema(d.inputSchema) })]),
-        ),
-        maxRetries: 0,
-        allowSystemInMessages: true,
-        maxOutputTokens: MAX_TOKENS,
-      });
-      await r.consumeStream();
-      const messages = (await r.response).messages;
-      const adapter = nvidiaAdapter(server.baseURL);
-      const stored = adapter.toStored(
-        { messages },
-        {
-          provider: "nvidia",
-          package: "@ai-sdk/openai-compatible",
-          packageVersion: "3.0.68",
-          modelId: s.model,
-        },
-      );
-      expect(stored.parts.length).toBeGreaterThan(0);
-      expect(adapter.fromStored(stored, { provider: "nvidia", model: s.model })).toEqual(messages);
-    });
-  }
-
-  test("session: the recording has effort, reasoning, two parallel calls, an error result and a follow-up", async () => {
+  test("session: the recording has effort, reasoning, two parallel calls, an error result and a follow-up keeping it", async () => {
     const fx = await fixture("session");
     const [first, loop, followUp] = fx.exchanges.map((x) => JSON.parse(x.request.body));
     expect(fx.probe).toMatchObject({ reasons: true });
@@ -544,9 +426,8 @@ describe("recorded NVIDIA sessions", () => {
     expect(assistant.tool_calls).toHaveLength(2);
     expect(loop.messages.filter((m: { role: string }) => m.role === "tool")).toHaveLength(2);
     expect(followUp.messages.filter((m: { role: string }) => m.role === "user")).toHaveLength(2);
-    expect(followUp.messages.some((m: { reasoning_content?: string }) => m.reasoning_content !== undefined)).toBe(
-      false,
-    );
+    // The record replays reasoning always (QUESTIONS Q27), so the follow-up still carries the tool loop's reasoning.
+    expect(followUp.messages.some((m: { reasoning_content?: string }) => m.reasoning_content !== undefined)).toBe(true);
   });
 
   test("text: deltas add up to the stored text and every block is closed", async () => {

@@ -20,7 +20,7 @@
         "quirks": {
           "reasoningField": "reasoning_content",
           "effortField": "reasoning_effort",
-          "reasoningReplay": "in-tool-loop"
+          "reasoningReplay": "always"
         },
         "capabilities": { "effortLevels": ["minimal", "low", "medium", "high", "xhigh", "max"] }
       }

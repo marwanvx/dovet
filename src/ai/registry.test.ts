@@ -7,7 +7,7 @@ describe("provider registry", () => {
     expect(endpointOf(record)).toMatchObject({
       package: "@ai-sdk/openai-compatible",
       baseURL: "https://integrate.api.nvidia.com/v1",
-      quirks: { effortField: "reasoning_effort", reasoningReplay: "in-tool-loop" },
+      quirks: { effortField: "reasoning_effort", reasoningReplay: "always" },
       effortLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
     });
     expect(PROVIDER_AUTH.nvidia).toEqual({ id: "nvidia", envVars: ["NVIDIA_API_KEY"] });
