@@ -27,6 +27,10 @@
     {
       "includes": ["src/**", "!src/**/*.test.ts"],
       "plugins": ["./scripts/lint/no-module-state.grit", "./scripts/lint/no-process-writes.grit"]
+    },
+    {
+      "includes": ["src/agent/transcript/build.ts", "src/agent/transcript/fingerprint.ts"],
+      "plugins": ["./scripts/lint/no-nondeterminism.grit"]
     }
   ]
 }

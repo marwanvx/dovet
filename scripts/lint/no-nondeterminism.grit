@@ -1,0 +1,13 @@
+language js
+
+`$x` as $s where {
+  or {
+    and { $s <: JsIdentifierExpression(), $s <: r"Date" },
+    and { $s <: JsNewExpression(), $s <: r"(?s)new Date\b.*" },
+    and {
+      $s <: JsStaticMemberExpression(),
+      $s <: r"(?s)(?:Math\.random|performance\.now|crypto\.(?:randomUUID|getRandomValues|randomBytes)|Date\.now|process\.env)\b.*"
+    }
+  },
+  register_diagnostic(span=$s, message="The transcript builder is pure: no Date, randomness or process.env (agent-loop: Determinism contract of the transcript builder).")
+}
