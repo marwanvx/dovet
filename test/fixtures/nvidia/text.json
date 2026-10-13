@@ -1,0 +1,18 @@
+{
+  "scenario": "text",
+  "model": "z-ai/glm-5.3-flash",
+  "recorded": "2026-10-13",
+  "exchanges": [
+    {
+      "request": {
+        "path": "/v1/chat/completions",
+        "body": "{\"model\":\"z-ai/glm-5.3-flash\",\"max_tokens\":4096,\"messages\":[{\"role\":\"system\",\"content\":\"You are a terse coding assistant. Use the tools when the user asks about files.\"},{\"role\":\"user\",\"content\":\"Reply with the single word: ready\"}],\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"list\",\"description\":\"List the files in a directory.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"],\"additionalProperties\":false}}},{\"type\":\"function\",\"function\":{\"name\":\"read\",\"description\":\"Read a text file and return its contents.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}},\"required\":[\"path\"],\"additionalProperties\":false}}}],\"tool_choice\":\"auto\",\"stream\":true,\"stream_options\":{\"include_usage\":true}}"
+      },
+      "response": {
+        "status": 200,
+        "contentType": "text/event-stream",
+        "body": "data: {\"id\":\"chatcmpl-da4de6f5-9be3-4622-9b53-80fff82a3675\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null,\"logprobs\":null}],\"created\":1791895356,\"model\":\"z-ai/glm-5.3-flash\",\"service_tier\":null,\"system_fingerprint\":null,\"object\":\"chat.completion.chunk\",\"usage\":null}\n\ndata: {\"id\":\"chatcmpl-da4de6f5-9be3-4622-9b53-80fff82a3675\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\",\"logprobs\":null}],\"created\":1791895356,\"model\":\"z-ai/glm-5.3-flash\",\"service_tier\":null,\"system_fingerprint\":null,\"object\":\"chat.completion.chunk\",\"usage\":null}\n\ndata: {\"id\":\"chatcmpl-da4de6f5-9be3-4622-9b53-80fff82a3675\",\"choices\":[],\"created\":1791895356,\"model\":\"z-ai/glm-5.3-flash\",\"service_tier\":null,\"system_fingerprint\":null,\"object\":\"chat.completion.chunk\",\"usage\":{\"prompt_tokens\":237,\"completion_tokens\":3,\"total_tokens\":240,\"prompt_tokens_details\":{\"audio_tokens\":null,\"cached_tokens\":0},\"completion_tokens_details\":{\"accepted_prediction_tokens\":null,\"audio_tokens\":null,\"reasoning_tokens\":0,\"rejected_prediction_tokens\":null}}}\n\ndata: [DONE]\n\n"
+      }
+    }
+  ]
+}

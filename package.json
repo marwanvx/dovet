@@ -23,7 +23,8 @@
     "spec:coverage": "bun scripts/spec-coverage.ts",
     "docs:boxes": "bun scripts/docs-context.ts",
     "docs:check": "bun scripts/check-docs.ts",
-    "next": "bun scripts/next.ts"
+    "next": "bun scripts/next.ts",
+    "record": "bun scripts/record.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -32,6 +33,7 @@
     "typescript": "6.0.3"
   },
   "dependencies": {
+    "@ai-sdk/openai-compatible": "3.0.68",
     "@anthropic-ai/sandbox-runtime": "0.0.79",
     "ai": "7.0.138",
     "get-east-asian-width": "1.6.0",
