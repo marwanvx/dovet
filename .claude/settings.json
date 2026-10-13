@@ -2,19 +2,75 @@
   "permissions": {
     "defaultMode": "acceptEdits",
     "allow": [
-      "Bash(bun *)", "Bash(bunx *)",
+      "Bash(bun *)",
+      "Bash(bunx *)",
       "Bash(python3 scripts/*)",
-      "Bash(git status*)", "Bash(git diff*)", "Bash(git log*)", "Bash(git show*)",
-      "Bash(git add *)", "Bash(git commit *)", "Bash(git switch *)", "Bash(git checkout -b *)",
-      "Bash(git branch *)", "Bash(git fetch*)", "Bash(git pull*)", "Bash(git stash*)",
-      "Bash(git push -u origin task/*)", "Bash(git push origin task/*)",
-      "Bash(gh pr *)", "Bash(gh run *)", "Bash(gh repo view*)", "Bash(gh api repos/*/actions/*)",
-      "Bash(rg *)", "Bash(ls *)", "Bash(cat *)", "Bash(mkdir *)"
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git checkout -b *)",
+      "Bash(git branch *)",
+      "Bash(git fetch*)",
+      "Bash(git pull*)",
+      "Bash(git stash*)",
+      "Bash(git push -u origin task/*)",
+      "Bash(git push origin task/*)",
+      "Bash(gh pr *)",
+      "Bash(gh run *)",
+      "Bash(gh repo view*)",
+      "Bash(gh api repos/*/actions/*)",
+      "Bash(rg *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(mkdir *)"
     ],
     "deny": [
-      "Bash(git push --force*)", "Bash(git push -f*)", "Bash(git push origin main*)", "Bash(git push * main)",
-      "Bash(git reset --hard*)", "Bash(gh repo delete*)",
-      "Read(./research-cache/**)", "Read(./.env)", "Read(./.env.*)"
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push origin main*)",
+      "Bash(git push * main)",
+      "Bash(git reset --hard*)",
+      "Bash(gh repo delete*)",
+      "Read(./research-cache/**)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/no-attribution.ts\"",
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/format.ts\"",
+            "timeout": 60,
+            "statusMessage": "Formatting with Biome"
+          }
+        ]
+      }
     ]
   }
 }

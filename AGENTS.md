@@ -36,6 +36,12 @@ Six antislop skills (MIT, https://github.com/miqdadbadjuber/anti-slop, v3.2.20; 
 
 Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `antislop active: during (project instruction).` once. If antislop conflicts with a spec or this file, the spec and this file win.
 
+## Claude Code helpers
+
+- `.claude/hooks/no-attribution.ts` blocks commits, PRs and GitHub comments that carry vendor attribution; `.claude/hooks/format.ts` runs Biome on every edited file. `attribution` in `.claude/settings.json` turns off Claude Code's own trailers.
+- `/ship-task <id>` runs build loop steps 8–9 (PR, CI on three OSes, merge, status line, progress entry).
+- The `plan-checker` agent does build loop step 4's fresh check of a milestone's task list; the `reviewer` agent does step 7.
+
 ## Rules that always apply
 
 - **Owner rules (2026-10-13).** Dovet is the owner's provider-neutral product. No vendor attribution anywhere: no `Co-Authored-By` trailers, "Generated with …" lines or session links in commits, PRs or GitHub comments. Tests use the `nvidia` provider or made-up names (`example`) as examples. NVIDIA is the first provider; Anthropic is not planned unless the owner adds it (QUESTIONS Q23, M4-12).
