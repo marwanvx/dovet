@@ -18,6 +18,7 @@ import pkg from "../../package.json";
 import type { Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
 import type { Secret } from "../store/index.ts";
 import type { Quirks } from "./registry.ts";
+import { STREAM_IDLE_TIMEOUT_MS, timedFetch } from "./retry.ts";
 import type {
   ProviderErrorInfo,
   ProviderRequest,
@@ -37,7 +38,7 @@ export type AdapterDeps = {
   endpoint(provider: string): Endpoint;
   /** Replaces the package's own model, for scripted tests. */
   model?: ModelFactory;
-  /** The transport under the request capture; `timedFetch` (retry.ts) adds the stream timeouts. */
+  /** The transport under the request capture; default: `timedFetch` with the 180 s idle timeout. */
   fetch?: FetchFunction;
   /** The model's catalog entry; without one, no effort is sent. */
   modelInfo?(provider: string, modelId: string): { effortLevels: readonly string[] } | undefined;
@@ -180,11 +181,23 @@ function htmlMessage(status: number, body: string, headers: Record<string, strin
   return `HTTP ${status}${proxy === undefined ? "" : ` from ${proxy}`}${title === undefined || title === "" ? "" : `: ${title}`}`;
 }
 
+/** Seconds or an HTTP date; a date is measured from the response's own `date` header when it has one. */
+function retryAfterMs(headers: Record<string, string>): number | undefined {
+  const value = headers["retry-after"];
+  if (value === undefined || value.trim() === "") return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  const sent = headers.date === undefined ? Number.NaN : Date.parse(headers.date);
+  return Math.max(0, at - (Number.isFinite(sent) ? sent : Date.now()));
+}
+
 function classify(err: unknown): ProviderErrorInfo {
   if (APICallError.isInstance(err) && err.statusCode !== undefined) {
     if (err.cause instanceof Error && err.cause.name === "TimeoutError") return classify(err.cause);
     const headers = err.responseHeaders ?? {};
-    const retryAfter = Number(headers["retry-after"]);
+    const retryAfter = retryAfterMs(headers);
     const requestId = headers["x-request-id"];
     const body = err.responseBody ?? "";
     const kind = statusKind(err.statusCode);
@@ -195,9 +208,7 @@ function classify(err: unknown): ProviderErrorInfo {
         : (html ?? withDetail(err.message, err.responseBody));
     return {
       ...(err.statusCode === 429 && /insufficient_quota/.test(body) ? { kind: "quota", retryable: false } : kind),
-      ...(Number.isFinite(retryAfter) && headers["retry-after"] !== undefined
-        ? { retryAfterMs: retryAfter * 1000 }
-        : {}),
+      ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter }),
       status: err.statusCode,
       ...(requestId === undefined ? {} : { requestId }),
       message,
@@ -481,7 +492,11 @@ export function createSdkAdapter(deps: AdapterDeps) {
     };
     const endpoint = deps.endpoint(call.provider);
     const secrets = endpoint.apiKey === undefined ? [] : [endpoint.apiKey.reveal()];
-    const model = makeModel(call, endpoint, capturingFetch(opts.onRequest, deps.fetch));
+    const model = makeModel(
+      call,
+      endpoint,
+      capturingFetch(opts.onRequest, deps.fetch ?? timedFetch(fetch, { idleMs: STREAM_IDLE_TIMEOUT_MS })),
+    );
     const result = streamText({
       model,
       messages: call.messages as ModelMessage[],

@@ -1,6 +1,7 @@
 // The retry policy and stream timeouts (providers §6b and §7, agent-loop "Stream liveness and timeouts").
-import type { FetchFunction } from "./sdk-adapter.ts";
 import type { ProviderErrorInfo, ProviderRequest, RenderInput, SdkCall, StreamEvent, TranscriptItem } from "./types.ts";
+
+type FetchFunction = typeof fetch;
 
 export const MAX_ATTEMPTS = 6;
 export const STREAM_IDLE_TIMEOUT_MS = 180_000;
@@ -60,10 +61,10 @@ function statusLine(attempt: number, delayMs: number, e: ProviderErrorInfo): str
   return `Retrying (${attempt}/${MAX_ATTEMPTS}) in ${Math.ceil(delayMs / 1000)}s — ${reason}${id}`;
 }
 
-/** Full jitter (base 2 s, factor 2, cap 60 s); `retry-after` wins; never under 1 s, even for `Retry-After: 0`. */
+/** Full jitter (base 2 s, factor 2); `retry-after` wins; always within 1–60 s, so `Retry-After: 0` still waits 1 s. */
 function delayFor(failures: number, e: ProviderErrorInfo, random: () => number): number {
-  const ms = e.retryAfterMs ?? random() * Math.min(CAP_MS, BASE_MS * 2 ** (failures - 1));
-  return Math.max(MIN_MS, Math.round(ms));
+  const ms = e.retryAfterMs ?? random() * BASE_MS * 2 ** (failures - 1);
+  return Math.max(MIN_MS, Math.min(CAP_MS, Math.round(ms)));
 }
 
 function continuation(completed: Extract<StreamEvent, { type: "error" }>["completed"] & object): TranscriptItem[] {
@@ -104,12 +105,12 @@ export async function* callModel(
       if (e.type === "error") failure = e;
       else yield e;
     }
-    for (const request of requests.splice(0)) yield { type: "request", attempt, request };
     if (failure === undefined) return;
 
     const willRetry = failure.error.retryable && attempt < MAX_ATTEMPTS;
     yield { type: "attempt.error", attempt, error: failure.error, willRetry };
-    if (failure.completed === null) yield { type: "discarded", attempt };
+    // Only a retried failure continues the turn; the continuation's wording says the connection dropped.
+    if (failure.completed === null || !failure.error.retryable) yield { type: "discarded", attempt };
     else {
       const items = continuation(failure.completed);
       transcript = [...transcript, ...items];

@@ -11,30 +11,36 @@ export function startScriptedServer(responses: readonly Scripted[]): {
   stop(): void;
 } {
   const received: string[] = [];
-  const buffers = new Map<object, string>();
+  const errors: unknown[] = [];
+  const buffers = new Map<object, Buffer>();
   const listener = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
       data(socket, data) {
-        const text = (buffers.get(socket) ?? "") + data.toString();
-        buffers.set(socket, text);
-        const end = text.indexOf("\r\n\r\n");
+        const bytes = Buffer.concat([buffers.get(socket) ?? Buffer.alloc(0), data]);
+        buffers.set(socket, bytes);
+        const end = bytes.indexOf("\r\n\r\n");
         if (end < 0) return;
-        const length = Number(/content-length:\s*(\d+)/i.exec(text.slice(0, end))?.[1] ?? 0);
-        const body = text.slice(end + 4);
-        if (Buffer.byteLength(body) < length) return;
+        const length = Number(/content-length:\s*(\d+)/i.exec(bytes.subarray(0, end).toString())?.[1] ?? 0);
+        if (bytes.length - end - 4 < length) return;
         buffers.delete(socket);
-        received.push(body);
+        received.push(bytes.subarray(end + 4).toString());
         const next = responses[received.length - 1] ?? { status: 599, steps: [{ send: "no more scripted responses" }] };
-        void play(socket, next);
+        play(socket, next).catch((err: unknown) => {
+          errors.push(err);
+          socket.end();
+        });
       },
     },
   });
   return {
     baseURL: `http://127.0.0.1:${listener.port}/v1`,
     received,
-    stop: () => listener.stop(true),
+    stop: () => {
+      listener.stop(true);
+      if (errors.length > 0) throw new Error(`scripted server failed: ${String(errors[0])}`);
+    },
   };
 }
 

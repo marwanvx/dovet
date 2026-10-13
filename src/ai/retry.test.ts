@@ -165,6 +165,32 @@ describe("retry policy", () => {
   });
 
   // spec: AC-PROV-14
+  test("Retry-After as an HTTP date is honored; any wait is capped at 60 s", async () => {
+    const date = "Wed, 21 Oct 2026 07:28:00 GMT";
+    const later = "Wed, 21 Oct 2026 07:28:05 GMT";
+    const r = await run([
+      jsonError(503, { error: { message: "busy" } }, { date, "retry-after": later }),
+      jsonError(503, { error: { message: "busy" } }, { "retry-after": "86400" }),
+      answer("ok"),
+    ]);
+    expect(r.slept).toEqual([5000, 60000]);
+  });
+
+  test("a non-retryable error after complete blocks keeps nothing and ends the call", async () => {
+    const r = await run([
+      {
+        steps: [
+          readCall('{"path":"a.txt"}'),
+          frame({ error: { message: "content policy", type: "invalid_request_error" } }),
+        ],
+      },
+    ]);
+    expect(r.of("kept")).toHaveLength(0);
+    expect(r.of("discarded")).toHaveLength(1);
+    expect(r.events.at(-1)).toMatchObject({ type: "failed", error: { retryable: false } });
+  });
+
+  // spec: AC-PROV-14
   test("a proxy's HTML 502 page is reported by status, proxy and title, never as markup", async () => {
     const page: Scripted = {
       status: 502,
@@ -254,6 +280,20 @@ describe("retry policy", () => {
     expect(r.of("discarded")).toHaveLength(1);
     expect(r.received[1]).toBe(r.received[0]);
     expect(r.events.at(-1)?.type).toBe("done");
+
+    const finishedThinking = await run([
+      {
+        steps: [
+          frame(chunk({ role: "assistant", reasoning_content: "Thought it through." })),
+          frame(chunk({ content: "Ans" })),
+          ...dropLater,
+        ],
+      },
+      answer("Answer."),
+    ]);
+    expect(finishedThinking.of("kept")).toHaveLength(0);
+    expect(finishedThinking.of("discarded")).toHaveLength(1);
+    expect(finishedThinking.received[1]).toBe(finishedThinking.received[0]);
   });
 
   // spec: AC-PROV-15
@@ -308,14 +348,12 @@ describe("stream liveness", () => {
 
   // spec: AC-LOOP-08
   test("keep-alive comments keep a long, quiet stream alive", async () => {
-    const ping: Step[] = [{ send: ": ping\n\n" }, { wait: 150 }];
+    const ping: Step[] = [{ send: ": keep-alive\n\n" }, { wait: 150 }, { send: ": ping\n\n" }, { wait: 150 }];
     const r = await run(
       [
         {
           steps: [
             frame(chunk({ role: "assistant", reasoning_content: "thinking" })),
-            ...ping,
-            ...ping,
             ...ping,
             ...ping,
             frame(chunk({ content: "Done." })),
