@@ -163,3 +163,12 @@ Learned:
 - Decisions are in QUESTIONS Q20 (marked `ASSUMPTION (QUESTIONS Q20)` in the code); its spec-change PR is still to do. The migration list `MIGRATIONS` is empty until a release renames a key.
 - In a cloud session the branch is fixed by the session; a `task/<id>` branch pushed by mistake could not be deleted through the proxy (`task/M1-03` remains on the remote and can be deleted by hand).
 Next: M1-04 (secrets and credential resolution).
+
+## 2026-10-13 — M1-04 Secrets and credential resolution
+Done: `src/store/secrets/` keeps keys in the OS keychain through `Bun.secrets` (a 0600 file only on Linux without a Secret Service), resolves a provider's key in the spec's order (settings reference, stored login, standard env var), refuses `cmd:` outside user settings, redacts keys through the `Secret` type, warns on rejected env-var pairs (Anthropic's API key plus auth token), and `dovet auth status` shows used and shadowed sources without values. SPIKE-5 is answered yes on all three OSes (`test/platform/secrets/`, CI). AC-CLI-17 passes except its scrollback part (M3-10). PR: #36 (merged, CI green on Linux, macOS and Windows). The fresh reviewer's three majors are fixed.
+Learned:
+- Owner rule (2026-10-13): tests use the free `nvidia` provider or a made-up `example` provider as examples, never Anthropic names; Dovet is provider-neutral. Real `NVIDIA_API_KEY` is in the cloud environment for live tests and fixture recording (env only, never in a file, log, fixture or PR).
+- Linux needs `gnome-keyring libsecret-1-0` (CI installs them; a fresh container needs `apt-get update` first) for the keychain half of `test/platform/secrets`; Linux CI fails if they're missing.
+- Left for later tasks: `resolve()` returns `warnings` that the first task resolving a key for a real request must print; `cmd:` needs a runner (`/bin/sh -c`, PowerShell on Windows) wired by that same task (QUESTIONS Q21 (8)); credentials-file writes aren't locked between processes (matters for `dovet auth login`); the `--settings` flag file isn't checked for `cmd:` (the flags task decides); log and transcript tasks must keep keys inside `Secret`.
+- Q21's spec-change PR (cli-config "Secrets") is still to do. `src/ai/providers/auth.ts` holds the provider env-var data until the M4 registry.
+Next: M1-05 (event log writer, reader and blob store).
