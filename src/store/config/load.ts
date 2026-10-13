@@ -50,6 +50,7 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
     if (text === undefined) return;
     out.files.push({ source, path });
     let parsed: Parsed = parseSettingsText(text, path);
+    let located = true;
     const plan = migrateText(text, fileVersion(parsed.value), input.migrations ?? MIGRATIONS);
     if (plan.changes.length > 0) {
       const confirmed = (await input.confirmMigration?.({ file: path, changes: plan.changes })) ?? false;
@@ -64,8 +65,13 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
       }
       text = plan.text;
       parsed = parseSettingsText(text, path);
+      located = confirmed;
     }
-    const result = validateSettings(parsed.value, { file: path, text, tree: parsed.tree });
+    const result = validateSettings(parsed.value, {
+      file: path,
+      duplicates: parsed.duplicates,
+      ...(located ? { text, tree: parsed.tree } : {}),
+    });
     out.warnings.push(...result.warnings);
     out.problems.push(...result.problems);
     out.layers.push({ source, file: path, settings: result.value });
@@ -92,6 +98,7 @@ function portableSubset(raw: unknown): unknown {
   return subset;
 }
 
+// ASSUMPTION (QUESTIONS Q20): only the portable subset is read, and anything invalid in it is a warning, not a startup error.
 async function loadClaudeFile(source: SettingsSource, path: string, shown: string, out: Collected): Promise<void> {
   try {
     const text = await readSettingsText(path);
@@ -102,6 +109,7 @@ async function loadClaudeFile(source: SettingsSource, path: string, shown: strin
       text,
       tree: parsed.tree,
       lenient: true,
+      duplicates: parsed.duplicates.filter(([section]) => section === "permissions" || section === "sandbox"),
     });
     out.warnings.push(...result.warnings, ...result.problems);
     const permissions = result.value.permissions;
@@ -128,16 +136,21 @@ export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
   const env = envSettings(input.env);
   const top: Layer[] = [{ source: "env", settings: env.settings }];
   if (input.flags !== undefined) top.push({ source: "flags", settings: input.flags });
-  const compat = mergeLayers([...own.layers, ...top]).compat?.claudeCodeSettings !== false;
+  // ASSUMPTION (QUESTIONS Q20): a repo's own settings can turn off only the Claude Code files of that repo, never the user's ~/.claude rules.
+  const compatOf = (layers: Layer[]) => mergeLayers(layers).compat?.claudeCodeSettings !== false;
+  const userCompat = compatOf([...own.layers.filter((l) => l.source === "user"), ...top]);
+  const projectCompat = compatOf([...own.layers, ...top]);
 
   const theirs: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [] };
-  if (compat) {
+  if (userCompat) {
     await loadClaudeFile(
       "claude-user",
       join(input.home, ".claude", "settings.json"),
       "~/.claude/settings.json",
       theirs,
     );
+  }
+  if (projectCompat) {
     await loadClaudeFile("claude-project", join(claude, "settings.json"), ".claude/settings.json", theirs);
     await loadClaudeFile("claude-local", join(claude, "settings.local.json"), ".claude/settings.local.json", theirs);
   }
@@ -145,6 +158,7 @@ export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
   const problems = [...own.problems, ...env.problems];
   if (problems.length > 0) throw new SettingsError(problems);
 
+  // ASSUMPTION (QUESTIONS Q20): each Claude Code file sits just below the Dovet file of the same scope.
   const order: SettingsSource[] = ["claude-user", "user", "claude-project", "project", "claude-local", "local"];
   const byFile = [...theirs.layers, ...own.layers].sort((a, b) => order.indexOf(a.source) - order.indexOf(b.source));
   const layers: Layer[] = [{ source: "default", settings: DEFAULTS }, ...byFile, ...top];

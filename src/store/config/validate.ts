@@ -11,6 +11,8 @@ export type ValidateOptions = {
   tree?: Node | undefined;
   /** Files written for another tool: unknown keys are dropped silently and every issue is a warning. */
   lenient?: boolean;
+  /** Keys written twice in the file; the later one won, which could hide a rule. */
+  duplicates?: Segment[][];
 };
 
 const POLICY_SECTIONS = new Set(["permissions", "sandbox", "env", "budget"]);
@@ -85,7 +87,15 @@ function parentOf(data: unknown, path: readonly Segment[]): Record<string, unkno
 function remove(data: unknown, path: readonly Segment[]): void {
   const last = path[path.length - 1];
   const parent = parentOf(data, path.slice(0, -1));
-  if (last !== undefined && parent !== undefined && !Array.isArray(parent)) delete parent[String(last)];
+  if (last === undefined || parent === undefined) return;
+  if (Array.isArray(parent)) parent.splice(Number(last), 1);
+  else delete parent[String(last)];
+}
+
+function compareForRemoval(a: readonly Segment[], b: readonly Segment[]): number {
+  const x = a[a.length - 1];
+  const y = b[b.length - 1];
+  return typeof x === "number" && typeof y === "number" ? y - x : 0;
 }
 
 export function validateSettings(raw: unknown, opts: ValidateOptions): Validated {
@@ -98,11 +108,17 @@ export function validateSettings(raw: unknown, opts: ValidateOptions): Validated
     message,
   });
   const data: unknown = raw;
+  for (const path of opts.duplicates ?? []) {
+    (isPolicy(path) && !opts.lenient ? problems : warnings).push(
+      at(path, "key appears twice; only the last one applies"),
+    );
+  }
 
   for (let pass = 0; pass < MAX_PASSES; pass++) {
     const parsed = Settings.safeParse(data);
     if (parsed.success) return { value: parsed.data, warnings, problems };
 
+    const removals: Segment[][] = [];
     for (const issue of parsed.error.issues) {
       const path = issue.path.map((p) => (typeof p === "number" ? p : String(p)));
       if (issue.code === "unrecognized_keys") {
@@ -120,12 +136,12 @@ export function validateSettings(raw: unknown, opts: ValidateOptions): Validated
         problems.push(at(path, `expected a JSON object (${describe(issue)})`));
         return { value: {}, warnings, problems };
       }
-      const wholeArray = typeof path[path.length - 1] === "number";
-      const target = wholeArray ? path.slice(0, path.findLastIndex((s) => typeof s === "string") + 1) : path;
-      const entry = at(path, describe(issue));
-      (isPolicy(path) && !opts.lenient ? problems : warnings).push(entry);
-      remove(data, target);
+      (isPolicy(path) && !opts.lenient ? problems : warnings).push(at(path, describe(issue)));
+      removals.push(path);
     }
+    // Later array elements first, so removing one doesn't shift the index of another.
+    removals.sort(compareForRemoval);
+    for (const path of removals) remove(data, path);
   }
   throw new Error(`settings validation did not settle for ${opts.file}`);
 }

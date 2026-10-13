@@ -1,9 +1,10 @@
 import { findNodeAtLocation, type Node, type ParseError, parseTree, printParseErrorCode } from "jsonc-parser";
 import { SettingsError } from "./errors.ts";
 
-export type Parsed = { value: unknown; tree: Node | undefined };
+export type Parsed = { value: unknown; tree: Node | undefined; duplicates: Segment[][] };
 export type Segment = string | number;
 
+// ASSUMPTION (QUESTIONS Q20): `__proto__` stays plain data and is reported as an unknown key.
 /** Own properties only, so a `__proto__` key stays data instead of changing the prototype. */
 export function put(target: object, key: string, value: unknown): void {
   Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
@@ -22,6 +23,24 @@ export function nodeValue(node: Node): unknown {
   return node.value;
 }
 
+function duplicateKeys(node: Node, path: Segment[]): Segment[][] {
+  const found: Segment[][] = [];
+  const seen = new Set<string>();
+  for (const [i, child] of (node.children ?? []).entries()) {
+    if (node.type === "object") {
+      const [key, value] = child.children ?? [];
+      if (key === undefined || value === undefined) continue;
+      const name = String(key.value);
+      if (seen.has(name)) found.push([...path, name]);
+      seen.add(name);
+      found.push(...duplicateKeys(value, [...path, name]));
+    } else if (node.type === "array") {
+      found.push(...duplicateKeys(child, [...path, i]));
+    }
+  }
+  return found;
+}
+
 export function parseSettingsText(text: string, file: string): Parsed {
   const errors: ParseError[] = [];
   const tree = parseTree(text, errors, { allowTrailingComma: true, allowEmptyContent: true });
@@ -35,7 +54,11 @@ export function parseSettingsText(text: string, file: string): Parsed {
       })),
     );
   }
-  return { value: tree === undefined ? {} : nodeValue(tree), tree };
+  return {
+    value: tree === undefined ? {} : nodeValue(tree),
+    tree,
+    duplicates: tree === undefined ? [] : duplicateKeys(tree, []),
+  };
 }
 
 export function lineOf(text: string, offset: number): number {

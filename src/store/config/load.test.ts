@@ -323,6 +323,69 @@ describe("Claude Code compatibility", () => {
   });
 });
 
+describe("review fixes", () => {
+  test("one bad entry in a Claude Code deny list drops only that entry", async () => {
+    const { input } = await setup({
+      "proj/.claude/settings.json":
+        '{ "permissions": { "deny": ["Read(.env)", "Bash(rm -rf /) x", "WebFetch(domain:a.com)", "Bash(a) y"] } }',
+    });
+    const loaded = await loadSettings({ ...input, env: {} });
+    expect(loaded.settings.permissions?.deny).toEqual(["Read(.env)", "WebFetch(domain:a.com)"]);
+    expect(loaded.warnings.map((w) => w.key)).toEqual(["permissions.deny[1]", "permissions.deny[3]"]);
+  });
+
+  test("a key written twice cannot hide deny rules", async () => {
+    const policy = await setup({
+      "cfg/settings.json": '{\n "permissions": { "deny": ["Read(.env)"] },\n "permissions": { "allow": ["Bash"] }\n}',
+    });
+    const err = await failure(loadSettings({ ...policy.input, env: {} }));
+    expect(err.problems[0]).toMatchObject({ key: "permissions", line: 2 });
+    const other = await setup({ "cfg/settings.json": '{ "model": "a", "model": "b" }' });
+    const loaded = await loadSettings({ ...other.input, env: {} });
+    expect(loaded.settings.model).toBe("b");
+    expect(loaded.warnings.map((w) => w.key)).toEqual(["model"]);
+  });
+
+  test("a repo's compat: false turns off its own Claude Code files, not the user's ~/.claude rules", async () => {
+    const { input } = await setup({
+      "home/.claude/settings.json": '{ "permissions": { "deny": ["WebFetch"] } }',
+      "proj/.claude/settings.json": '{ "permissions": { "deny": ["Read(.env)"] } }',
+      "proj/.dovet/settings.json": '{ "compat": { "claudeCodeSettings": false } }',
+    });
+    const loaded = await loadSettings({ ...input, env: {} });
+    expect(loaded.settings.permissions?.deny).toEqual(["WebFetch"]);
+  });
+
+  test("each Claude Code file ranks just below the Dovet file of its scope", async () => {
+    const mode = (m: string) => `{ "permissions": { "defaultMode": "${m}" } }`;
+    const files = {
+      "home/.claude/settings.json": mode("acceptEdits"),
+      "proj/.claude/settings.local.json": mode("plan"),
+      "proj/.dovet/settings.json": mode("dontAsk"),
+    };
+    const a = await setup(files);
+    expect((await loadSettings({ ...a.input, env: {} })).settings.permissions?.defaultMode).toBe("plan");
+    const b = await setup({ "home/.claude/settings.json": mode("acceptEdits"), "cfg/settings.json": mode("dontAsk") });
+    expect((await loadSettings({ ...b.input, env: {} })).settings.permissions?.defaultMode).toBe("dontAsk");
+    const c = await setup({
+      "home/.claude/settings.json": mode("acceptEdits"),
+      "proj/.claude/settings.json": mode("plan"),
+    });
+    expect((await loadSettings({ ...c.input, env: {} })).settings.permissions?.defaultMode).toBe("plan");
+  });
+
+  test("a rule saved in a git worktree goes to the shared info/exclude", async () => {
+    const { dir, input } = await setup({
+      "main/.git/commondir": "",
+      "proj/.git": `gitdir: ${"../main/.git/worktrees/w"}\n`,
+      "main/.git/worktrees/w/commondir": "../..\n",
+    });
+    const { saveLocalRule } = await import("./index.ts");
+    await saveLocalRule(input.projectRoot, "deny", "WebFetch");
+    expect(await readFile(join(dir.root, "main/.git/info/exclude"), "utf8")).toBe("/.dovet/settings.local.json\n");
+  });
+});
+
 describe("migration", () => {
   const migrations = [
     {
@@ -379,6 +442,7 @@ describe("migration", () => {
     expect(loaded.settings.ui?.renderer).toBe("fullscreen");
     expect(loaded.warnings).toHaveLength(1);
     expect(loaded.warnings[0]?.message).toContain("ui.fullscreen");
+    expect(loaded.warnings[0]?.line).toBeUndefined();
   });
 
   // spec: AC-CLI-06

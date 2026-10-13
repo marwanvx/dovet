@@ -1,6 +1,6 @@
-import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-import { applyEdits, findNodeAtLocation, modify, parseTree } from "jsonc-parser";
+import { mkdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { applyEdits, findNodeAtLocation, modify } from "jsonc-parser";
 import { isErrno } from "../../platform/index.ts";
 import { SettingsError } from "./errors.ts";
 import type { RuleKind } from "./merge.ts";
@@ -16,6 +16,10 @@ export async function writeFileAtomic(path: string, data: string): Promise<void>
     target = await realpath(path);
   } catch (err) {
     if (!isErrno(err, "ENOENT")) throw err;
+    target = await readlink(path).then(
+      (link) => resolve(dirname(path), link),
+      (e: unknown) => (isErrno(e, "ENOENT", "EINVAL") ? path : Promise.reject(e)),
+    );
   }
   const mode = await stat(target).then(
     (s) => s.mode & 0o777,
@@ -31,13 +35,12 @@ export async function writeFileAtomic(path: string, data: string): Promise<void>
   }
 }
 
-/** Adds the missing items to a string array in a settings file, keeping its comments and other keys. Returns whether the file was created. */
+/** Returns whether the file was created. */
 async function addToArray(file: string, path: string[], items: string[]): Promise<boolean> {
   const existing = await readSettingsText(file);
   const created = existing === undefined;
   let text = existing ?? "{}\n";
-  parseSettingsText(text, file);
-  const tree = parseTree(text, [], { allowTrailingComma: true, allowEmptyContent: true });
+  const { tree } = parseSettingsText(text, file);
   const node = tree && findNodeAtLocation(tree, path);
   const current = node === undefined ? undefined : nodeValue(node);
   if (current !== undefined && !Array.isArray(current)) {
@@ -62,20 +65,32 @@ async function addToArray(file: string, path: string[], items: string[]): Promis
   return created;
 }
 
+const missing = (err: unknown): undefined => {
+  if (isErrno(err, "ENOENT", "ENOTDIR")) return undefined;
+  throw err;
+};
+
+/** `<repo>/.git/info`, or the shared one when `.git` is a worktree's pointer file. */
+async function gitInfoDir(projectRoot: string): Promise<string | undefined> {
+  const dotGit = join(projectRoot, ".git");
+  const info = await stat(dotGit).catch(missing);
+  if (info === undefined) return undefined;
+  if (info.isDirectory()) return join(dotGit, "info");
+  const pointer = /^gitdir:\s*(.+)$/m.exec(await readFile(dotGit, "utf8"));
+  if (pointer?.[1] === undefined) return undefined;
+  const gitDir = resolve(projectRoot, pointer[1].trim());
+  const common = await readFile(join(gitDir, "commondir"), "utf8").catch(missing);
+  return join(common === undefined ? gitDir : resolve(gitDir, common.trim()), "info");
+}
+
 async function excludeFromGit(projectRoot: string): Promise<void> {
-  const gitDir = join(projectRoot, ".git");
-  const isDir = await stat(gitDir).then(
-    (s) => s.isDirectory(),
-    () => false,
-  );
-  if (!isDir) return;
+  const infoDir = await gitInfoDir(projectRoot);
+  if (infoDir === undefined) return;
   const entry = `/${LOCAL_FILE.replaceAll("\\", "/")}`;
-  const file = join(gitDir, "info", "exclude");
-  const current = await readFile(file, "utf8").catch((err: unknown) =>
-    isErrno(err, "ENOENT") ? "" : Promise.reject(err),
-  );
+  const file = join(infoDir, "exclude");
+  const current = (await readFile(file, "utf8").catch(missing)) ?? "";
   if (current.split(/\r?\n/).includes(entry)) return;
-  await mkdir(dirname(file), { recursive: true });
+  await mkdir(infoDir, { recursive: true });
   await writeFile(file, `${current}${current === "" || current.endsWith("\n") ? "" : "\n"}${entry}\n`);
 }
 
