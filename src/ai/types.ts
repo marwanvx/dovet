@@ -84,5 +84,6 @@ export type StreamEvent =
   | { type: "block.done"; blockIndex: number; kind: "text" | "reasoning" | "tool_call" }
   | { type: "usage"; usage: RawUsage }
   | { type: "done"; stopReason: StopReason; stored: StoredResponse; requestId?: string; servedBy?: string }
-  | { type: "error"; error: ProviderErrorInfo }
+  /** `completed`: the blocks that finished before the failure, as for `aborted` (providers §7). ASSUMPTION (QUESTIONS Q28) */
+  | { type: "error"; error: ProviderErrorInfo; completed: StoredResponse | null }
   | { type: "aborted"; completed: StoredResponse | null };

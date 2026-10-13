@@ -3,11 +3,14 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import {
   APICallError,
   type AssistantModelMessage,
+  InvalidResponseDataError,
+  JSONParseError,
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
   streamText,
   type ToolSet,
+  TypeValidationError,
   tool,
 } from "ai";
 import { z } from "zod";
@@ -15,6 +18,7 @@ import pkg from "../../package.json";
 import type { Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
 import type { Secret } from "../store/index.ts";
 import type { Quirks } from "./registry.ts";
+import { STREAM_IDLE_TIMEOUT_MS, timedFetch } from "./retry.ts";
 import type {
   ProviderErrorInfo,
   ProviderRequest,
@@ -34,6 +38,8 @@ export type AdapterDeps = {
   endpoint(provider: string): Endpoint;
   /** Replaces the package's own model, for scripted tests. */
   model?: ModelFactory;
+  /** The transport under the request capture; default: `timedFetch` with the 180 s idle timeout. */
+  fetch?: FetchFunction;
   /** The model's catalog entry; without one, no effort is sent. */
   modelInfo?(provider: string, modelId: string): { effortLevels: readonly string[] } | undefined;
 };
@@ -98,6 +104,7 @@ function stopReason(reason: string): StopReason {
 }
 
 function statusKind(status: number): Pick<ProviderErrorInfo, "kind" | "retryable"> {
+  if (status >= 200 && status < 300) return { kind: "network", retryable: true };
   if (status === 429) return { kind: "rate_limit", retryable: true };
   if (status === 503 || status === 529) return { kind: "overloaded", retryable: true };
   if (status >= 500) return { kind: "server", retryable: true };
@@ -150,24 +157,79 @@ function withDetail(message: string, body: string | undefined): string {
   return parsed.success && !message.includes(parsed.data.detail) ? `${message}: ${parsed.data.detail}` : message;
 }
 
+const StreamErrorObject = z.object({
+  message: z.string(),
+  type: z.string().nullish(),
+  code: z.union([z.string(), z.number()]).nullish(),
+});
+
+/** In-stream error objects (`data: {"error": …}`) carry no status; their type or code names the cause. */
+function streamErrorKind(text: string): Pick<ProviderErrorInfo, "kind" | "retryable"> {
+  if (/insufficient_quota/i.test(text)) return { kind: "quota", retryable: false };
+  if (/overloaded/i.test(text)) return { kind: "overloaded", retryable: true };
+  // NVIDIA reports a full worker inside a 200 stream as "ResourceExhausted".
+  if (/rate.?limit|ResourceExhausted|too many requests/i.test(text)) return { kind: "rate_limit", retryable: true };
+  if (/server_error|api_error|internal|unavailable/i.test(text)) return { kind: "server", retryable: true };
+  return { kind: "unknown", retryable: false };
+}
+
+/** A proxy's HTML page is reported by status, proxy name and `<title>`, never as markup (providers §7). */
+function htmlMessage(status: number, body: string, headers: Record<string, string>): string | undefined {
+  if (!/<html|<!doctype html|<head|<body/i.test(body)) return undefined;
+  const title = /<title[^>]*>([^<]*)<\/title>/i.exec(body)?.[1]?.trim();
+  const proxy = headers.server ?? headers.via;
+  return `HTTP ${status}${proxy === undefined ? "" : ` from ${proxy}`}${title === undefined || title === "" ? "" : `: ${title}`}`;
+}
+
+/** Seconds or an HTTP date; a date is measured from the response's own `date` header when it has one. */
+function retryAfterMs(headers: Record<string, string>): number | undefined {
+  const value = headers["retry-after"];
+  if (value === undefined || value.trim() === "") return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  if (!Number.isFinite(at)) return undefined;
+  const sent = headers.date === undefined ? Number.NaN : Date.parse(headers.date);
+  return Math.max(0, at - (Number.isFinite(sent) ? sent : Date.now()));
+}
+
 function classify(err: unknown): ProviderErrorInfo {
   if (APICallError.isInstance(err) && err.statusCode !== undefined) {
+    if (err.cause instanceof Error && err.cause.name === "TimeoutError") return classify(err.cause);
     const headers = err.responseHeaders ?? {};
-    const retryAfter = Number(headers["retry-after"]);
+    const retryAfter = retryAfterMs(headers);
     const requestId = headers["x-request-id"];
+    const body = err.responseBody ?? "";
+    const kind = statusKind(err.statusCode);
+    const html = htmlMessage(err.statusCode, body, headers);
+    const message =
+      kind.kind === "network"
+        ? "The connection dropped while the response was streaming."
+        : (html ?? withDetail(err.message, err.responseBody));
     return {
-      ...statusKind(err.statusCode),
-      ...(Number.isFinite(retryAfter) && headers["retry-after"] !== undefined
-        ? { retryAfterMs: retryAfter * 1000 }
-        : {}),
+      ...(err.statusCode === 429 && /insufficient_quota/.test(body) ? { kind: "quota", retryable: false } : kind),
+      ...(retryAfter === undefined ? {} : { retryAfterMs: retryAfter }),
       status: err.statusCode,
       ...(requestId === undefined ? {} : { requestId }),
-      message: withDetail(err.message, err.responseBody),
+      message,
     };
   }
+  if (InvalidResponseDataError.isInstance(err))
+    return { kind: "server", retryable: true, message: "The response stream ended before its final event." };
+  if (JSONParseError.isInstance(err) || TypeValidationError.isInstance(err))
+    return {
+      kind: "server",
+      retryable: true,
+      message: "The response stream was damaged: it held data that isn't valid JSON.",
+    };
   if (err instanceof Error && err.name === "TimeoutError")
     return { kind: "timeout", retryable: true, message: err.message };
   if (isNetworkError(err)) return { kind: "network", retryable: true, message: (err as Error).message };
+  const inStream = StreamErrorObject.safeParse(err);
+  if (inStream.success) {
+    const { message, type, code } = inStream.data;
+    return { ...streamErrorKind(`${type ?? ""} ${code ?? ""} ${message}`), message };
+  }
   return { kind: "unknown", retryable: false, message: err instanceof Error ? err.message : String(err) };
 }
 
@@ -305,6 +367,45 @@ function lastTurnStart(transcript: RenderInput["transcript"]): number {
   return transcript.findLastIndex((t) => t.kind === "user" && !t.parts.some((p) => p.kind === "tool_result"));
 }
 
+type Block = {
+  index: number;
+  kind: "text" | "reasoning" | "tool_call";
+  text: string;
+  ended: boolean;
+  call?: { id: string; name: string };
+  part?: Part;
+};
+
+function isJsonObject(text: string): boolean {
+  const parsed = JsonText.safeParse(text);
+  return parsed.success && typeof parsed.data === "object" && parsed.data !== null && !Array.isArray(parsed.data);
+}
+
+/** A stream that ends without a finish reason closes its open blocks at flush; those ends don't mean the blocks finished. */
+function endedAtFlush(err: unknown): boolean {
+  return InvalidResponseDataError.isInstance(err);
+}
+
+/**
+ * Whether a block finished before the stream failed (agent-loop "Interrupts", providers §7). Chat Completions closes text
+ * only at the end and emits tool calls only at flush, so a later block starting also finishes one, and a tool call whose
+ * arguments already form a JSON object is complete.
+ */
+function completedPart(b: Block, later: boolean, flushed: boolean, ctx: StoredContext): Part[] {
+  if (b.kind === "tool_call") {
+    const inputJson = b.part?.kind === "tool_call" ? b.part.inputJson : b.text;
+    if (b.call === undefined || !isJsonObject(inputJson)) return [];
+    return [b.part ?? { kind: "tool_call", id: b.call.id, name: b.call.name, inputJson }];
+  }
+  if (!later && !(b.ended && !flushed)) return [];
+  if (b.part !== undefined) return [b.part];
+  return [
+    b.kind === "text"
+      ? { kind: "text", text: b.text }
+      : { kind: "reasoning", summary: b.text, replay: replayOf(ctx, undefined) },
+  ];
+}
+
 export function createSdkAdapter(deps: AdapterDeps) {
   const makeModel = deps.model ?? defaultModel;
 
@@ -391,7 +492,11 @@ export function createSdkAdapter(deps: AdapterDeps) {
     };
     const endpoint = deps.endpoint(call.provider);
     const secrets = endpoint.apiKey === undefined ? [] : [endpoint.apiKey.reveal()];
-    const model = makeModel(call, endpoint, capturingFetch(opts.onRequest));
+    const model = makeModel(
+      call,
+      endpoint,
+      capturingFetch(opts.onRequest, deps.fetch ?? timedFetch(fetch, { idleMs: STREAM_IDLE_TIMEOUT_MS })),
+    );
     const result = streamText({
       model,
       messages: call.messages as ModelMessage[],
@@ -405,25 +510,41 @@ export function createSdkAdapter(deps: AdapterDeps) {
       ...(call.maxOutputTokens === undefined ? {} : { maxOutputTokens: call.maxOutputTokens }),
       ...(call.headers === undefined ? {} : { headers: call.headers }),
     });
-    const open = new Map<string, { index: number; text: string }>();
-    const finished: Array<{ index: number; part: Part }> = [];
+    const blocks: Block[] = [];
+    const open = new Map<string, Block>();
     // The SDK replaces a malformed call's input with {} in its response messages; the raw text exists only here.
     const rawInputs = new Map<string, string>();
-    let next = 0;
-    const start = (key: string): number => {
-      const index = next++;
-      open.set(key, { index, text: "" });
-      return index;
+    const start = (key: string, kind: Block["kind"], call?: { id: string; name: string }): Block => {
+      const block: Block = {
+        index: blocks.length,
+        kind,
+        text: "",
+        ended: false,
+        ...(call === undefined ? {} : { call }),
+      };
+      blocks.push(block);
+      open.set(key, block);
+      return block;
     };
-    const aborted = (): StreamEvent => {
-      const parts = finished.sort((a, b) => a.index - b.index).map((f) => f.part);
-      return { type: "aborted", completed: parts.length === 0 ? null : { ...toStored({ messages: [] }, ctx), parts } };
+    const end = (key: string, part: Part): Block | undefined => {
+      const block = open.get(key);
+      if (block === undefined) return undefined;
+      open.delete(key);
+      block.ended = true;
+      block.part = part;
+      return block;
     };
+    const completed = (flushed: boolean): StoredResponse | null => {
+      const parts = blocks.flatMap((b) => completedPart(b, b.index < blocks.length - 1, flushed, ctx));
+      return parts.some((p) => p.kind !== "reasoning") ? { ...toStored({ messages: [] }, ctx), parts } : null;
+    };
+    const aborted = (): StreamEvent => ({ type: "aborted", completed: completed(false) });
 
     try {
       for await (const p of result.fullStream) {
-        if (p.type === "text-start" || p.type === "reasoning-start") start(`${p.type.split("-")[0]}:${p.id}`);
-        else if (p.type === "text-delta" || p.type === "reasoning-delta") {
+        if (p.type === "text-start" || p.type === "reasoning-start") {
+          start(`${p.type.split("-")[0]}:${p.id}`, p.type === "text-start" ? "text" : "reasoning");
+        } else if (p.type === "text-delta" || p.type === "reasoning-delta") {
           const kind = p.type === "text-delta" ? "text" : "reasoning";
           const block = open.get(`${kind}:${p.id}`);
           if (block === undefined) continue;
@@ -431,48 +552,41 @@ export function createSdkAdapter(deps: AdapterDeps) {
           yield { type: kind === "text" ? "text.delta" : "reasoning.delta", blockIndex: block.index, text: p.text };
         } else if (p.type === "text-end" || p.type === "reasoning-end") {
           const kind = p.type === "text-end" ? "text" : "reasoning";
-          const block = open.get(`${kind}:${p.id}`);
-          if (block === undefined) continue;
-          open.delete(`${kind}:${p.id}`);
-          finished.push({
-            index: block.index,
-            part:
-              kind === "text"
-                ? { kind: "text", text: block.text, ...replayIf(ctx, p.providerMetadata) }
-                : { kind: "reasoning", summary: block.text, replay: replayOf(ctx, p.providerMetadata) },
-          });
-          yield { type: "block.done", blockIndex: block.index, kind };
+          const text = open.get(`${kind}:${p.id}`)?.text ?? "";
+          const block = end(
+            `${kind}:${p.id}`,
+            kind === "text"
+              ? { kind: "text", text, ...replayIf(ctx, p.providerMetadata) }
+              : { kind: "reasoning", summary: text, replay: replayOf(ctx, p.providerMetadata) },
+          );
+          if (block !== undefined) yield { type: "block.done", blockIndex: block.index, kind };
         } else if (p.type === "tool-input-start") {
-          yield { type: "tool_call.start", blockIndex: start(`tool:${p.id}`), id: p.id, name: p.toolName };
+          const block = start(`tool:${p.id}`, "tool_call", { id: p.id, name: p.toolName });
+          yield { type: "tool_call.start", blockIndex: block.index, id: p.id, name: p.toolName };
         } else if (p.type === "tool-input-delta") {
           const block = open.get(`tool:${p.id}`);
-          if (block !== undefined) yield { type: "tool_call.delta", blockIndex: block.index, partialJson: p.delta };
+          if (block === undefined) continue;
+          block.text += p.delta;
+          yield { type: "tool_call.delta", blockIndex: block.index, partialJson: p.delta };
         } else if (p.type === "tool-call") {
-          let block = open.get(`tool:${p.toolCallId}`);
-          if (block === undefined) {
-            const index = start(`tool:${p.toolCallId}`);
-            block = { index, text: "" };
-            yield { type: "tool_call.start", blockIndex: index, id: p.toolCallId, name: p.toolName };
+          if (!open.has(`tool:${p.toolCallId}`)) {
+            const block = start(`tool:${p.toolCallId}`, "tool_call", { id: p.toolCallId, name: p.toolName });
+            yield { type: "tool_call.start", blockIndex: block.index, id: p.toolCallId, name: p.toolName };
           }
-          open.delete(`tool:${p.toolCallId}`);
-          const inputJson = inputJsonOf(p.input);
           if (p.invalid === true && typeof p.input === "string") rawInputs.set(p.toolCallId, p.input);
-          finished.push({
-            index: block.index,
-            part: {
-              kind: "tool_call",
-              id: p.toolCallId,
-              name: p.toolName,
-              inputJson,
-              ...replayIf(ctx, p.providerMetadata),
-            },
+          const block = end(`tool:${p.toolCallId}`, {
+            kind: "tool_call",
+            id: p.toolCallId,
+            name: p.toolName,
+            inputJson: inputJsonOf(p.input),
+            ...replayIf(ctx, p.providerMetadata),
           });
-          yield { type: "block.done", blockIndex: block.index, kind: "tool_call" };
+          if (block !== undefined) yield { type: "block.done", blockIndex: block.index, kind: "tool_call" };
         } else if (p.type === "finish-step") {
           yield { type: "usage", usage: rawUsage(p.usage) };
         } else if (p.type === "error") {
           if (opts.signal.aborted) break;
-          yield { type: "error", error: classifyError(p.error, secrets) };
+          yield { type: "error", error: classifyError(p.error, secrets), completed: completed(endedAtFlush(p.error)) };
           return;
         } else if (p.type === "abort") {
           yield aborted();
@@ -481,7 +595,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
       }
     } catch (err) {
       if (!opts.signal.aborted) {
-        yield { type: "error", error: classifyError(err, secrets) };
+        yield { type: "error", error: classifyError(err, secrets), completed: completed(endedAtFlush(err)) };
         return;
       }
     }
@@ -511,6 +625,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
           retryable: false,
           message: `the response could not be stored: ${err instanceof Error ? err.message : String(err)}`,
         },
+        completed: null,
       };
       return;
     }

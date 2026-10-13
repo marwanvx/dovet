@@ -15,4 +15,5 @@ export {
 } from "./nvidia-scenarios.ts";
 export { fakePlatform } from "./platform.ts";
 export { type ScriptStep, scriptedModel } from "./scripted-model.ts";
+export { type Scripted, type Step, startScriptedServer } from "./scripted-server.ts";
 export { type TempProject, tempProject } from "./temp-project.ts";
