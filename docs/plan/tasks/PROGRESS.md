@@ -271,3 +271,8 @@ Learned:
 - Git on this machine has no identity; commits use `GIT_AUTHOR_*`/`GIT_COMMITTER_*` with the owner's noreply address, as in earlier commits.
 - Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28, Q29, Q30.
 Next: M1-12 (transcript builder determinism and cache monitoring).
+
+## 2026-10-14 — M1-12 Transcript builder determinism and cache monitoring
+Done: `src/agent/transcript/build.ts` `buildRequest(events, epoch)` is pure (epoch filter, cancelled turns dropped, replay normalization, results in call order, markers escaped); `fingerprint.ts` has `prefixFingerprint`, `firstDivergence`, `cacheReadOf`, `cacheWarning`; a lint rule keeps both files free of Date, randomness and process.env. AC-LOG-02 passes (a recorded log rebuilds the recorded bodies byte for byte). AC-CTX-04 is decision logic only. PR: #56 (merged, CI green on three OSes).
+Learned: `buildRequest` returns the adapter's `RenderInput`, not a `ProviderRequest` (Q31). `model.response` data is the `StoredResponse` itself. The 30-turn test checks fingerprints; the wire-level prefix test stays in `contract.test.ts`.
+Next: M1-13 Tool framework. M1-25 must write `model.request` with the fingerprint, show the `cacheWarning` text and log its `InvariantViolation` entry (its Build line now says so).
