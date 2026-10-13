@@ -18,7 +18,7 @@ function toolSet(s: Scenario): ToolSet {
   );
 }
 
-/** The nvidia record's `in-tool-loop` replay rule: a new user turn drops the reasoning of every earlier answer. */
+/** For an `in-tool-loop` record: a new user turn drops the reasoning of every earlier answer. */
 function withoutReasoning(messages: ModelMessage[]): ModelMessage[] {
   return messages.map((m) =>
     m.role === "assistant" && Array.isArray(m.content)
@@ -103,7 +103,11 @@ async function record(s: Scenario, apiKey: string): Promise<Fixture> {
     history = [...history, ...final];
   }
   if (s.followUp !== undefined) {
-    await step([...withoutReasoning(history), { role: "user", content: [{ type: "text", text: s.followUp }] }]);
+    const kept =
+      endpointOf(providerRecord("nvidia")).quirks.reasoningReplay === "in-tool-loop"
+        ? withoutReasoning(history)
+        : history;
+    await step([...kept, { role: "user", content: [{ type: "text", text: s.followUp }] }]);
   }
   return {
     scenario: s.name,

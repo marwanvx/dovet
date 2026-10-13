@@ -6,7 +6,6 @@
 > - **Decisions that apply** ([decisions](../plan/decisions.md)): ADR-6 Anthropic sandbox-runtime for OS sandboxing; ADR-25 WebSearch is a client-side tool backed by a secondary request; ADR-26 State ownership, injected capabilities and a composition root; ADR-28 Effect-based permission core: ask at the edge of reversibility; ADR-30 Model layer on the AI SDK (2026-10-12, owner request; replaces ADR-2).
 > - **Open questions** ([open questions](../plan/open-questions.md)); build the part that depends on one only after it's resolved, or use its fallback:
 >   - **SPIKE-18** (M3): Can WebFetch requests be routed through the sandbox-runtime proxy (so the local-address refusal and domain logging apply to WebFetch too)? *If no:* `guarded-fetch` [SPIKE-45], else Dovet's own resolve-then-connect guard
->   - **SPIKE-44** (M1): AI SDK fidelity inside Dovet: the round trip SDK messages → Dovet stored parts → SDK messages is lossless and replays unchanged (Anthropic thinking signatures with `prefix_mismatch_behavior: "error"`, OpenAI encrypted reasoning and `phase`, Chat Completions `reasoning_content`); request bytes are deterministic for identical inputs (prefix property); the custom `fetch` captures exact bytes; everything works in a Bun-compiled binary *If no:* Pass the missing field via `providerOptions`; else a small custom provider against `@ai-sdk/provider` for that endpoint (ADR-30)
 > - **User journeys served** ([user journeys](../product/user-journeys.md)): steps 20, 26. A change here must keep those steps working.
 <!-- before-you-build:end -->
 

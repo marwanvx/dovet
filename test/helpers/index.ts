@@ -1,5 +1,6 @@
 // Test helpers shared by unit and integration tests (architecture "Repository layout": test/helpers).
 export { fakeClock } from "./clock.ts";
+export { FAKE_KEY, nvidiaAdapter, type Replay, renderInput, replaySession } from "./contract.ts";
 export { sseBody, startFixtureServer } from "./fixture-server.ts";
 export { sequentialIds } from "./ids.ts";
 export { type Probe, probeModel } from "./nvidia-probe.ts";
