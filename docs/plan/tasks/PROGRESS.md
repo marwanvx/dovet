@@ -215,3 +215,22 @@ Learned:
 - Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27 (AC-PROV-02 wording).
 
 Next: M1-09.
+
+## 2026-10-13 — M1-09 Retry policy and stream failures
+Done: `src/ai/retry.ts` `callModel` runs one model call with one 6-attempt budget across every cause.
+- Backoff is full jitter within 1–60 s, honoring `Retry-After` (seconds or an HTTP date).
+- When a retried failure follows completed blocks, they are kept (`kept`): tool calls get the not-run result and the next request carries the continue instruction. Otherwise the partial output is discarded.
+- `timedFetch` gives the 180 s no-bytes timeout and is the adapter's default transport.
+- The adapter's `error` event now carries `completed`, and it classifies drops, damaged streams, in-stream error objects, proxy HTML pages and `insufficient_quota`.
+- `test/helpers/scripted-server.ts` is a raw HTTP server that stalls, sends keep-alives or cuts a response mid-body.
+
+PR: #46 (merged, CI green on Linux, macOS and Windows). The fresh reviewer's major is fixed: the "only reasoning finished" rule had no real test.
+Learned:
+- On Chat Completions, `@ai-sdk/openai-compatible` closes text only at the end and emits tool calls only at flush; a stream that stops without a finish reason closes its open blocks, then errors with `InvalidResponseDataError`. So "completed" means: a later block started, or a tool call's arguments already form a JSON object (Q28). Interrupts use the same rule.
+- Bun's fetch discards body bytes that arrive in the same packet as a reset; tests wait 50 ms before a drop that follows output (`dropLater`).
+- Bun's fetch has no separate connect timeout (its socket idle deadline is 300 s and covers headers); the 180 s first-byte deadline covers connecting (Q28).
+- A `data: {}` frame (an Anthropic-style ping) is damaged data on Chat Completions; Chat servers keep alive with SSE comments.
+- For M1-25: map `callModel`'s `request`/`attempt.error`/`retrying`/`kept`/`discarded` events to `model.request`, `model.error`, the status line and the transcript; the "waiting for model… 45s" status after 15 s of silence (agent-loop "Stream liveness") is not built yet and belongs with the loop or TUI status; pass `network.streamIdleTimeoutMs` to `timedFetch`.
+- This machine (Ubuntu with an AppArmor user-namespace restriction, a Secret Service, slow network) fails the sandbox, SPIKE-5 file-fallback and ripgrep download tests on `main` too; CI is the judge.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28 (interfaces §3 `error.completed`, providers §6b connect timeout, the non-streamed row's M1 fallback, AC-PROV-09 wording).
+Next: M1-10.
