@@ -14,6 +14,7 @@ import { z } from "zod";
 import pkg from "../../package.json";
 import type { Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
 import type { Secret } from "../store/index.ts";
+import type { Quirks } from "./registry.ts";
 import type {
   ProviderErrorInfo,
   ProviderRequest,
@@ -24,7 +25,7 @@ import type {
   ToolDef,
 } from "./types.ts";
 
-export type Endpoint = { package: string; baseURL: string; apiKey?: Secret };
+export type Endpoint = { package: string; baseURL: string; apiKey?: Secret; quirks?: Quirks };
 export type FetchFunction = typeof fetch;
 type ModelFactory = (call: SdkCall, endpoint: Endpoint, fetch: FetchFunction) => LanguageModel;
 
@@ -33,6 +34,8 @@ export type AdapterDeps = {
   endpoint(provider: string): Endpoint;
   /** Replaces the package's own model, for scripted tests. */
   model?: ModelFactory;
+  /** The model's catalog entry; without one, no effort is sent. */
+  modelInfo?(provider: string, modelId: string): { effortLevels: readonly string[] } | undefined;
 };
 
 const PROTOCOLS: Record<string, Protocol> = { "@ai-sdk/openai-compatible": "openai-chat" };
@@ -100,7 +103,8 @@ function statusKind(status: number): Pick<ProviderErrorInfo, "kind" | "retryable
   if (status >= 500) return { kind: "server", retryable: true };
   if (status === 401 || status === 403) return { kind: "auth", retryable: false };
   if (status === 402) return { kind: "billing", retryable: false };
-  if (status === 404) return { kind: "not_found", retryable: false };
+  // NVIDIA answers a retired model with 410 Gone.
+  if (status === 404 || status === 410) return { kind: "not_found", retryable: false };
   if (status === 413) return { kind: "too_large", retryable: false };
   return { kind: "invalid_request", retryable: false };
 }
@@ -130,6 +134,19 @@ export function classifyError(err: unknown, secrets: readonly string[] = []): Pr
   return { ...info, message };
 }
 
+const ProblemDetail = z.object({ detail: z.string() });
+
+/** RFC 9457 problem bodies (NVIDIA's 410 for a retired model) carry the reason outside the SDK's error schema. */
+function withDetail(message: string, body: string | undefined): string {
+  if (body === undefined) return message;
+  try {
+    const parsed = ProblemDetail.safeParse(JSON.parse(body));
+    return parsed.success && !message.includes(parsed.data.detail) ? `${message}: ${parsed.data.detail}` : message;
+  } catch {
+    return message;
+  }
+}
+
 function classify(err: unknown): ProviderErrorInfo {
   if (APICallError.isInstance(err) && err.statusCode !== undefined) {
     const headers = err.responseHeaders ?? {};
@@ -142,7 +159,7 @@ function classify(err: unknown): ProviderErrorInfo {
         : {}),
       status: err.statusCode,
       ...(requestId === undefined ? {} : { requestId }),
-      message: err.message,
+      message: withDetail(err.message, err.responseBody),
     };
   }
   if (err instanceof Error && err.name === "TimeoutError")
@@ -271,6 +288,21 @@ function toolSet(defs: readonly ToolDef[]): ToolSet {
   );
 }
 
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** providers "Effort mapping": the nearest lower supported level, `max` the highest; below every level, the lowest. */
+function effortFor(asked: string, levels: readonly string[]): string | undefined {
+  const supported = EFFORT_ORDER.filter((l) => levels.includes(l));
+  if (asked === "max") return supported.at(-1);
+  const rank = EFFORT_ORDER.indexOf(asked);
+  return supported.filter((l) => EFFORT_ORDER.indexOf(l) <= rank).at(-1) ?? supported[0];
+}
+
+/** Index of the last user item that starts a turn (not only tool results); reasoning before it is outside the tool loop. */
+function lastTurnStart(transcript: RenderInput["transcript"]): number {
+  return transcript.findLastIndex((t) => t.kind === "user" && t.parts.some((p) => p.kind !== "tool_result"));
+}
+
 export function createSdkAdapter(deps: AdapterDeps) {
   const makeModel = deps.model ?? defaultModel;
 
@@ -278,13 +310,18 @@ export function createSdkAdapter(deps: AdapterDeps) {
   function render(input: RenderInput): SdkCall {
     const { header } = input;
     const target = { provider: header.provider, model: header.model };
+    const endpoint = deps.endpoint(header.provider);
+    const replayReasoning = endpoint.quirks?.reasoningReplay ?? "always";
+    const turnStart = lastTurnStart(input.transcript);
     const calls = new Map<string, { id: string; name: string }>();
     const messages: ModelMessage[] = [{ role: "system", content: header.systemText }];
-    for (const item of input.transcript) {
+    for (const [index, item] of input.transcript.entries()) {
       if (item.kind === "system") {
         messages.push({ role: "system", content: item.text });
       } else if (item.kind === "assistant") {
-        const rendered = fromStored(item.stored, target);
+        const keep = replayReasoning === "always" || (replayReasoning === "in-tool-loop" && index > turnStart);
+        const parts = keep ? item.stored.parts : item.stored.parts.filter((p) => p.kind !== "reasoning");
+        const rendered = fromStored({ ...item.stored, parts }, target);
         for (const p of item.stored.parts) {
           if (p.kind !== "tool_call") continue;
           const id = item.stored.provider === header.provider ? p.id : mappedId(p.id);
@@ -323,14 +360,20 @@ export function createSdkAdapter(deps: AdapterDeps) {
       }
     }
     const tools = sortTools(ToolDefs.parse(JSON.parse(header.toolsJson)));
+    const levels = deps.modelInfo?.(header.provider, header.model)?.effortLevels ?? [];
+    const asked = input.params.effort;
+    const effort =
+      asked !== undefined && endpoint.quirks?.effortField === "reasoning_effort" ? effortFor(asked, levels) : undefined;
     return {
       provider: header.provider,
-      package: deps.endpoint(header.provider).package,
+      package: endpoint.package,
       modelId: header.model,
       messages,
       tools,
-      providerOptions: {},
+      // `effortField` is a Chat Completions quirk; @ai-sdk/openai-compatible sends `reasoningEffort` as `reasoning_effort`.
+      providerOptions: effort === undefined ? {} : { [header.provider]: { reasoningEffort: effort } },
       maxOutputTokens: input.params.maxTokens,
+      ...(effort === undefined ? {} : { effort }),
     };
   }
 
@@ -351,6 +394,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
       model,
       messages: call.messages as ModelMessage[],
       tools: toolSet(call.tools),
+      providerOptions: providerOptionsOf(call.providerOptions),
       maxRetries: 0,
       allowSystemInMessages: true,
       abortSignal: opts.signal,

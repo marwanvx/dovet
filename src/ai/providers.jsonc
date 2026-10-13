@@ -1,0 +1,30 @@
+// Curated provider records (providers "Provider registry"; schema `ProviderRecord` in registry.ts).
+[
+  {
+    // The free test provider (testing "Free test provider: NVIDIA"); never a default.
+    "id": "nvidia",
+    "name": "NVIDIA",
+    "docsUrl": "https://docs.api.nvidia.com/nim/",
+    "status": "community",
+    "endpoints": [
+      {
+        "id": "nvidia",
+        "region": "global",
+        "plan": "platform",
+        "package": "@ai-sdk/openai-compatible",
+        "protocol": "openai-chat",
+        "baseUrl": "https://integrate.api.nvidia.com/v1",
+        "billing": "per-token",
+        "models": "endpoint",
+        // ASSUMPTION (QUESTIONS Q25): the values the endpoint accepted and returned in live probes, 2026-10-13.
+        "quirks": {
+          "reasoningField": "reasoning_content",
+          "effortField": "reasoning_effort",
+          "reasoningReplay": "in-tool-loop"
+        },
+        "capabilities": { "effortLevels": ["minimal", "low", "medium", "high", "xhigh", "max"] }
+      }
+    ],
+    "auth": [{ "method": "api-key", "envVars": ["NVIDIA_API_KEY"] }]
+  }
+]
