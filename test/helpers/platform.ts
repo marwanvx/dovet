@@ -14,6 +14,7 @@ export function fakePlatform(overrides: Partial<Platform> = {}): Platform {
     shells: () => ({}),
     clipboard: { readImage: () => Promise.resolve(null), writeText: () => Promise.resolve() },
     libexec: (name) => `/libexec/${name}`,
+    resolve: () => Promise.resolve(undefined),
     ...overrides,
   };
 }
