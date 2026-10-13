@@ -86,6 +86,19 @@ export function capturingFetch(onRequest: (req: ProviderRequest) => void, base: 
   return Object.assign(capture, { preconnect: base.preconnect });
 }
 
+/**
+ * How a mid-epoch instruction reaches the model (context §4): its own system (developer) message after the user's
+ * content, or a text block in the user message, marked where the protocol has no other way to tell it apart.
+ * ASSUMPTION (QUESTIONS Q29): anthropic-messages uses the text block until the registry declares system-message support.
+ */
+export function instructionDelivery(
+  protocol: Protocol,
+): { form: "system-message" } | { form: "reminder-block"; prefix: string } {
+  if (protocol === "openai-responses") return { form: "system-message" };
+  if (protocol === "anthropic-messages") return { form: "reminder-block", prefix: "" };
+  return { form: "reminder-block", prefix: "[Dovet instruction] " };
+}
+
 /** Tool order is part of the prefix (context §7): plain code-unit order, the same for every caller. */
 export function sortTools<T extends { name: string }>(defs: readonly T[]): T[] {
   return [...defs].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -415,6 +428,9 @@ export function createSdkAdapter(deps: AdapterDeps) {
     const target = { provider: header.provider, model: header.model };
     const endpoint = deps.endpoint(header.provider);
     const replayReasoning = endpoint.quirks?.reasoningReplay ?? "always";
+    const protocol = PROTOCOLS[endpoint.package];
+    if (protocol === undefined) throw new Error(`no protocol for ${endpoint.package}`);
+    const delivery = instructionDelivery(protocol);
     const turnStart = lastTurnStart(input.transcript);
     const calls = new Map<string, { id: string; name: string }>();
     const messages: ModelMessage[] = [{ role: "system", content: header.systemText }];
@@ -456,7 +472,13 @@ export function createSdkAdapter(deps: AdapterDeps) {
         }
         const rest = item.parts.flatMap((p) => {
           if (p.kind === "tool_result") return [];
-          if (p.kind === "text" || p.kind === "instruction") return [{ type: "text" as const, text: p.text }];
+          if (p.kind === "text") return [{ type: "text" as const, text: p.text }];
+          if (p.kind === "instruction") {
+            // A developer message needs a bundled openai-responses package, whose conversion isn't verified yet.
+            if (delivery.form === "system-message")
+              throw new Error(`instructions on ${protocol} are not supported yet`);
+            return [{ type: "text" as const, text: `${delivery.prefix}${p.text}` }];
+          }
           throw new Error(`a ${p.kind} part in a prompt is not supported yet`);
         });
         if (rest.length > 0) messages.push({ role: "user", content: rest });

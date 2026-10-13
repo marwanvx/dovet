@@ -19,7 +19,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { type Env, emptyDir, type GitContext, lines, runGit, scrubbedEnv, splitNul } from "./git.ts";
+import { hardenedGitEnv } from "../../platform/index.ts";
+import { type Env, emptyDir, type GitContext, lines, runGit, splitNul } from "./git.ts";
 import { loadStatCache, type StatCache, saveStatCache } from "./stat-cache.ts";
 
 const UNTRACKED_LIMIT = 2n * 1024n * 1024n;
@@ -110,7 +111,7 @@ const byPath = (a: { path: string }, b: { path: string }): number => (a.path < b
 
 export async function openSnapshotter(options: SnapshotterOptions): Promise<Snapshotter> {
   const posix = options.platform !== "win32";
-  const env = scrubbedEnv(options.env);
+  const env = hardenedGitEnv(options.env);
   const objectsDir = emptyDir(join(options.projectDir, "objects"));
   const sessionsDir = emptyDir(join(options.projectDir, "sessions"));
   const scratchDir = emptyDir(join(options.projectDir, "scratch"));

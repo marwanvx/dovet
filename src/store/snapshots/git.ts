@@ -1,6 +1,7 @@
 // Running git without letting the user's repository or configuration run anything (checkpoints "Git tree snapshots",
 // ADR-19). Every call gets the same hardening flags and a scrubbed environment; only plumbing commands are used.
 import { mkdirSync } from "node:fs";
+import { GIT_HARDENING_ARGS } from "../../platform/index.ts";
 
 export type Env = Readonly<Record<string, string | undefined>>;
 
@@ -8,22 +9,10 @@ export type Env = Readonly<Record<string, string | undefined>>;
 export interface GitContext {
   /** Working directory: the top level of the repository. */
   readonly cwd: string;
-  /** The caller's environment with every `GIT_*` variable removed, plus `GIT_OPTIONAL_LOCKS=0`. */
+  /** The caller's environment hardened as every Dovet git call (`hardenedGitEnv`). */
   readonly env: Readonly<Record<string, string>>;
   /** An empty directory used as `core.hooksPath`, so no hook can run. */
   readonly hooksDir: string;
-}
-
-/** `base` without `GIT_*` variables (case-insensitive, for Windows) and without undefined values. */
-export function scrubbedEnv(base: Env): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(base)) {
-    if (value === undefined || key.toUpperCase().startsWith("GIT_")) continue;
-    out[key] = value;
-  }
-  out.GIT_OPTIONAL_LOCKS = "0";
-  out.GIT_TERMINAL_PROMPT = "0";
-  return out;
 }
 
 export function emptyDir(path: string): string {
@@ -39,8 +28,7 @@ export async function runGit(
 ): Promise<Uint8Array> {
   const argv = [
     "git",
-    "-c",
-    "core.fsmonitor=false",
+    ...GIT_HARDENING_ARGS,
     "-c",
     `core.hooksPath=${ctx.hooksDir}`,
     "-c",
