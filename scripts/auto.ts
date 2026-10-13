@@ -38,6 +38,8 @@ const PROMPT = [
   "Continue building Dovet.",
   "This run is unattended: nobody can answer questions or approve prompts.",
   "Follow AGENTS.md and docs/workflow/build-loop.md for exactly one task: build it, review it, ship it, write the progress entry, then stop.",
+  "Use the reviewer agent for step 7 and the plan-checker agent for step 4 when the build loop calls for them; the owner asks for both.",
+  "Check library APIs with the installed types, Context7 or DeepWiki, never from memory.",
   "If the next step needs the owner, write that in the progress entry's Next line and stop.",
 ].join(" ");
 

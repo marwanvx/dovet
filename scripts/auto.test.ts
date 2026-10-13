@@ -25,6 +25,8 @@ describe("claudeArgs", () => {
     expect(args.slice(0, 2)).toEqual(["claude", "-p"]);
     expect(args[2]).toContain("Continue building Dovet.");
     expect(args[2]).toContain("unattended");
+    expect(args[2]).toContain("reviewer agent");
+    expect(args[2]).toContain("Context7");
     expect(args).toEqual(
       expect.arrayContaining(["--permission-mode", "auto", "--permission-prompts", "none", "--output-format", "json"]),
     );

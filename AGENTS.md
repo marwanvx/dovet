@@ -49,7 +49,7 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 
 - **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
-- **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
+- **Never use a library or provider API from memory.** Verify against the installed package's types first, then current docs: the Context7 MCP (`resolve-library-id`, then `query-docs`) for library docs, DeepWiki (`ask_wiki_question`) for how an open-source repo works, and the TypeScript LSP to jump to definitions instead of reading whole files.
 - **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
 - **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).
 - TypeScript strict; no `any`; zod-parse every external input; no floating promises; no catch-and-ignore.
