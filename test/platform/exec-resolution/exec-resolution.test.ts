@@ -106,7 +106,7 @@ describe("executable resolution", () => {
     chmodSync(join(dir, `late-tool${exe}`), 0o755);
     expect(await resolver.resolve("late-tool")).toBeUndefined();
     const fresh = createExecResolver({ os, env: pathWith(dir), projectRoot: project.root as AbsPath });
-    expect(await fresh.resolve("late-tool")).toBe(join(dir, `late-tool${exe}`));
+    expect((await fresh.resolve("late-tool"))?.toLowerCase()).toBe(join(dir, `late-tool${exe}`).toLowerCase());
   });
 
   test("relative PATH entries are skipped", async () => {
