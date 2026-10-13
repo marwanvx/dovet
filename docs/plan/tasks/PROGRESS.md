@@ -147,3 +147,10 @@ Learned:
 - Local Bun is now 1.4.3, the version CI pins, so `bun run check` runs as written (the 1.4.2 workarounds in the M0-14 entry no longer apply). `bun upgrade` fails in the cloud sandbox: `BUN_OPTIONS=--smol` is read as a package name (run it with `env -u BUN_OPTIONS`), and github.com is blocked, so install the npm package `@oven/bun-linux-x64@<version>` and copy its `bin/bun` over `~/.bun/bin/bun` after checking the registry sha1.
 - The sandbox tests (`test/platform/sandbox`) need `bubblewrap` and `socat` on Linux, as CI installs; a fresh cloud container lacks them (`apt-get install -y bubblewrap socat`), and without them five tests fail with "Sandbox dependencies not available".
 Next: M1-02 (platform layer: dirs, paths, processes).
+
+## 2026-10-13 — M1-02 Platform layer: dirs, paths, processes
+Done: `src/platform/` has config/data/cache dirs per OS, path canonicalization with `pathKey`/`isWithin`, executable resolution that skips the project, and process spawn with tree kill; AC-PLAT-02, AC-PLAT-03 and AC-PLAT-05 are tagged and pass, and SPIKE-10 is answered in open questions. PR: #31 (merged, CI green on Linux, macOS and Windows). The previous session ended before this entry and the `Status:` line; this session closed them after re-running `bun run check` on Bun 1.4.3 (283 pass, 0 fail).
+Learned:
+- Updating Bun in the cloud sandbox: `curl -fsSL https://bun.sh/install | bash -s "bun-v<version>"` works (the registry's `latest` dist-tag of the npm `bun` package names the newest version). `bun upgrade` still fails: the sandbox sets `BUN_OPTIONS=--smol`, which it reads as a package name; run `env -u BUN_OPTIONS bun upgrade` and it then asks for a manual upgrade. This replaces the npm-package copy trick in the M1-01 entry.
+- `apt-get install -y bubblewrap socat` needs `apt-get update` first in a fresh container; without them five tests in `test/platform/sandbox` fail.
+Next: M1-03 (settings: loading, precedence, migration, Claude Code compatibility).
