@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import pkg from "../../package.json";
 import { tempProject } from "../../test/helpers/index.ts";
-import { PROVIDER_AUTH } from "../ai/index.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -84,18 +83,6 @@ describe("dovet auth status", () => {
       }
     });
   }
-
-  test("warns for every provider whose rejected env-var pair is set, without the values", async () => {
-    const pairs = Object.values(PROVIDER_AUTH).filter((a) => (a.exclusiveEnvVars?.length ?? 0) > 1);
-    expect(pairs.length).toBeGreaterThan(0);
-    for (const auth of pairs) {
-      const vars = auth.exclusiveEnvVars ?? [];
-      const r = await status({}, Object.fromEntries(vars.map((v) => [v, `FAKE-VALUE-${v}`])));
-      expect(r.code).toBe(0);
-      expect(r.out).toContain(`  warning: ${vars.join(" and ")} are both set; ${auth.id} rejects requests`);
-      for (const v of vars) expect(r.out).not.toContain(`FAKE-VALUE-${v}`);
-    }
-  });
 
   test("a settings reference to an unset env var is shown as broken", async () => {
     const r = await status(

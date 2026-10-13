@@ -42,7 +42,7 @@ describe("createRuntime", () => {
         dirs: { config: "/a/cfg", data: "/a/data", cache: "/a/cache" },
         stdio: { isTTY: true },
         platform: platformA,
-        baseUrls: { anthropic: "http://a" },
+        baseUrls: { nvidia: "http://a" },
       }),
     );
     const b = createRuntime(
@@ -51,7 +51,7 @@ describe("createRuntime", () => {
         dirs: { config: "/b/cfg", data: "/b/data", cache: "/b/cache" },
         stdio: { isTTY: false },
         platform: platformB,
-        baseUrls: { anthropic: "http://b" },
+        baseUrls: { nvidia: "http://b" },
       }),
     );
     expect(a.deps.env).toEqual({ A: "1" });
@@ -62,8 +62,8 @@ describe("createRuntime", () => {
     expect(b.deps.stdio.isTTY).toBe(false);
     expect(a.deps.platform).toBe(platformA);
     expect(b.deps.platform).toBe(platformB);
-    expect(a.deps.baseUrls).toEqual({ anthropic: "http://a" });
-    expect(b.deps.baseUrls).toEqual({ anthropic: "http://b" });
+    expect(a.deps.baseUrls).toEqual({ nvidia: "http://a" });
+    expect(b.deps.baseUrls).toEqual({ nvidia: "http://b" });
     await a.close();
     await b.close();
   });
@@ -78,12 +78,12 @@ describe("createRuntime", () => {
 
   test("the environment is a frozen copy taken once: later changes to the caller's object don't leak in", async () => {
     const source: Record<string, string> = { HOME: "/home/u" };
-    const urls: Record<string, string> = { anthropic: "http://x" };
+    const urls: Record<string, string> = { nvidia: "http://x" };
     const runtime = createRuntime(deps({ env: source, baseUrls: urls }));
     source.HOME = "/elsewhere";
     source.NEW = "1";
-    urls.anthropic = "http://changed";
-    expect(runtime.deps.baseUrls).toEqual({ anthropic: "http://x" });
+    urls.nvidia = "http://changed";
+    expect(runtime.deps.baseUrls).toEqual({ nvidia: "http://x" });
     expect(runtime.deps.env).toEqual({ HOME: "/home/u" });
     expect(Object.isFrozen(runtime.deps.env)).toBe(true);
     expect(Object.isFrozen(runtime.deps.dirs)).toBe(true);

@@ -161,7 +161,7 @@ The example below shows the common keys; [interfaces §7](interfaces.md) is the 
   There is no `--api-key` flag (keys on command lines leak into shell history and process lists).
 - **Plain-text keys in config files are rejected** with an error explaining `dovet auth login`.
 - Keychain: `Bun.secrets` (built into Bun; macOS Keychain, Windows Credential Manager with `persist: "local"`, Linux libsecret) [VERIFIED, Bun docs]. Service name `dovet`, entry name `<provider>`. If `Bun.secrets` fails a platform check in SPIKE-5, that platform uses `just-secrets` instead (same stores, through the OS's own `security`, `secret-tool` and PowerShell credential APIs; zero dependencies). Where no keychain exists at all (headless Linux without a Secret Service), credentials go to a file with mode 0600 in `<data>`; `/status` and `doctor` say so. Env-var keys work everywhere [SPIKE-5].
-- Anthropic: if `ANTHROPIC_API_KEY` and `ANTHROPIC_AUTH_TOKEN` are both set, the SDK sends both and the API rejects the request (401) [VERIFIED 2026-10-10]; Dovet detects this and tells the user.
+- A provider that rejects requests carrying two of its credentials at once (a 401 when both env vars are set) lists them in its registry record; when both are set, Dovet tells the user which to unset.
 
 ## Startup sequence (interactive)
 

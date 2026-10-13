@@ -172,3 +172,11 @@ Learned:
 - Left for later tasks: `resolve()` returns `warnings` that the first task resolving a key for a real request must print; `cmd:` needs a runner (`/bin/sh -c`, PowerShell on Windows) wired by that same task (QUESTIONS Q21 (8)); credentials-file writes aren't locked between processes (matters for `dovet auth login`); the `--settings` flag file isn't checked for `cmd:` (the flags task decides); log and transcript tasks must keep keys inside `Secret`.
 - Q21's spec-change PR (cli-config "Secrets") is still to do. `src/ai/providers/auth.ts` holds the provider env-var data until the M4 registry.
 Next: M1-05 (event log writer, reader and blob store).
+
+## 2026-10-13 — M1-05 Event log writer, reader and blob store
+Done: `src/store/event-log/` writes the append-only session log (exclusive lock with a 30 s heartbeat and rename-based stale takeover, buffered writes flushed on `turn.end`/`permission.request`/2 s/close, secrets scrubbed, strings over 256 KB moved to essential blobs, a torn last line repaired by a `session.resume` on reopen) and reads it as a validating stream (read-only on unknown core events, bad versions, corrupt lines, missing blobs); `src/store/blobs/` is the content-addressed store; `.meta.json` sidecars are rebuilt from the logs; `checkDataPermissions` reports loosened modes. AC-LOG-04 to AC-LOG-09 pass (AC-LOG-07's replay half is M1-08's; AC-LOG-08's startup wiring is the startup task's). PR: #38 (merged, CI green on Linux, macOS and Windows after one re-run). The fresh reviewer's majors are fixed.
+Learned:
+- Owner decisions (QUESTIONS Q23, AGENTS.md "Owner rules"): no vendor attribution in commits, PRs or GitHub comments; tests use `nvidia` or made-up names; M1 is replanned NVIDIA-first and all Anthropic work is in M4-12, blocked unless the owner adds Anthropic. `NVIDIA_API_KEY` is in the cloud environment.
+- `src/cli/update.test.ts` timed out once on Windows CI (its `tar` call failed with empty stderr after 5 s); the re-run passed. If it repeats, give that test a longer timeout or look at Windows `tar`.
+- Left for later tasks (QUESTIONS Q22): per-type `data` schemas come with each event's first writer; invalid state transitions are checked by the transcript builder (M1-12); Q22's spec-change PR is still to do.
+Next: M1-06 (AI SDK adapter, NVIDIA through `@ai-sdk/openai-compatible`).

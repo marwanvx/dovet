@@ -102,13 +102,13 @@ describe("precedence", () => {
 describe("invalid settings", () => {
   // spec: AC-CLI-03
   test("a plain-text API key stops startup and the error never repeats it", async () => {
-    const secret = "sk-ant-api03-abcdefghijklmnop";
+    const secret = "nvapi-FAKE-abcdefghijklmnop";
     const { input } = await setup({
-      "cfg/settings.json": `{\n  "providers": {\n    "anthropic": { "apiKey": "${secret}" }\n  }\n}`,
+      "cfg/settings.json": `{\n  "providers": {\n    "nvidia": { "apiKey": "${secret}" }\n  }\n}`,
     });
     const err = await failure(loadSettings({ ...input, env: {} }));
     expect(err.problems).toHaveLength(1);
-    expect(err.problems[0]).toMatchObject({ key: "providers.anthropic.apiKey", line: 3 });
+    expect(err.problems[0]).toMatchObject({ key: "providers.nvidia.apiKey", line: 3 });
     expect(err.problems[0]?.file).toBe(join(input.dirs.config, "settings.json"));
     expect(err.message).toContain("dovet auth login");
     expect(err.message).not.toContain(secret);
@@ -274,7 +274,7 @@ describe("reading files safely", () => {
 
 describe("Claude Code compatibility", () => {
   const claude = JSON.stringify({
-    model: "claude-opus-4",
+    model: "some-model",
     hooks: { PreToolUse: [] },
     env: { FOO: "1" },
     apiKeyHelper: "x",
