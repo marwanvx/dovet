@@ -1,28 +1,23 @@
-// Records the adapter scenarios live on NVIDIA's free API (testing "Free test provider: NVIDIA").
-//
-//     bun run record              # every scenario
-//     bun run record text         # one scenario
-//
-// The second request of a scenario is built from the AI SDK's own response messages, never Dovet's stored parts, so the
-// fixture holds a direct replay that the adapter's replay must match byte for byte (providers §1, SPIKE-44).
-// Only request bodies and response streams are saved; no header (the key travels in Authorization) is written.
+// `bun run record [scenario]`: live NVIDIA fixtures whose follow-up requests are direct SDK replays (testing "Free test provider: NVIDIA").
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { jsonSchema, type ModelMessage, streamText, type ToolSet, tool } from "ai";
+import { sortTools } from "../src/ai/index.ts";
 import { type Exchange, type Fixture, MAX_TOKENS, SCENARIOS, type Scenario } from "../test/helpers/nvidia-scenarios.ts";
 
 const BASE_URL = "https://integrate.api.nvidia.com/v1";
 const OUT = join(import.meta.dir, "..", "test", "fixtures", "nvidia");
 
 function toolSet(s: Scenario): ToolSet {
-  const sorted = [...s.tools].sort((a, b) => a.name.localeCompare(b.name));
+  const sorted = sortTools(s.tools);
   return Object.fromEntries(
     sorted.map((d) => [d.name, tool({ description: d.description, inputSchema: jsonSchema(d.inputSchema) })]),
   );
 }
 
 async function record(s: Scenario, apiKey: string): Promise<Fixture> {
+  // Only request bodies and response streams are saved; the key travels in a header, and no header is written.
   const exchanges: Exchange[] = [];
   const provider = createOpenAICompatible({
     name: "nvidia",

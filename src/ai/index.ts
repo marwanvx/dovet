@@ -9,12 +9,14 @@ export {
   type Endpoint,
   type FetchFunction,
   fromStored,
+  sortTools,
   toStored,
 } from "./sdk-adapter.ts";
 export type {
   EpochHeader,
   ProviderErrorInfo,
   ProviderRequest,
+  RawUsage,
   RenderInput,
   SdkCall,
   StopReason,

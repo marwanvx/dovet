@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { APICallError, jsonSchema, type ModelMessage, streamText, tool } from "ai";
+import { APICallError, jsonSchema, type ModelMessage, simulateReadableStream, streamText, tool } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import {
   type Fixture,
@@ -12,7 +12,7 @@ import {
 } from "../../test/helpers/index.ts";
 import type { StoredResponse } from "../schema/index.ts";
 import { Secret } from "../store/index.ts";
-import { createSdkAdapter, type ProviderRequest, type RenderInput, type StreamEvent } from "./index.ts";
+import { capturingFetch, createSdkAdapter, type ProviderRequest, type RenderInput, type StreamEvent } from "./index.ts";
 
 const servers: Array<{ stop(): Promise<void> }> = [];
 afterEach(async () => {
@@ -64,6 +64,36 @@ function storedOf(events: StreamEvent[]): StoredResponse {
   return done.stored;
 }
 
+type Chunk = Awaited<ReturnType<MockLanguageModelV4["doStream"]>>["stream"] extends ReadableStream<infer C> ? C : never;
+const USAGE = {
+  inputTokens: { total: 3, noCache: 3, cacheRead: undefined, cacheWrite: undefined },
+  outputTokens: { total: 5, text: 5, reasoning: undefined },
+} as const;
+
+function chunkModel(chunks: Chunk[]) {
+  return new MockLanguageModelV4({
+    doStream: () =>
+      Promise.resolve({ stream: simulateReadableStream({ chunks, initialDelayInMs: null, chunkDelayInMs: null }) }),
+  });
+}
+
+function scripted(model: MockLanguageModelV4) {
+  return createSdkAdapter({
+    endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+    model: () => model,
+  });
+}
+
+async function runOnce(adapter: ReturnType<typeof scripted>): Promise<StreamEvent[]> {
+  const s = scenario("parallel-tools");
+  return collect(
+    adapter.stream(adapter.render(input(s, [{ kind: "user", parts: [{ kind: "text", text: "go" }] }])), {
+      signal: new AbortController().signal,
+      onRequest: () => {},
+    }),
+  );
+}
+
 describe("render", () => {
   test("is deterministic, and sends the tools sorted by name", () => {
     const adapter = nvidiaAdapter("http://unused");
@@ -100,7 +130,7 @@ describe("render", () => {
         { kind: "assistant", stored },
         {
           kind: "user",
-          parts: [{ kind: "tool_result", callId: "call-1", isError: false, content: [{ kind: "text", text: "A" }] }],
+          parts: [{ kind: "tool_result", callId: "call-1", isError: true, content: [{ kind: "text", text: "A" }] }],
         },
       ]),
     );
@@ -112,9 +142,145 @@ describe("render", () => {
       },
       {
         role: "tool",
-        content: [{ type: "tool-result", toolCallId: mapped, toolName: "read", output: { type: "text", value: "A" } }],
+        content: [
+          { type: "tool-result", toolCallId: mapped, toolName: "read", output: { type: "error-text", value: "A" } },
+        ],
       },
     ]);
+  });
+});
+
+describe("replay rule", () => {
+  const adapter = nvidiaAdapter("http://unused");
+  const s = scenario("parallel-tools");
+  const meta = { nvidia: { signature: "sig-1" } };
+  const stored = (modelId: string): StoredResponse => {
+    const replay = { provider: "nvidia", protocol: "openai-chat" as const, modelId, fields: meta };
+    return {
+      provider: "nvidia",
+      protocol: "openai-chat",
+      package: "@ai-sdk/openai-compatible",
+      packageVersion: "x",
+      modelId,
+      parts: [
+        { kind: "reasoning", summary: "thinking", replay },
+        { kind: "text", text: "Looking.", replay },
+        { kind: "tool_call", id: "call-1", name: "read", inputJson: '{"path":"a"}', replay },
+      ],
+      usage: {},
+      finishReason: "tool_calls",
+    };
+  };
+
+  test("the same model gets its turn back with reasoning and provider data", () => {
+    expect(adapter.fromStored(stored(s.model), { provider: "nvidia", model: s.model })).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "thinking", providerOptions: meta },
+          { type: "text", text: "Looking.", providerOptions: meta },
+          { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" }, providerOptions: meta },
+        ],
+      },
+    ]);
+  });
+
+  test("another model of the same provider gets no reasoning or provider data, and the ids unchanged", () => {
+    expect(adapter.fromStored(stored("other/model"), { provider: "nvidia", model: s.model })).toEqual([
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Looking." },
+          { type: "tool-call", toolCallId: "call-1", toolName: "read", input: { path: "a" } },
+        ],
+      },
+    ]);
+  });
+
+  test("provider data on every kind of part survives the round trip", () => {
+    const messages: ModelMessage[] = [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "r", providerOptions: meta },
+          { type: "text", text: "t", providerOptions: meta },
+          { type: "tool-call", toolCallId: "c", toolName: "read", input: { path: "x" }, providerOptions: meta },
+        ],
+      },
+    ];
+    const ctx = { provider: "nvidia", package: "@ai-sdk/openai-compatible", packageVersion: "x", modelId: s.model };
+    expect(adapter.fromStored(adapter.toStored({ messages }, ctx), { provider: "nvidia", model: s.model })).toEqual(
+      messages,
+    );
+  });
+});
+
+describe("tool calls the model got wrong", () => {
+  for (const [what, call] of [
+    ["malformed arguments", { type: "tool-call", toolCallId: "c1", toolName: "read", input: "{bad" }],
+    ["an unknown tool", { type: "tool-call", toolCallId: "c1", toolName: "nope", input: '{"path":"a"}' }],
+  ] as const) {
+    test(`${what}: the step still ends with a stored call holding the model's raw text`, async () => {
+      const events = await runOnce(
+        scripted(
+          chunkModel([
+            call,
+            { type: "finish", finishReason: { unified: "tool-calls", raw: "tool_calls" }, usage: USAGE },
+          ]),
+        ),
+      );
+      const stored = storedOf(events);
+      expect(stored.parts).toEqual([{ kind: "tool_call", id: "c1", name: call.toolName, inputJson: call.input }]);
+      expect(events.find((e) => e.type === "done")).toMatchObject({ stopReason: "tool_use" });
+    });
+  }
+});
+
+describe("stop reasons", () => {
+  for (const [unified, raw, expected] of [
+    ["stop", "stop", "end_turn"],
+    ["length", "length", "max_tokens"],
+    ["content-filter", "content_filter", "refusal"],
+    ["other", "weird", { other: "other" }],
+  ] as const) {
+    test(`${raw} → ${JSON.stringify(expected)}, and the raw reason is stored`, async () => {
+      const events = await runOnce(
+        scripted(
+          chunkModel([
+            { type: "text-start", id: "t" },
+            { type: "text-delta", id: "t", delta: "x" },
+            { type: "text-end", id: "t" },
+            { type: "finish", finishReason: { unified, raw }, usage: USAGE },
+          ]),
+        ),
+      );
+      expect(events.find((e) => e.type === "done")).toMatchObject({
+        stopReason: expected,
+        stored: { finishReason: raw },
+      });
+    });
+  }
+});
+
+describe("capturingFetch", () => {
+  const ok: typeof fetch = Object.assign(() => Promise.resolve(new Response("ok")), { preconnect: fetch.preconnect });
+
+  test("records byte bodies exactly and the headers of a Request, with credentials redacted", async () => {
+    const seen: ProviderRequest[] = [];
+    const f = capturingFetch((r) => seen.push(r), ok);
+    const req = new Request("http://h/v1", { headers: { authorization: "Bearer nvapi-FAKE", "x-trace": "1" } });
+    await f(req, { body: new TextEncoder().encode('{"a":1}'), headers: { "content-type": "application/json" } });
+    expect(seen[0]).toEqual({
+      url: "http://h/v1",
+      headers: { authorization: "[redacted]", "x-trace": "1", "content-type": "application/json" },
+      body: '{"a":1}',
+      bodySha256: new Bun.CryptoHasher("sha256").update('{"a":1}').digest("hex"),
+    });
+  });
+
+  test("a body it can't record exactly is refused", () => {
+    const f = capturingFetch(() => {}, ok);
+    expect(() => f("http://h", { body: new FormData() })).toThrow("can't be recorded exactly");
   });
 });
 
@@ -331,8 +497,35 @@ describe("classifyError", () => {
     ]);
   });
 
-  test("a network failure is retryable; anything else is unknown", () => {
+  test("a network failure is retryable; a programming error or anything else is unknown", () => {
     expect(adapter.classifyError(new TypeError("fetch failed"))).toMatchObject({ kind: "network", retryable: true });
+    const reset = Object.assign(new Error("socket closed"), { code: "ECONNRESET" });
+    expect(adapter.classifyError(reset)).toMatchObject({ kind: "network", retryable: true });
+    expect(adapter.classifyError(new TypeError("undefined is not a function"))).toMatchObject({
+      kind: "unknown",
+      retryable: false,
+    });
     expect(adapter.classifyError("weird")).toEqual({ kind: "unknown", retryable: false, message: "weird" });
+  });
+
+  test("a timeout is retryable, the request id is kept, and the credential never reaches the message", () => {
+    expect(adapter.classifyError(Object.assign(new Error("took too long"), { name: "TimeoutError" }))).toMatchObject({
+      kind: "timeout",
+      retryable: true,
+    });
+    const err = new APICallError({
+      message: "bad key nvapi-FAKE-123 rejected",
+      url: "u",
+      requestBodyValues: {},
+      statusCode: 401,
+      responseHeaders: { "x-request-id": "req-9" },
+    });
+    expect(adapter.classifyError(err, ["nvapi-FAKE-123"])).toEqual({
+      kind: "auth",
+      retryable: false,
+      status: 401,
+      requestId: "req-9",
+      message: "bad key [redacted] rejected",
+    });
   });
 });

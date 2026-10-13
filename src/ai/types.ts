@@ -37,6 +37,8 @@ export type SdkCall = {
   headers?: Record<string, string>;
 };
 
+export type RawUsage = Record<string, unknown>;
+
 export type ProviderRequest = { url: string; headers: Record<string, string>; body: string; bodySha256: string };
 
 export type StopReason =
@@ -78,7 +80,7 @@ export type StreamEvent =
   | { type: "tool_call.start"; blockIndex: number; id: string; name: string }
   | { type: "tool_call.delta"; blockIndex: number; partialJson: string }
   | { type: "block.done"; blockIndex: number; kind: "text" | "reasoning" | "tool_call" }
-  | { type: "usage"; usage: Record<string, unknown> }
-  | { type: "done"; stopReason: StopReason; stored: StoredResponse; requestId?: string }
+  | { type: "usage"; usage: RawUsage }
+  | { type: "done"; stopReason: StopReason; stored: StoredResponse; requestId?: string; servedBy?: string }
   | { type: "error"; error: ProviderErrorInfo }
   | { type: "aborted"; completed: StoredResponse | null };

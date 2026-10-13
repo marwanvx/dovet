@@ -56,9 +56,18 @@ const defaultModel: ModelFactory = (call, endpoint, fetch) => {
 /** Records the exact request bytes before sending them (providers §6b); credentials never leave in the record. */
 export function capturingFetch(onRequest: (req: ProviderRequest) => void, base: FetchFunction = fetch): FetchFunction {
   const capture = (input: Parameters<FetchFunction>[0], init?: Parameters<FetchFunction>[1]): Promise<Response> => {
-    const body = typeof init?.body === "string" ? init.body : "";
+    const raw = init?.body;
+    let body: string;
+    if (raw === undefined || raw === null) body = "";
+    else if (typeof raw === "string") body = raw;
+    else if (raw instanceof Uint8Array || raw instanceof ArrayBuffer) body = new TextDecoder().decode(raw);
+    else throw new Error("a provider request body that is not text or bytes can't be recorded exactly");
     const headers: Record<string, string> = {};
+    const all = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(init?.headers).forEach((value, key) => {
+      all.set(key, value);
+    });
+    all.forEach((value, key) => {
       headers[key] = REDACTED_HEADERS.has(key.toLowerCase()) ? "[redacted]" : value;
     });
     const url = input instanceof Request ? input.url : String(input);
@@ -66,6 +75,11 @@ export function capturingFetch(onRequest: (req: ProviderRequest) => void, base: 
     return base(input, init);
   };
   return Object.assign(capture, { preconnect: base.preconnect });
+}
+
+/** Tool order is part of the prefix (context §7): plain code-unit order, the same for every caller. */
+export function sortTools<T extends { name: string }>(defs: readonly T[]): T[] {
+  return [...defs].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
 function mappedId(id: string): string {
@@ -91,7 +105,32 @@ function statusKind(status: number): Pick<ProviderErrorInfo, "kind" | "retryable
   return { kind: "invalid_request", retryable: false };
 }
 
-export function classifyError(err: unknown): ProviderErrorInfo {
+const NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ConnectionRefused",
+  "ConnectionClosed",
+]);
+
+function isNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const code = (err as { code?: unknown }).code ?? (err.cause as { code?: unknown } | undefined)?.code;
+  if (typeof code === "string" && NETWORK_CODES.has(code)) return true;
+  return err instanceof TypeError && /fetch failed|network|socket|connection/i.test(err.message);
+}
+
+/** `secrets` (the endpoint's credential) never appear in the message (interfaces §3). */
+export function classifyError(err: unknown, secrets: readonly string[] = []): ProviderErrorInfo {
+  const info = classify(err);
+  const message = secrets.reduce((m, s) => (s === "" ? m : m.replaceAll(s, "[redacted]")), info.message);
+  return { ...info, message };
+}
+
+function classify(err: unknown): ProviderErrorInfo {
   if (APICallError.isInstance(err) && err.statusCode !== undefined) {
     const headers = err.responseHeaders ?? {};
     const retryAfter = Number(headers["retry-after"]);
@@ -108,11 +147,17 @@ export function classifyError(err: unknown): ProviderErrorInfo {
   }
   if (err instanceof Error && err.name === "TimeoutError")
     return { kind: "timeout", retryable: true, message: err.message };
-  if (err instanceof TypeError) return { kind: "network", retryable: true, message: err.message };
+  if (isNetworkError(err)) return { kind: "network", retryable: true, message: (err as Error).message };
   return { kind: "unknown", retryable: false, message: err instanceof Error ? err.message : String(err) };
 }
 
 type StoredContext = { provider: string; package: string; packageVersion: string; modelId: string };
+
+const ProviderOptions = z.record(z.string(), z.record(z.string(), z.json()));
+
+function providerOptionsOf(fields: Record<string, unknown>) {
+  return ProviderOptions.parse(fields);
+}
 
 function replayOf(ctx: StoredContext, fields: Record<string, unknown> | undefined): ReplayData {
   const protocol = PROTOCOLS[ctx.package];
@@ -125,6 +170,19 @@ function replayOf(ctx: StoredContext, fields: Record<string, unknown> | undefine
   };
 }
 
+/** An invalid call keeps the model's raw argument text, so the loop can show the model what it sent. */
+function inputJsonOf(input: unknown): string {
+  return typeof input === "string" ? input : JSON.stringify(input);
+}
+
+function inputOf(inputJson: string): unknown {
+  try {
+    return JSON.parse(inputJson);
+  } catch {
+    return inputJson;
+  }
+}
+
 /** Lossless: the step's SDK response messages → Dovet parts with replay data (providers §1). */
 export function toStored(
   result: { messages: readonly ModelMessage[]; usage?: Record<string, unknown>; finishReason?: string },
@@ -132,6 +190,8 @@ export function toStored(
 ): StoredResponse {
   const parts: Part[] = [];
   for (const message of result.messages) {
+    // The SDK answers an invalid or unknown tool call itself with a tool-error message; Dovet's loop reports it instead.
+    if (message.role === "tool") continue;
     if (message.role !== "assistant") throw new Error(`a model step returned a ${message.role} message`);
     if (message.providerOptions !== undefined) throw new Error("message-level provider options are not stored yet");
     const content =
@@ -146,7 +206,7 @@ export function toStored(
           kind: "tool_call",
           id: p.toolCallId,
           name: p.toolName,
-          inputJson: JSON.stringify(p.input),
+          inputJson: inputJsonOf(p.input),
           ...replay,
         });
       } else throw new Error(`a model step returned a ${p.type} part, which Dovet doesn't store yet`);
@@ -166,7 +226,7 @@ export function fromStored(stored: StoredResponse, target: { provider: string; m
   for (const p of stored.parts) {
     const opts =
       same && p.kind !== "reasoning" && "replay" in p && p.replay !== undefined
-        ? { providerOptions: p.replay.fields as Record<string, Record<string, z.core.util.JSONType>> }
+        ? { providerOptions: providerOptionsOf(p.replay.fields) }
         : {};
     if (p.kind === "text") content.push({ type: "text", text: p.text, ...opts });
     else if (p.kind === "reasoning") {
@@ -175,21 +235,34 @@ export function fromStored(stored: StoredResponse, target: { provider: string; m
       content.push({
         type: "reasoning",
         text: p.summary ?? "",
-        ...(Object.keys(fields).length > 0
-          ? { providerOptions: fields as Record<string, Record<string, z.core.util.JSONType>> }
-          : {}),
+        ...(Object.keys(fields).length > 0 ? { providerOptions: providerOptionsOf(fields) } : {}),
       });
     } else if (p.kind === "tool_call") {
       content.push({
         type: "tool-call",
         toolCallId: id(p.id),
         toolName: p.name,
-        input: JSON.parse(p.inputJson),
+        input: inputOf(p.inputJson),
         ...opts,
       });
     } else throw new Error(`an assistant turn can't hold a ${p.kind} part`);
   }
   return content.length === 0 ? [] : [{ role: "assistant", content }];
+}
+
+function replayIf(ctx: StoredContext, metadata: Record<string, unknown> | undefined): { replay?: ReplayData } {
+  return metadata === undefined ? {} : { replay: replayOf(ctx, metadata) };
+}
+
+/** The provider's own usage object when the package exposes it; otherwise the SDK's normalized one. */
+function rawUsage(usage: { raw?: Record<string, unknown> | undefined }): Record<string, unknown> {
+  return usage.raw ?? z.record(z.string(), z.unknown()).parse(usage);
+}
+
+function versionOf(name: string): string {
+  const version = VERSIONS[name];
+  if (version === undefined) throw new Error(`${name} is not a pinned dependency`);
+  return version;
 }
 
 function toolSet(defs: readonly ToolDef[]): ToolSet {
@@ -226,7 +299,12 @@ export function createSdkAdapter(deps: AdapterDeps) {
             content: results.map((r) => {
               const call = calls.get(r.callId);
               if (call === undefined) throw new Error(`tool result ${r.callId} has no tool call before it`);
-              const value = r.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
+              const value = r.content
+                .map((c) => {
+                  if (c.kind !== "text") throw new Error(`a ${c.kind} in a tool result is not supported yet`);
+                  return c.text;
+                })
+                .join("");
               return {
                 type: "tool-result",
                 toolCallId: call.id,
@@ -244,9 +322,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
         if (rest.length > 0) messages.push({ role: "user", content: rest });
       }
     }
-    const tools = ToolDefs.parse(JSON.parse(header.toolsJson)).sort((a, b) =>
-      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
-    );
+    const tools = sortTools(ToolDefs.parse(JSON.parse(header.toolsJson)));
     return {
       provider: header.provider,
       package: deps.endpoint(header.provider).package,
@@ -265,10 +341,12 @@ export function createSdkAdapter(deps: AdapterDeps) {
     const ctx: StoredContext = {
       provider: call.provider,
       package: call.package,
-      packageVersion: VERSIONS[call.package] ?? "unknown",
+      packageVersion: versionOf(call.package),
       modelId: call.modelId,
     };
-    const model = makeModel(call, deps.endpoint(call.provider), capturingFetch(opts.onRequest));
+    const endpoint = deps.endpoint(call.provider);
+    const secrets = endpoint.apiKey === undefined ? [] : [endpoint.apiKey.reveal()];
+    const model = makeModel(call, endpoint, capturingFetch(opts.onRequest));
     const result = streamText({
       model,
       messages: call.messages as ModelMessage[],
@@ -283,6 +361,8 @@ export function createSdkAdapter(deps: AdapterDeps) {
     });
     const open = new Map<string, { index: number; text: string }>();
     const finished: Array<{ index: number; part: Part }> = [];
+    // The SDK replaces a malformed call's input with {} in its response messages; the raw text exists only here.
+    const rawInputs = new Map<string, string>();
     let next = 0;
     const start = (key: string): number => {
       const index = next++;
@@ -312,8 +392,8 @@ export function createSdkAdapter(deps: AdapterDeps) {
             index: block.index,
             part:
               kind === "text"
-                ? { kind: "text", text: block.text }
-                : { kind: "reasoning", summary: block.text, replay: replayOf(ctx, undefined) },
+                ? { kind: "text", text: block.text, ...replayIf(ctx, p.providerMetadata) }
+                : { kind: "reasoning", summary: block.text, replay: replayOf(ctx, p.providerMetadata) },
           });
           yield { type: "block.done", blockIndex: block.index, kind };
         } else if (p.type === "tool-input-start") {
@@ -329,18 +409,24 @@ export function createSdkAdapter(deps: AdapterDeps) {
             yield { type: "tool_call.start", blockIndex: index, id: p.toolCallId, name: p.toolName };
           }
           open.delete(`tool:${p.toolCallId}`);
-          const inputJson = JSON.stringify(p.input);
+          const inputJson = inputJsonOf(p.input);
+          if (p.invalid === true && typeof p.input === "string") rawInputs.set(p.toolCallId, p.input);
           finished.push({
             index: block.index,
-            part: { kind: "tool_call", id: p.toolCallId, name: p.toolName, inputJson },
+            part: {
+              kind: "tool_call",
+              id: p.toolCallId,
+              name: p.toolName,
+              inputJson,
+              ...replayIf(ctx, p.providerMetadata),
+            },
           });
           yield { type: "block.done", blockIndex: block.index, kind: "tool_call" };
         } else if (p.type === "finish-step") {
-          const raw = (p.usage as { raw?: unknown }).raw;
-          yield { type: "usage", usage: z.record(z.string(), z.unknown()).parse(raw ?? p.usage) };
+          yield { type: "usage", usage: rawUsage(p.usage) };
         } else if (p.type === "error") {
           if (opts.signal.aborted) break;
-          yield { type: "error", error: classifyError(p.error) };
+          yield { type: "error", error: classifyError(p.error, secrets) };
           return;
         } else if (p.type === "abort") {
           yield aborted();
@@ -349,7 +435,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
       }
     } catch (err) {
       if (!opts.signal.aborted) {
-        yield { type: "error", error: classifyError(err) };
+        yield { type: "error", error: classifyError(err, secrets) };
         return;
       }
     }
@@ -361,14 +447,27 @@ export function createSdkAdapter(deps: AdapterDeps) {
     const usage = await result.usage;
     const finishReason = await result.finishReason;
     const raw = await result.rawFinishReason;
-    const stored = toStored(
-      {
-        messages: response.messages,
-        usage: z.record(z.string(), z.unknown()).parse(usage.raw ?? usage),
-        finishReason: raw ?? finishReason,
-      },
-      ctx,
-    );
+    let stored: StoredResponse;
+    try {
+      stored = toStored(
+        { messages: response.messages, usage: rawUsage(usage), finishReason: raw ?? finishReason },
+        ctx,
+      );
+      stored.parts = stored.parts.map((part) => {
+        const rawInput = part.kind === "tool_call" ? rawInputs.get(part.id) : undefined;
+        return rawInput === undefined ? part : { ...part, inputJson: rawInput };
+      });
+    } catch (err) {
+      yield {
+        type: "error",
+        error: {
+          kind: "unknown",
+          retryable: false,
+          message: `the response could not be stored: ${err instanceof Error ? err.message : String(err)}`,
+        },
+      };
+      return;
+    }
     const requestId = response.headers?.["x-request-id"];
     yield {
       type: "done",
