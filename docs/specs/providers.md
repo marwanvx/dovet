@@ -74,6 +74,8 @@ Curated records win over generic ones; user settings win over both.
 
 **Provider presets** (curated records; a provider module only where one is listed above): `anthropic`, `openai`, `google`, `openrouter` (responses), `vercel-ai-gateway` (anthropic-messages for Claude models [SPIKE-23], responses for others), `ollama`, `lmstudio`, `vllm`, `groq`, `deepseek` (chat). For gateways, Dovet **pins routing** (AI Gateway `providerOptions.gateway.only`; OpenRouter `provider.only`) to the provider the user chose and records the provider that actually served each request, so routing never changes silently (principle 1).
 
+**Test provider.** `nvidia` (free API, OpenAI Chat Completions at `https://integrate.api.nvidia.com/v1`, env `NVIDIA_API_KEY`) is a generic models.dev record used only for live smoke tests and fixture recording, never a default; many of its listed models are retired, so test code probes a model before using it ([testing "Free test provider: NVIDIA"](testing.md#free-test-provider-nvidia)).
+
 **Model lifecycle:**
 - **Deprecated model** (catalog `status: deprecated`, or a deprecation header or notice from the provider): a startup and `/model` warning names the retirement date if known and the suggested successor. It still works.
 - **Retired or unknown model** (404 `not_found` / "model does not exist"): the request is not retried. The turn ends with `Model <id> is no longer available at <provider>. Pick another with /model.` and the `/model` picker opens (interactive), or exit code 1 with the same text (headless). Switching starts a new epoch as usual. Nothing switches automatically (principle 1).
