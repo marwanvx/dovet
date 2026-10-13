@@ -2,6 +2,8 @@
 import { z } from "zod";
 import { InstructionReason } from "./parts.ts";
 
+const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
+
 export const EpochStartData = z.object({
   epoch: z.number().int().nonnegative(),
   reason: z.enum(["session-start", "compaction", "model-switch", "thinking-config-change", "repair"]),
@@ -37,6 +39,34 @@ export const InstructionsLoadedData = z.object({
   warnings: z.array(z.string()),
 });
 
+export const UserMessageData = z.object({ text: z.string() });
+
+export const ToolResultData = z.object({
+  callId: z.string().min(1),
+  status: z.enum(["ok", "error", "denied", "interrupted", "timeout"]),
+  output: z.string(),
+});
+
+export const TurnEndData = z.object({
+  reason: z.enum(["end_turn", "interrupted", "cancelled", "error", "budget", "refusal", "max-turns", "crashed"]),
+});
+
+export const PrefixFingerprint = z.object({ tools: Sha256, system: Sha256, messages: z.array(Sha256) });
+
+export const ModelRequestData = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  params: z.object({ effort: z.string().optional(), maxTokens: z.number().int().positive() }),
+  messageCount: z.number().int().nonnegative(),
+  bodySha256: Sha256,
+  fingerprint: PrefixFingerprint,
+});
+
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;
+export type UserMessageData = z.infer<typeof UserMessageData>;
+export type ToolResultData = z.infer<typeof ToolResultData>;
+export type TurnEndData = z.infer<typeof TurnEndData>;
+export type PrefixFingerprint = z.infer<typeof PrefixFingerprint>;
+export type ModelRequestData = z.infer<typeof ModelRequestData>;

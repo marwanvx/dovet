@@ -1,4 +1,14 @@
+export { type BuildEpoch, buildRequest } from "./build.ts";
 export { headerOf, serializeTools, startEpoch } from "./epoch.ts";
+export {
+  type CacheSample,
+  type CacheWarning,
+  cacheReadOf,
+  cacheWarning,
+  type Divergence,
+  firstDivergence,
+  prefixFingerprint,
+} from "./fingerprint.ts";
 export {
   discoverInstructions,
   type FoundInstruction,
