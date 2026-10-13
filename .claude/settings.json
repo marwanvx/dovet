@@ -71,6 +71,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/stop-gate.ts\"",
+            "timeout": 180,
+            "statusMessage": "Type check and lint before finishing"
+          }
+        ]
+      }
     ]
   }
 }

@@ -38,7 +38,7 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 
 ## Claude Code helpers
 
-- `.claude/hooks/no-attribution.ts` blocks commits, PRs and GitHub comments that carry vendor attribution; `.claude/hooks/format.ts` runs Biome on every edited file. `attribution` in `.claude/settings.json` turns off Claude Code's own trailers.
+- `.claude/hooks/no-attribution.ts` blocks commits, PRs and GitHub comments that carry vendor attribution; `.claude/hooks/format.ts` runs Biome on every edited file. `.claude/hooks/stop-gate.ts` won't let a session finish while changed code fails `tsc -b` or Biome; fix what it reports. `attribution` in `.claude/settings.json` turns off Claude Code's own trailers.
 - `bun run auto [n]` (owner's command) builds n tasks unattended, one fresh `claude -p` session each (auto permission mode, Sonnet builds, $20 cap per run); it stops on a failure, a missing progress entry or a task that needs the owner. Each run is logged to `auto-runs.log`. In such a run nobody answers questions: decide, record, ship, stop.
 - `/ship-task <id>` runs build loop steps 8–9 (PR, CI on three OSes, merge, status line, progress entry).
 - The `plan-checker` agent does build loop step 4's fresh check of a milestone's task list; the `reviewer` agent does step 7.
@@ -49,7 +49,7 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 
 - **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
-- **Never use a library or provider API from memory.** Verify against the installed package's types or official docs.
+- **Never use a library or provider API from memory.** Verify against the installed package's types first, then current docs: the Context7 MCP (`resolve-library-id`, then `query-docs`) for library docs, DeepWiki (`ask_wiki_question`) for how an open-source repo works, and the TypeScript LSP to jump to definitions instead of reading whole files.
 - **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
 - **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).
 - TypeScript strict; no `any`; zod-parse every external input; no floating promises; no catch-and-ignore.
@@ -59,5 +59,5 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 - Copied code keeps its license notice (e.g. vendored pi-tui; listed in `THIRD_PARTY_NOTICES`) and the PR says so.
 - **Few comments.** Comments only where the code can't say it: a non-obvious *why*, a workaround, a security-critical line, a `// spec:` tag. Never restate the code, narrate steps, or repeat what a name or type says; a file header is one line at most. Comments cost tokens in every later session (owner rule).
 - No abstraction until three real uses exist. PRs under ~400 changed lines (tests excluded). One task per session.
-- `bun run check` must pass before you report done.
+- `bun run check` must pass before you report done. On the owner's Linux machine, `test/platform/sandbox` fails on `main` too (an AppArmor user-namespace restriction), and so do the SPIKE-5 file-fallback and ripgrep download tests; don't chase those, CI on three OSes decides.
 - Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question you decided yourself (with your answer).
