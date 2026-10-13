@@ -1348,3 +1348,9 @@ How the CI timings were found: the first benchmark printed only totals, hit the 
 - Why not probe: a probe writes a file into the user's volume (or the project) at startup, and a volume's answer differs per mount (a case-sensitive APFS volume, a Windows directory with per-directory case sensitivity enabled, WSL mounts). The only cost of the blanket rule is that two paths differing only in case count as the same on a case-sensitive macOS volume, which errs towards applying a permission rule rather than missing one.
 - Check on each OS: `src/platform/paths.test.ts` creates `Probe.txt` in a temp directory and expects `pROBE.txt` to exist on macOS and Windows and not on Linux (default volumes of the CI runners).
 - Left alone: Windows folds with `toLowerCase()`, not NTFS's own upcase table, so rare non-ASCII letters that NTFS treats as equal may compare as different (the safe direction for a "same file" check is the realpath, which the file tools also use).
+
+## SPIKE-5 `Bun.secrets` in a compiled binary (M1-04, 2026-10-13)
+
+- Result: works on macOS, Windows and Linux with a Secret Service, inside a binary built with Dovet's compile options; `just-secrets` is not needed.
+- Linux without a usable Secret Service throws `ERR_SECRETS_PLATFORM_ERROR` (`libsecret not available`, `Cannot autolaunch D-Bus without X11 $DISPLAY`, or, with gnome-keyring running but no `login` collection, `Object does not exist at path "/org/freedesktop/secrets/collection/login"` on `set` while `get` returns null). Dovet then uses the 0600 file. Other codes (`ERR_SECRETS_ACCESS_DENIED`, `ERR_SECRETS_USER_CANCELED`, `ERR_SECRETS_INTERACTION_NOT_ALLOWED`, …) are shown, never a reason to write a file.
+- Reproduce the Linux keychain case locally: `apt-get install -y gnome-keyring libsecret-1-0`, then run inside `dbus-run-session` after `printf pw | gnome-keyring-daemon --unlock --components=secrets` (what `test/platform/secrets/` does).

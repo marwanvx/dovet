@@ -1,6 +1,4 @@
-// SPIKE-5: `Bun.secrets` inside a compiled binary on each OS, through Dovet's real secret store.
-// Linux runs it twice: with no Secret Service (headless servers, the 0600 file) and, where gnome-keyring is
-// installed (CI), inside a throwaway D-Bus session with an unlocked keyring.
+// SPIKE-5: Dovet's secret store in a compiled binary per OS; Linux also without a Secret Service and with gnome-keyring.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,6 +32,13 @@ const linux = process.platform === "linux";
 const keyring = linux && Bun.which("gnome-keyring-daemon") !== null && Bun.which("dbus-run-session") !== null;
 
 describe("SPIKE-5: secrets in the compiled binary", () => {
+  test.if(linux && process.env.CI !== undefined)(
+    "Linux CI has gnome-keyring and D-Bus, so the keychain case runs",
+    () => {
+      expect(keyring).toBe(true);
+    },
+  );
+
   test.if(!linux)(
     "macOS and Windows store in the OS keychain",
     () => {

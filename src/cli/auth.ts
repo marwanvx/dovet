@@ -46,8 +46,13 @@ export async function authStatus(input: { os: Os; home: string; cwd: string; env
       const hint = envVars.length > 0 ? `, or set ${envVars.join(" or ")}` : "";
       lines.push(`  not connected: run \`dovet auth login ${id}\`${hint}`);
     }
-    for (const { source, used } of sources) {
-      lines.push(`  ${used ? "used" : "shadowed"}: ${describeSource(source, file)}`);
+    for (const { source, used, missing } of sources) {
+      let broken = "";
+      if (missing && source.kind === "settings" && "name" in source) {
+        broken =
+          source.reference === "env" ? `, but ${source.name} is not set` : ", but that keychain entry doesn't exist";
+      }
+      lines.push(`  ${used ? "used" : "shadowed"}: ${describeSource(source, file)}${broken}`);
     }
     for (const w of warnings) lines.push(`  warning: ${w}`);
   }

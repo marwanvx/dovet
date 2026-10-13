@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { readFile, stat } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import {
@@ -44,6 +44,9 @@ const noKeychain: KeychainBackend = {
   set: () => Promise.reject(platformError()),
   delete: () => Promise.reject(platformError()),
 };
+
+// The file fallback is Linux-only; Windows hosts running these tests have no POSIX modes to check.
+const POSIX_MODES = process.platform !== "win32";
 
 const noCommands: CommandRunner = () => Promise.reject(new Error("no command should run"));
 
@@ -92,14 +95,24 @@ describe("secret store", () => {
     const file = await tempFile();
     const store = createSecretStore({ os: "linux", file, keychain: noKeychain });
     expect(await store.set("nvidia", new Secret(KEY))).toBe("file");
-    expect((await stat(file)).mode & 0o777).toBe(0o600);
-    expect((await stat(join(file, ".."))).mode & 0o777).toBe(0o700);
+    if (POSIX_MODES) {
+      expect((await stat(file)).mode & 0o777).toBe(0o600);
+      expect((await stat(join(file, ".."))).mode & 0o777).toBe(0o700);
+    }
     expect(JSON.parse(await readFile(file, "utf8"))).toEqual({ nvidia: KEY });
     const got = await store.get("nvidia");
     expect(got?.location).toBe("file");
     expect(got?.secret.reveal()).toBe(KEY);
     expect(await store.delete("nvidia")).toBe(true);
     expect(await store.get("nvidia")).toBeUndefined();
+  });
+
+  test.if(POSIX_MODES)("an existing data folder is narrowed to the user before the file is written", async () => {
+    const file = await tempFile();
+    await mkdir(join(file, ".."), { mode: 0o755 });
+    await chmod(join(file, ".."), 0o755);
+    await createSecretStore({ os: "linux", file, keychain: noKeychain }).set("nvidia", new Secret(KEY));
+    expect((await stat(join(file, ".."))).mode & 0o777).toBe(0o700);
   });
 
   test("on macOS and Windows a keychain failure is reported, never written to a file", async () => {
@@ -194,6 +207,31 @@ describe("credential resolution", () => {
     expect((await c.resolve("nvidia"))?.secret?.reveal()).toBe(KEY);
     expect((await c.resolve("nvidia"))?.secret?.reveal()).toBe(KEY);
     expect(ran).toEqual(["op read op://dev/nvidia/key"]);
+  });
+
+  test("an empty env var counts as unset", async () => {
+    const c = await setup({ env: { NVIDIA_API_KEY: "" } });
+    expect(await c.resolve("nvidia")).toBeUndefined();
+    expect((await c.status("nvidia")).sources).toEqual([]);
+  });
+
+  test("a failed cmd: is tried again on the next request", async () => {
+    let calls = 0;
+    const c = await setup({
+      reference: "cmd:get-key",
+      run: () => Promise.resolve(++calls === 1 ? { exitCode: 1, stdout: "" } : { exitCode: 0, stdout: KEY }),
+    });
+    await expect(c.resolve("nvidia")).rejects.toThrow(CredentialError);
+    expect((await c.resolve("nvidia"))?.secret?.reveal()).toBe(KEY);
+  });
+
+  test("status marks a settings reference that points at nothing, as resolving would fail", async () => {
+    for (const reference of ["env:WORK_KEY", "keychain:nope"]) {
+      const c = await setup({ reference, env: { NVIDIA_API_KEY: KEY } });
+      const [first, second] = (await c.status("nvidia")).sources;
+      expect(first).toMatchObject({ used: true, missing: true });
+      expect(second).toEqual({ source: { kind: "env", name: "NVIDIA_API_KEY" }, used: false });
+    }
   });
 
   // spec: AC-CLI-17

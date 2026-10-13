@@ -1,12 +1,11 @@
 import { Secret } from "./secret.ts";
 import type { SecretLocation, SecretStore } from "./store.ts";
 
-/** A provider's auth data from its registry record. */
 export type ProviderAuth = {
   id: string;
   /** Standard env vars holding an API key, in the order they are tried. */
   envVars: readonly string[];
-  /** Env vars the provider rejects when more than one is set (Anthropic: API key and auth token, 401). */
+  /** Env vars the provider rejects when more than one is set (a 401 from the API). */
   exclusiveEnvVars?: readonly string[];
 };
 
@@ -17,7 +16,11 @@ export type CredentialSource =
   | { kind: "env"; name: string };
 
 export type Resolved = { secret?: Secret; source: CredentialSource; warnings: string[] };
-export type CredentialStatus = { sources: Array<{ source: CredentialSource; used: boolean }>; warnings: string[] };
+export type CredentialStatus = {
+  /** `missing`: a settings reference to an env var or keychain entry that doesn't exist, so resolving fails. */
+  sources: Array<{ source: CredentialSource; used: boolean; missing?: true }>;
+  warnings: string[];
+};
 export type CommandRunner = (
   command: string,
   signal: AbortSignal,
@@ -33,7 +36,6 @@ export class CredentialError extends Error {
 export type CredentialsDeps = {
   store: SecretStore;
   env: Readonly<Record<string, string | undefined>>;
-  /** Runs a `cmd:` reference through the user's shell; the composition root decides which shell. */
   runCommand: CommandRunner;
   commandTimeoutMs?: number;
   /** `reference` is `providers.<id>.apiKey` from merged settings, which refuse `cmd:` outside user settings. */
@@ -138,16 +140,27 @@ export function createCredentials(deps: CredentialsDeps): Credentials {
 
     async status(id) {
       const { auth, reference } = providerOf(id);
-      const found: CredentialSource[] = [];
+      const found: CredentialStatus["sources"] = [];
       if (reference !== undefined) {
         const parsed = parseReference(reference);
-        if (parsed.kind === "none" || parsed.kind === "cmd") found.push({ kind: "settings", reference: parsed.kind });
-        else found.push({ kind: "settings", reference: parsed.kind, name: parsed.arg });
+        if (parsed.kind === "none" || parsed.kind === "cmd") {
+          found.push({ source: { kind: "settings", reference: parsed.kind }, used: true });
+        } else {
+          const exists =
+            parsed.kind === "env"
+              ? envValue(parsed.arg) !== undefined
+              : (await deps.store.get(parsed.arg)) !== undefined;
+          const source = { kind: "settings", reference: parsed.kind, name: parsed.arg } as const;
+          found.push(exists ? { source, used: true } : { source, used: true, missing: true });
+        }
       }
       const login = await deps.store.get(id);
-      if (login !== undefined) found.push({ kind: "login", location: login.location });
-      for (const name of auth.envVars) if (envValue(name) !== undefined) found.push({ kind: "env", name });
-      return { sources: found.map((source, i) => ({ source, used: i === 0 })), warnings: warnings(auth) };
+      if (login !== undefined)
+        found.push({ source: { kind: "login", location: login.location }, used: found.length === 0 });
+      for (const name of auth.envVars) {
+        if (envValue(name) !== undefined) found.push({ source: { kind: "env", name }, used: found.length === 0 });
+      }
+      return { sources: found, warnings: warnings(auth) };
     },
   };
 }
