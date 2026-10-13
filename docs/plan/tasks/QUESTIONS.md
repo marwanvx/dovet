@@ -73,6 +73,8 @@ Needed only before the first public release (owner, 2026-10-12: not now); buildi
 ### Q13 (owner request, 2026-10-12): antislop skills in the repo
 - **What's missing:** the skills ask "during or after?" at the start of every session and keep the answer in a per-machine file (`~/.config/antislop/settings.json`), which a fresh cloud session doesn't have. The owner doesn't answer questions about tools.
 - **Answer:** installed all six skills as project skills (`.claude/skills/`, the same copy the antislop installer makes; its MCP contrast server is not enabled). Mode is fixed to `during` in `AGENTS.md`, so no session asks. To update: copy the `skills/` folders from the upstream repository over `.claude/skills/` and change the version in `AGENTS.md`.
+- **Override (owner, 2026-10-14):** remove antislop from the project; it was a trial.
+- **Override applied:** the six skills, their license file and the `AGENTS.md` section are removed, and the user-level antislop plugin is disabled for this project in `.claude/settings.json`.
 
 ### Q14 (M0-10): what `dovet update` decides that the spec left open
 - **What's missing:** architecture "Distribution" says `dovet update` downloads the latest release and switches an atomic pointer with the old version kept, but not how the latest version is found, what happens when the server offers an older one, where the rollback target is stored, or how many old versions stay.

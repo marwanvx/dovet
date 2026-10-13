@@ -84,5 +84,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "antislop@anti-slop": false
   }
 }

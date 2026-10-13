@@ -26,16 +26,6 @@ It prints where the project stands (owner overrides to apply, the last progress 
 
 Code, tests and files go where `docs/specs/architecture.md` "Repository layout" says.
 
-## antislop skills
-
-Six antislop skills (MIT, https://github.com/miqdadbadjuber/anti-slop, v3.2.20; license in `.claude/skills/ANTISLOP-LICENSE`) are installed in `.claude/skills/`. Read the skill file directly when the work matches:
-- Core filter, read first: `.claude/skills/antislop/SKILL.md`
-- Code comments: `.claude/skills/antislop-code/SKILL.md` (use it with the "Few comments" rule below)
-- Copy and text (docs, CLI messages, README): `.claude/skills/antislop-copywriting/SKILL.md`
-- People, UI, mobile layout (docs site, install page): `antislop-human`, `antislop-ui`, `antislop-layoutmobile` in the same folder
-
-Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `antislop active: during (project instruction).` once. If antislop conflicts with a spec or this file, the spec and this file win.
-
 ## Claude Code helpers
 
 - `.claude/hooks/no-attribution.ts` blocks commits, PRs and GitHub comments that carry vendor attribution; `.claude/hooks/format.ts` runs Biome on every edited file. `.claude/hooks/stop-gate.ts` won't let a session finish while changed code fails `tsc -b` or Biome; fix what it reports. `attribution` in `.claude/settings.json` turns off Claude Code's own trailers.
