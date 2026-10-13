@@ -60,6 +60,19 @@ A test must prove the feature works, not just turn CI green:
 The owner has a free NVIDIA API key (`NVIDIA_API_KEY`, 2026-10-13). It is the provider for **live smoke tests and for recording fixtures** when a test needs a real model without spending: base URL `https://integrate.api.nvidia.com/v1`, OpenAI Chat Completions, `@ai-sdk/openai-compatible`, models.dev record `nvidia` (docs: https://docs.api.nvidia.com/nim/). Keep the scripted model for every PR; use this provider for nightly or on-demand runs only (about 40 requests a minute; free limits and models change).
 
 - **The model list is not a list of working models.** `GET /v1/models` includes retired and outdated models that fail (a retired Qwen endpoint is one known case), and models.dev's `tool_call` flag is catalog data, not a live check. Before relying on a model, probe it: one tiny chat request and one tool-call request, `tool_choice: "auto"` ([ADR-14](../plan/decisions.md)). Record the working set in the test's own fixture or config, with the date, and re-probe when a run fails with 404 or "function not found".
+- **Starting group (owner's list, 2026-10-13; picked for recency and tool calling, not benchmarked; the probe decides).** The endpoint's other models are retired, older than 2026, not chat models (embeddings, safety, vision, parsing), or older code models without tool calls.
+
+  | Tier | Model id | Released | Why |
+  |---|---|---|---|
+  | Strong, slow | `moonshotai/kimi-k3` | 2026-07 | Newest Kimi, 1M context |
+  | Strong, slow | `z-ai/glm-5.3` | 2026-08 | Newest GLM, 1M context |
+  | Strong, slow | `deepseek-ai/deepseek-v4.1-flash` | 2026-09 | Newest DeepSeek, 1M context |
+  | Strong, slow | `nvidia/nemotron-3-ultra-550b-a55b` | 2026-06 | Largest NVIDIA model |
+  | Fast | `z-ai/glm-5.3-flash` | 2026-08 | Quick check of the GLM family |
+  | Fast | `nvidia/nemotron-3.5-lightning-30b-a3b` | 2026-08 | Small, built for speed |
+  | Fast | `poolside/laguna-xs-2.1` | 2026-07 | Coding-focused lab; 16k output cap |
+
+  Run the fast tier first and the strong tier on a schedule: they are slow because they reason before answering. Raise the stream-idle timeout for them rather than treating a slow first token as a failure. Optional extras: `google/gemma-4-31b-it` (small-model check), `moonshotai/kimi-k2.6` (fallback if k3 is gone).
 - **Cover several models on purpose:** the live smoke test runs the same scenarios (plain answer, one tool call, a tool error the model must recover from, a streamed long answer) on at least one small and one large working model, so differences between model families show up. Use these runs for SPIKE-13 and SPIKE-21 evidence too.
 - **Never block a PR on it.** A failure caused by a retired model, a rate limit (429) or an outage is reported and the model skipped, not treated as a Dovet bug; a failure that reproduces on a working model is a Dovet bug.
 - **The key** is a secret: environment variable only, never in a fixture, log, receipt or PR (fixtures are recorded with secrets stripped). The sandbox host `integrate.api.nvidia.com` must be allowed.
