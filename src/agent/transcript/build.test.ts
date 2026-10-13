@@ -21,7 +21,6 @@ import {
   firstDivergence,
   headerOf,
   prefixFingerprint,
-  serializeTools,
 } from "./index.ts";
 
 const projects: TempProject[] = [];
@@ -41,7 +40,7 @@ const epochStart: EpochStartData = {
   provider: "nvidia",
   model: MODEL,
   systemText: scenario.systemText,
-  toolsJson: serializeTools(scenario.tools),
+  toolsJson: JSON.stringify(scenario.tools),
   thinking: { mode: "off" },
   promptVersion: sha("test"),
 };
@@ -161,6 +160,7 @@ describe("buildRequest", () => {
         onRequest: (r) => bodies.push(r.body),
       }));
       expect(sha(bodies[0] ?? "")).toBe(recorded.bodySha256);
+      expect(bodies[0]).toBe((fx.exchanges[i] as Fixture["exchanges"][number]).request.body);
       expect(prefixFingerprint(call)).toEqual(recorded.fingerprint);
     }
   });
@@ -283,6 +283,20 @@ describe("buildRequest", () => {
     });
   });
 
+  // spec: AC-PROV-02
+  test("tool-call ids reused by a later response don't reorder an earlier group", () => {
+    const call = (id: string) => ({ kind: "tool_call" as const, id, name: "read", inputJson: "{}" });
+    const turn = (first: string, second: string, t: number) => [
+      ev("model.response", stored([call("call_0"), call("call_1")], "tool_calls"), t),
+      ev("tool.result", { callId: second, status: "ok", output: "2" }, t),
+      ev("tool.result", { callId: first, status: "ok", output: "1" }, t),
+    ];
+    const one = [ev("user.message", { text: "go" }), ...turn("call_0", "call_1", 1)];
+    const before = buildRequest(one, epoch).transcript;
+    const after = buildRequest([...one, ...turn("call_1", "call_0", 1)], epoch).transcript;
+    expect(after.slice(0, before.length)).toEqual(before);
+  });
+
   // spec: AC-LOG-02
   test("a result that arrives after a request began a new message", () => {
     const events = [
@@ -337,6 +351,11 @@ describe("cache monitor", () => {
     const w = cacheWarning({ turn: 4, cacheReadTokens: 8000 }, { turn: 5, cacheReadTokens: 0 });
     expect(w?.text).toContain("8000");
     expect(w?.invariant).toEqual({ kind: "cache-read-drop", turn: 5, previous: 8000, current: 0 });
+  });
+
+  // spec: AC-CTX-04
+  test("the first warning is possible at turn 4", () => {
+    expect(cacheWarning({ turn: 3, cacheReadTokens: 8000 }, { turn: 4, cacheReadTokens: 0 })).not.toBeNull();
   });
 
   // spec: AC-CTX-04

@@ -6,7 +6,7 @@ import type { PrefixFingerprint } from "../../schema/index.ts";
 const sha256 = (value: unknown): string =>
   new Bun.CryptoHasher("sha256").update(JSON.stringify(value) ?? "null").digest("hex");
 
-/** SHA-256 of the tools, the leading system message and each message after it, as rendered. */
+/** Hashes the call as rendered, before the package's wire conversion. */
 export function prefixFingerprint(call: Pick<SdkCall, "tools" | "messages">): PrefixFingerprint {
   if (!Array.isArray(call.messages)) throw new Error("a rendered call has a message list");
   const messages: unknown[] = call.messages;
@@ -36,7 +36,7 @@ const Usage = z.object({
   prompt_tokens_details: z.object({ cached_tokens: z.number().nonnegative().optional() }).optional(),
 });
 
-/** Cache-read tokens from a raw usage object (Anthropic or OpenAI shape); undefined when the provider reports none. */
+/** Undefined: the provider reports no cache field. */
 export function cacheReadOf(usage: Record<string, unknown>): number | undefined {
   const parsed = Usage.safeParse(usage);
   if (!parsed.success) return undefined;
@@ -54,7 +54,7 @@ export function cacheWarning(prev: CacheSample | undefined, now: CacheSample): C
   const previous = prev?.cacheReadTokens;
   const current = now.cacheReadTokens;
   if (now.turn <= 3 || now.expectedMiss === true || previous === undefined || current === undefined) return null;
-  if (previous === 0 || current >= previous / 2) return null;
+  if (current >= previous / 2) return null;
   return {
     text: `Prompt cache reads fell from ${previous} to ${current} tokens. Run /why --cache to see the first block that changed.`,
     invariant: { kind: "cache-read-drop", turn: now.turn, previous, current },

@@ -30,12 +30,14 @@ function cancelledTurns(events: readonly EventEnvelope[]): Set<number> {
 export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch): RenderInput {
   const cancelled = cancelledTurns(events);
   const items: TranscriptItem[] = [];
-  const callOrder = new Map<string, number>();
+  let lastCalls = new Map<string, number>();
+  const groupCalls = new Map<TranscriptItem, Map<string, number>>();
   let open: Extract<TranscriptItem, { kind: "user" }> | null = null;
   const openGroup = (): Part[] => {
     if (open === null) {
       open = { kind: "user", parts: [] };
       items.push(open);
+      groupCalls.set(open, lastCalls);
     }
     return open.parts;
   };
@@ -47,7 +49,8 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
     } else if (e.type === "model.response") {
       const response = normalized(StoredResponse.parse(e.data));
       if (response !== null) {
-        for (const p of response.parts) if (p.kind === "tool_call") callOrder.set(p.id, callOrder.size);
+        const ids = response.parts.flatMap((p) => (p.kind === "tool_call" ? [p.id] : []));
+        lastCalls = new Map(ids.map((id, i) => [id, i]));
         items.push({ kind: "assistant", stored: response });
       }
       open = null;
@@ -68,8 +71,9 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
   }
   for (const item of items) {
     if (item.kind !== "user") continue;
+    const order = groupCalls.get(item);
     const rank = (p: Part): number =>
-      p.kind === "tool_result" ? (callOrder.get(p.callId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+      p.kind === "tool_result" ? (order?.get(p.callId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
     const results = item.parts.filter((p) => p.kind === "tool_result").sort((a, b) => rank(a) - rank(b));
     if (results.length > 0) item.parts = [...results, ...item.parts.filter((p) => p.kind !== "tool_result")];
   }

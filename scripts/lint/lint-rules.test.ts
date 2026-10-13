@@ -119,3 +119,21 @@ describe("process environment and directory", () => {
     expect(r.code).toBe(0);
   });
 });
+
+describe("transcript builder determinism", () => {
+  test.each([
+    ["new Date", "export const t = () => new Date(0);\n"],
+    ["Date.now", "export const t = () => Date.now();\n"],
+    ["Math.random", "export const t = () => Math.random();\n"],
+    ["crypto.randomUUID", "export const t = () => crypto.randomUUID();\n"],
+    ["process.env", "export const t = () => process.env.HOME;\n"],
+  ])("%s in the builder fails the lint", (_name, text) => {
+    const r = lint({ "src/agent/transcript/build.ts": text });
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("transcript builder is pure");
+  });
+
+  test("other transcript files may use them", () => {
+    expect(lint({ "src/agent/transcript/system-prompt.ts": "export const t = () => new Date(0);\n" }).code).toBe(0);
+  });
+});
