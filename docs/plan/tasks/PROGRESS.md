@@ -188,3 +188,12 @@ Learned:
 - Re-recording changes fixture bytes (new ids and text); tests compare against whatever was recorded, so re-record all scenarios together with `bun run record`.
 - Decisions in QUESTIONS Q24 (refusal category in `stored.finishReason`, raw input for invalid calls, what counts as a network error, no printing).
 Next: M1-07 (NVIDIA settings: reasoning, effort and tool calls over Chat Completions).
+
+## 2026-10-13 — M1-07 NVIDIA settings: reasoning, effort and tool calls over Chat Completions
+Done: the `nvidia` record lives in `src/ai/providers.jsonc` (parsed by `src/ai/registry.ts`; provider auth is derived from it). The adapter sends `reasoning_effort` only to models whose catalog entry (in tests: the probe) says they reason, mapped to the nearest lower level, and reports the level sent in `SdkCall.effort`. `reasoningReplay: in-tool-loop` drops reasoning from answers before the current user turn. NVIDIA's 410 for a retired model is `not_found`, with its problem `detail`. `test/helpers/nvidia-probe.ts` (chat plus one tool call) skips retired models, 429s, in-stream `ResourceExhausted` and outages. `bun run probe` saves `test/fixtures/nvidia/models.json`, and `bun run record` probes first. A live session (effort, reasoning, two parallel calls, an error result, a follow-up) replays byte for byte. PR: #42 (merged, CI green on Linux, macOS and Windows after one re-run). The fresh reviewer's major is fixed: text queued after tool results had dropped the loop's reasoning.
+Learned:
+- NVIDIA's endpoint accepts `reasoning_effort` for every model; a non-reasoning model (`google/gemma-4-31b-it`) starts thinking when it gets one. GLM's reasoning before tool calls varies between runs and effort levels (none at `low`/`high` in some runs), so the session fixture uses `medium`; re-record until the assertion "the recording has …" passes.
+- Probe 2026-10-13: glm-5.3-flash, nemotron-3.5-lightning, kimi-k3, glm-5.3 and nemotron-3-ultra work. laguna-xs-2.1 was rate-limited (ResourceExhausted), and deepseek-v4.1-flash gave no answer in 3 minutes.
+- Windows CI: `test/platform/shell-parse/shell-parse.test.ts` `afterAll` failed once with EBUSY removing its temp dir (the re-run passed). If it repeats, give its cleanup longer retries.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25.
+Next: M1-08 (adapter-contract proof for three packages).
