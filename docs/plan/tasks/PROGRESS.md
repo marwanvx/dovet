@@ -254,3 +254,20 @@ Learned:
 - Claude Code setup merged (#48): attribution-guard and Biome hooks, `/ship-task`, `plan-checker`.
 - Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28, Q29.
 Next: M1-11 (instruction files).
+
+## 2026-10-14 — M1-11 Instruction files
+Done: `src/agent/transcript/instruction-files.ts` (`discoverInstructions`) finds and loads instruction files.
+- It walks from the user level, then the filesystem root down to the cwd, then `--add-dir` folders; CLAUDE.md and AGENTS.md families per `instructions.files`; rules without `paths` load at launch.
+- Imports are inlined (4 hops, cycles broken), comments are stripped, and files over 4 MiB are skipped.
+- Dedupe uses the canonical path plus device and inode. Exclusions, injected policy callbacks and the one-time external-import approval (`src/store/config/external-imports.ts`) all run before a byte is read.
+- `touch`/`touchMentions` give lazy subdirectory and path-rule loads as `lazy-instructions` parts. `resumeUpdates` re-sends launch files that changed while the session was closed. `InstructionsLoadedData` is the `instructions.loaded` schema.
+
+PR: #51 (merged, CI green on Linux, macOS and Windows). Two fresh reviews. Round 1's majors are fixed: network paths were stat'ed before the refusal, and launch files were lost on resume.
+Learned:
+- Policy (`readDenied`, `blockReadsOutsideWorkingDirectories`) and the approval dialog (`askExternal`) are callbacks. M1-23 and M1-25 supply the real ones; `/rules` reads `found`.
+- For M1-25: watch `set.files` plus each `LazyLoad.files` with `changedInstructions`. It re-reads raw content, while launch content is processed (imports inlined, comments stripped), so a changed file is re-sent raw. Imported files aren't watched mid-session (M1-10 design). Write `launchEvent` and lazy `event`s as `instructions.loaded`.
+- The symlink cases (AC-CTX-15/16) are skipped on Windows; the drive-letter and UNC tests run only there.
+- Bun has YAML (`Bun.YAML.parse`, which throws SyntaxError) and brace-capable `Bun.Glob` built in, so no new dependency.
+- Git on this machine has no identity; commits use `GIT_AUTHOR_*`/`GIT_COMMITTER_*` with the owner's noreply address, as in earlier commits.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28, Q29, Q30.
+Next: M1-12 (transcript builder determinism and cache monitoring).
