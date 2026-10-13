@@ -152,7 +152,7 @@ const oneLine = (text: unknown, max = 110): string => {
 function describeTool(name: string, input: Record<string, unknown>, root: string): string {
   const path = (key: string): string => {
     const p = typeof input[key] === "string" ? input[key] : "";
-    return p.startsWith(root) ? relative(root, p) : p;
+    return (p.startsWith(root) ? relative(root, p) : p).replaceAll("\\", "/");
   };
   if (name === "Read") return `read   ${path("file_path")}`;
   if (name === "Edit" || name === "MultiEdit") return `edit   ${path("file_path")}`;
