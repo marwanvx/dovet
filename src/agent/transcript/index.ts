@@ -1,8 +1,6 @@
 export { headerOf, serializeTools, startEpoch } from "./epoch.ts";
 export {
   changedInstructions,
-  type Delivery,
-  deliverInstruction,
   type InstructionPart,
   instructionsUpdated,
   type LoadedInstruction,

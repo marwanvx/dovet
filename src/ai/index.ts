@@ -19,6 +19,7 @@ export {
   type Endpoint,
   type FetchFunction,
   fromStored,
+  instructionDelivery,
   sortTools,
   toStored,
 } from "./sdk-adapter.ts";

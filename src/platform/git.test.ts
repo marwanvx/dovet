@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type GitCall, readGitHead, runHardenedGit } from "./git.ts";
+import { GIT_HARDENING_ARGS, type GitCall, hardenedGitEnv, readGitHead, runHardenedGit } from "./git.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -127,23 +127,66 @@ describe("AC-CLI-14: Dovet's own git calls", () => {
       git(repo, "config", "credential.helper", `!${markerCommand(helperMarker)}`);
       const askMarker = join(repo, "..", `${Date.now()}-ask`);
       dirs.push(askMarker);
+      const envAskMarker = join(repo, "..", `${Date.now()}-env-ask`);
+      dirs.push(envAskMarker);
+      const askEnv: Record<string, string> = {};
       if (process.platform !== "win32") {
-        const ask = join(tempDir(), "ask.sh");
-        writeFileSync(ask, `#!/bin/sh\ntouch '${askMarker}'\n`);
-        chmodSync(ask, 0o755);
-        git(repo, "config", "core.askPass", ask);
+        const script = (marker: string): string => {
+          const path = join(tempDir(), "ask.sh");
+          writeFileSync(path, `#!/bin/sh\ntouch '${marker}'\n`);
+          chmodSync(path, 0o755);
+          return path;
+        };
+        git(repo, "config", "core.askPass", script(askMarker));
+        askEnv.GIT_ASKPASS = script(envAskMarker);
+        askEnv.SSH_ASKPASS = script(envAskMarker);
       }
-      const call: GitCall = { git: gitPath, cwd: repo, env: { ...env, GCM_INTERACTIVE: "always" } };
+      const call: GitCall = { git: gitPath, cwd: repo, env: { ...env, ...askEnv, GCM_INTERACTIVE: "always" } };
 
       const r = await runHardenedGit(call, ["ls-remote", `http://127.0.0.1:${server.port}/repo.git`]);
 
       expect(r.code).not.toBe(0);
       expect(existsSync(helperMarker)).toBe(false);
       expect(existsSync(askMarker)).toBe(false);
+      expect(existsSync(envAskMarker)).toBe(false);
     } finally {
       await server.stop(true);
     }
   }, 60_000);
+});
+
+describe("hardening", () => {
+  // spec: AC-CLI-14
+  test("the environment drops GIT_* and askpass variables and sets the no-fetch, no-prompt, no-lock values", () => {
+    const env = hardenedGitEnv({
+      PATH: "/bin",
+      GIT_TRACE: "1",
+      git_trace2_event: "/tmp/t",
+      GIT_ASKPASS: "/x",
+      GIT_DIR: "/elsewhere",
+      SSH_ASKPASS: "/y",
+      GCM_INTERACTIVE: "always",
+      UNSET: undefined,
+    });
+    expect(env).toEqual({
+      PATH: "/bin",
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_NO_LAZY_FETCH: "1",
+      GIT_TERMINAL_PROMPT: "0",
+      GCM_INTERACTIVE: "never",
+    });
+  });
+
+  // spec: AC-CLI-14
+  test("every call takes no optional locks and resets credential helpers and askpass", () => {
+    expect(GIT_HARDENING_ARGS.slice(0, 5)).toEqual([
+      "--no-optional-locks",
+      "-c",
+      "credential.helper=",
+      "-c",
+      "core.askPass=",
+    ]);
+  });
 });
 
 describe("readGitHead", () => {

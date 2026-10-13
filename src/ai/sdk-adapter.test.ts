@@ -12,7 +12,14 @@ import {
   startFixtureServer,
 } from "../../test/helpers/index.ts";
 import type { StoredResponse } from "../schema/index.ts";
-import { capturingFetch, createSdkAdapter, type ProviderRequest, type RenderInput, type StreamEvent } from "./index.ts";
+import {
+  capturingFetch,
+  createSdkAdapter,
+  instructionDelivery,
+  type ProviderRequest,
+  type RenderInput,
+  type StreamEvent,
+} from "./index.ts";
 import { endpointOf, providerRecord } from "./registry.ts";
 
 const servers: Array<{ stop(): Promise<void> }> = [];
@@ -132,6 +139,18 @@ describe("render", () => {
 });
 
 // spec: providers "Effort mapping" (chat fallback: quirk effortField)
+describe("mid-epoch instructions per protocol (context §4)", () => {
+  test("a developer message on openai-responses; a marked text block on chat and interactions; plain on messages", () => {
+    expect(instructionDelivery("openai-responses")).toEqual({ form: "system-message" });
+    expect(instructionDelivery("openai-chat")).toEqual({ form: "reminder-block", prefix: "[Dovet instruction] " });
+    expect(instructionDelivery("google-interactions")).toEqual({
+      form: "reminder-block",
+      prefix: "[Dovet instruction] ",
+    });
+    expect(instructionDelivery("anthropic-messages")).toEqual({ form: "reminder-block", prefix: "" });
+  });
+});
+
 describe("effort", () => {
   const s = scenario("text");
   const first: RenderInput["transcript"] = [{ kind: "user", parts: [{ kind: "text", text: "hi" }] }];
