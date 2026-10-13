@@ -24,8 +24,19 @@ async function checks(): Promise<Check[]> {
 }
 
 const deadline = Date.now() + 60 * 60 * 1000;
+let failures = 0;
 for (;;) {
-  const list = await checks();
+  let list: Check[];
+  try {
+    list = await checks();
+    failures = 0;
+  } catch (e) {
+    // A network blip shouldn't end the wait; ten in a row is a real outage.
+    if (++failures >= 10) throw e;
+    console.error(`retrying: ${e instanceof Error ? e.message.split("\n")[0] : String(e)}`);
+    await Bun.sleep(30_000);
+    continue;
+  }
   const pending = list.filter((c) => c.bucket === "pending");
   if (list.length > 0 && pending.length === 0) {
     for (const c of list) console.log(`${c.bucket.padEnd(8)} ${c.name}  ${c.link}`);
