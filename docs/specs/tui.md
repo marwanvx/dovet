@@ -18,7 +18,7 @@
   … scrollback: previous turns …
 
 › fix the failing auth test                                  (user message)
-  ▸ harness: Plan mode is now off                            (injected instruction, dim)
+  ▸ dovet: Plan mode is now off                            (injected instruction, dim)
   ◆ thinking: checking how session tokens are validated…     (reasoning summary, dim, collapsible)
   ● Read src/auth/session.ts (212 lines)                     (tool call, one line, expandable)
   ● Edit src/auth/session.ts  +4 −1                          (expandable diff)

@@ -118,11 +118,11 @@ Delivery per protocol ([providers](providers.md)):
 | anthropic-messages (supported models) | `{role:"system", content:"…"}` appended after the latest user/tool_result message |
 | anthropic-messages (others) | text block appended after the `tool_result` blocks in the same user message (or in the next user message) |
 | openai-responses | input message `role:"developer"` |
-| google-interactions / openai-chat | text part in the next user message, prefixed `[Harness instruction]` |
+| google-interactions / openai-chat | text part in the next user message, prefixed `[Dovet instruction]` |
 
-**Reserved markers can't be forged:** Dovet's own markers (`[Harness instruction]`, the `▸ harness:` label and any `<dovet-…>` tag) are escaped wherever they appear in content Dovet didn't author: instruction files, tool results, fetched pages, hook output (v0.2). Invisible characters (zero-width, bidi overrides) in instruction files and tool results are shown visibly in the UI. Text can't impersonate the harness.
+**Reserved markers can't be forged:** Dovet's own markers (`[Dovet instruction]`, the `▸ dovet:` label and any `<dovet-…>` tag) are escaped wherever they appear in content Dovet didn't author: instruction files, tool results, fetched pages, hook output (v0.2). Invisible characters (zero-width, bidi overrides) in instruction files and tool results are shown visibly in the UI. Text can't impersonate the harness.
 
-Injected instructions are **never removed** later (removal = history edit). Every injection is a `system.injected` event and is visible in the transcript UI as a dim `▸ harness:` line. Nothing the model sees is hidden from the user.
+Injected instructions are **never removed** later (removal = history edit). Every injection is a `system.injected` event and is visible in the transcript UI as a dim `▸ dovet:` line. Nothing the model sees is hidden from the user.
 
 ## 5. What forces a new epoch
 
@@ -208,7 +208,7 @@ No earlier assistant turns and no earlier thinking blocks are carried over. Keep
 - [ ] **AC-CTX-14** All caching checklist tests pass.
 - [ ] **AC-CTX-15** Dedupe: a CLAUDE.md reached via root walk, an import, a symlink, `.claude/` and an `--add-dir` inside the project appears once; after compaction and after resume it isn't attached again; on Windows a drive-letter case difference doesn't duplicate it.
 - [ ] **AC-CTX-16** Policy: an AGENTS.md symlinked to a file outside the working directories needs external-import approval and is skipped under `blockReadsOutsideWorkingDirectories`; `instructions.exclude` hides a matching file and `/rules` lists it as excluded; a `paths:` value with 30 brace groups loads within budget with a warning.
-- [ ] **AC-CTX-17** Lazy triggers: creating a file via Write in `pkg/` loads `pkg/AGENTS.md` once; `@pkg/x.ts` in a user message loads it; an instruction file containing `[Harness instruction]` and a `<dovet-…>` tag reaches the model escaped.
+- [ ] **AC-CTX-17** Lazy triggers: creating a file via Write in `pkg/` loads `pkg/AGENTS.md` once; `@pkg/x.ts` in a user message loads it; an instruction file containing `[Dovet instruction]` and a `<dovet-…>` tag reaches the model escaped.
 - [ ] **AC-CTX-18** With default settings, a commit made by the agent carries no attribution trailer; with `git.attribution: "trailer"` it does, unless AGENTS.md says not to; the receipt lists the commit either way.
 - [ ] **AC-CTX-19** After compaction, the first message of the new epoch contains every earlier user message verbatim (oldest truncated only past the budget), the summary and the Dovet facts (incl. the last 5 tool actions and the task list); the environment block shows the current git branch.
 - [ ] **AC-CTX-20** Forced compaction on a transcript 20% over the window succeeds via the reduced summary request; with the summary model failing twice, the mechanical fallback is used and announced; a last response reporting zero usage still triggers auto-compaction on time; a summary containing `$&` and `$1` is inserted unchanged.

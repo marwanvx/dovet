@@ -415,6 +415,10 @@ export function createSdkAdapter(deps: AdapterDeps) {
     const target = { provider: header.provider, model: header.model };
     const endpoint = deps.endpoint(header.provider);
     const replayReasoning = endpoint.quirks?.reasoningReplay ?? "always";
+    const protocol = PROTOCOLS[endpoint.package];
+    // context §4: in a user message, harness text is marked so it can't pass for the user's words.
+    const instructionPrefix =
+      protocol === "openai-chat" || protocol === "google-interactions" ? "[Dovet instruction] " : "";
     const turnStart = lastTurnStart(input.transcript);
     const calls = new Map<string, { id: string; name: string }>();
     const messages: ModelMessage[] = [{ role: "system", content: header.systemText }];
@@ -456,7 +460,8 @@ export function createSdkAdapter(deps: AdapterDeps) {
         }
         const rest = item.parts.flatMap((p) => {
           if (p.kind === "tool_result") return [];
-          if (p.kind === "text" || p.kind === "instruction") return [{ type: "text" as const, text: p.text }];
+          if (p.kind === "text") return [{ type: "text" as const, text: p.text }];
+          if (p.kind === "instruction") return [{ type: "text" as const, text: `${instructionPrefix}${p.text}` }];
           throw new Error(`a ${p.kind} part in a prompt is not supported yet`);
         });
         if (rest.length > 0) messages.push({ role: "user", content: rest });

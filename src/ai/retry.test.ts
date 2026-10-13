@@ -264,7 +264,7 @@ describe("retry policy", () => {
       {
         role: "user",
         content:
-          "Your previous response was cut off by a connection error after the blocks above. Continue from there.",
+          "[Dovet instruction] Your previous response was cut off by a connection error after the blocks above. Continue from there.",
       },
     ]);
     expect(r.events.at(-1)?.type).toBe("done");
@@ -315,7 +315,7 @@ describe("retry policy", () => {
       {
         role: "user",
         content:
-          "Your previous response was cut off by a connection error after the blocks above. Continue from there.",
+          "[Dovet instruction] Your previous response was cut off by a connection error after the blocks above. Continue from there.",
       },
     ]);
   });

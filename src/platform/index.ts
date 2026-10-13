@@ -4,6 +4,8 @@ export { createPlatformCore, type PlatformCore } from "./core.ts";
 export { type Dirs, resolveDirs } from "./dirs.ts";
 export { isErrno } from "./errno.ts";
 export { createExecResolver, type ExecResolver } from "./exec.ts";
+export { GIT_HARDENING_ARGS, type GitCall, type GitHead, hardenedGitEnv, readGitHead, runHardenedGit } from "./git.ts";
 export { type LibexecName, libexecPath } from "./libexec.ts";
+export { describeOs } from "./os-label.ts";
 export { canonicalizePath, isWithin, PathRefused, pathKey } from "./paths.ts";
 export type { ChildHandle, Os, Platform } from "./types.ts";
