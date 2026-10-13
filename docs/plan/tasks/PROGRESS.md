@@ -197,3 +197,21 @@ Learned:
 - Windows CI: `test/platform/shell-parse/shell-parse.test.ts` `afterAll` failed once with EBUSY removing its temp dir (the re-run passed). If it repeats, give its cleanup longer retries.
 - Spec-change PRs still to do: Q20, Q21, Q22, Q25.
 Next: M1-08 (adapter-contract proof for three packages).
+
+## 2026-10-13 — M1-08 Adapter-contract proof on NVIDIA
+Done: `src/ai/contract.test.ts` holds the contract suite. It has one `CASES` entry per package, and today that is `@ai-sdk/openai-compatible` on the NVIDIA fixtures. The suite covers:
+- golden replay of every recorded session (AC-PROV-01);
+- each request extending the one before it, on the recorded sessions and over 30 scripted turns (AC-PROV-02);
+- the lossless round trip on every recorded response, with an unknown metadata field on every part (AC-PROV-18);
+- an event-log check that only `StoredResponse` is stored (AC-PROV-18).
+
+`test/platform/sdk-replay/` replays the session inside a compiled binary, and `test/helpers/contract.ts` (`replaySession`) is shared by both. SPIKE-44 is resolved. PR: #44 (merged, CI green on Linux, macOS and Windows). The fresh reviewer's major is fixed: NVIDIA responses carry no metadata, so the round trip now injects an unknown field.
+
+Learned:
+- Owner decision (QUESTIONS Q26): testing uses NVIDIA only. There is no Gemini, no OpenAI Responses and no OpenCode in M1, and Gemini (M4-08) is `blocked` until the owner adds it. NVIDIA has no `/v1/responses` (404).
+- Q27: AC-PROV-02 on a JSON body means "request N+1 extends request N". The nvidia record now replays reasoning `always`, because `in-tool-loop` broke the prefix at user turns. The session fixture was re-recorded live.
+- Session ids in the event log must be ULIDs (`sequentialIds(...).ulid()` in tests).
+- AC-LOG-07's replay half (a 3 MB Write replays identically) needs the Write tool and the transcript builder, so check it when M1-12/M1-14 replay a Write call.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27 (AC-PROV-02 wording).
+
+Next: M1-09.
