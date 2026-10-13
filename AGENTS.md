@@ -39,6 +39,7 @@ Usage mode is `during` (QUESTIONS Q13): never ask the owner which mode; say `ant
 ## Claude Code helpers
 
 - `.claude/hooks/no-attribution.ts` blocks commits, PRs and GitHub comments that carry vendor attribution; `.claude/hooks/format.ts` runs Biome on every edited file. `attribution` in `.claude/settings.json` turns off Claude Code's own trailers.
+- `bun run auto [n]` (owner's command) builds n tasks unattended, one fresh `claude -p` session each (auto permission mode, Sonnet builds, $20 cap per run); it stops on a failure, a missing progress entry or a task that needs the owner. Each run is logged to `auto-runs.log`. In such a run nobody answers questions: decide, record, ship, stop.
 - `/ship-task <id>` runs build loop steps 8–9 (PR, CI on three OSes, merge, status line, progress entry).
 - The `plan-checker` agent does build loop step 4's fresh check of a milestone's task list; the `reviewer` agent does step 7.
 

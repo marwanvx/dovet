@@ -6,4 +6,5 @@ dist/
 *.tsbuildinfo
 # Local agent/editor state
 .claude/settings.local.json
+auto-runs.log
 .DS_Store

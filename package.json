@@ -24,6 +24,7 @@
     "docs:boxes": "bun scripts/docs-context.ts",
     "docs:check": "bun scripts/check-docs.ts",
     "next": "bun scripts/next.ts",
+    "auto": "bun scripts/auto.ts",
     "record": "bun scripts/record.ts",
     "probe": "bun scripts/probe.ts"
   },
