@@ -38,6 +38,8 @@ describe("claudeArgs", () => {
     expect(args[2]).toContain("unattended");
     expect(args[2]).toContain("reviewer agent");
     expect(args[2]).toContain("Context7");
+    expect(args[2]).toContain("run the reviewer again");
+    expect(args[2]).toContain("Never set git config");
     expect(args).toEqual(
       expect.arrayContaining([
         "--permission-mode",
