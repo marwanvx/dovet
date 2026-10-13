@@ -15,6 +15,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "release": "bun scripts/build-release.ts --all",
+    "gen:schemas": "bun scripts/gen-schemas.ts",
     "check": "bun check -b && bun run lint && bun run lint:deps && bun run test && bun run spec:coverage && bun run docs:check",
     "lint": "biome check .",
     "lint:deps": "bun --bun depcruise src --config .dependency-cruiser.cjs",
@@ -34,6 +35,7 @@
     "@anthropic-ai/sandbox-runtime": "0.0.79",
     "ai": "7.0.138",
     "get-east-asian-width": "1.6.0",
+    "jsonc-parser": "3.3.1",
     "marked": "18.0.11",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-powershell": "0.26.4",
