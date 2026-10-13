@@ -22,5 +22,11 @@
       }
     }
   },
-  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } }
+  "assist": { "enabled": true, "actions": { "source": { "organizeImports": "on" } } },
+  "overrides": [
+    {
+      "includes": ["src/**", "!src/**/*.test.ts"],
+      "plugins": ["./scripts/lint/no-module-state.grit", "./scripts/lint/no-process-writes.grit"]
+    }
+  ]
 }

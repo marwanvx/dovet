@@ -32,10 +32,12 @@
   },
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.79",
+    "ai": "7.0.138",
     "get-east-asian-width": "1.6.0",
     "marked": "18.0.11",
     "tree-sitter-bash": "0.25.1",
     "tree-sitter-powershell": "0.26.4",
-    "web-tree-sitter": "0.27.1"
+    "web-tree-sitter": "0.27.1",
+    "zod": "4.6.7"
   }
 }
