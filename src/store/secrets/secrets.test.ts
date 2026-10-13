@@ -14,10 +14,10 @@ import {
 
 const KEY = "nvapi-FAKE-TEST-VALUE-NOT-A-REAL-KEY";
 const NVIDIA: ProviderAuth = { id: "nvidia", envVars: ["NVIDIA_API_KEY"] };
-const ANTHROPIC: ProviderAuth = {
-  id: "anthropic",
-  envVars: ["ANTHROPIC_API_KEY"],
-  exclusiveEnvVars: ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+const EXAMPLE: ProviderAuth = {
+  id: "example",
+  envVars: ["EXAMPLE_API_KEY"],
+  exclusiveEnvVars: ["EXAMPLE_API_KEY", "EXAMPLE_AUTH_TOKEN"],
 };
 
 function fakeKeychain(entries: Record<string, string> = {}): KeychainBackend & { calls: unknown[] } {
@@ -139,7 +139,7 @@ describe("credential resolution", () => {
       ...(opts.timeoutMs === undefined ? {} : { commandTimeoutMs: opts.timeoutMs }),
       providers: {
         nvidia: { auth: NVIDIA, ...(opts.reference ? { reference: opts.reference } : {}) },
-        anthropic: { auth: ANTHROPIC },
+        example: { auth: EXAMPLE },
       },
     });
   }
@@ -216,15 +216,15 @@ describe("credential resolution", () => {
     }
   });
 
-  test("warns when ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set", async () => {
-    const c = await setup({ env: { ANTHROPIC_API_KEY: KEY, ANTHROPIC_AUTH_TOKEN: "tok" } });
-    const r = await c.resolve("anthropic");
+  test("warns when two env vars the provider rejects together are both set", async () => {
+    const c = await setup({ env: { EXAMPLE_API_KEY: KEY, EXAMPLE_AUTH_TOKEN: "tok" } });
+    const r = await c.resolve("example");
     expect(r?.warnings).toEqual([
-      "ANTHROPIC_API_KEY and ANTHROPIC_AUTH_TOKEN are both set; anthropic rejects requests that carry both (401). Unset one of them.",
+      "EXAMPLE_API_KEY and EXAMPLE_AUTH_TOKEN are both set; example rejects requests that carry both (401). Unset one of them.",
     ]);
-    expect((await c.status("anthropic")).warnings).toEqual(r?.warnings ?? []);
-    const one = await setup({ env: { ANTHROPIC_API_KEY: KEY } });
-    expect((await one.resolve("anthropic"))?.warnings).toEqual([]);
+    expect((await c.status("example")).warnings).toEqual(r?.warnings ?? []);
+    const one = await setup({ env: { EXAMPLE_API_KEY: KEY } });
+    expect((await one.resolve("example"))?.warnings).toEqual([]);
   });
 
   // spec: AC-CLI-17
