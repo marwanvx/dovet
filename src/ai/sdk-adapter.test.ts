@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { APICallError, jsonSchema, type ModelMessage, simulateReadableStream, streamText, tool } from "ai";
+import { APICallError, type ModelMessage, simulateReadableStream } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import {
   type Fixture,
-  MAX_TOKENS,
   nvidiaAdapter,
   renderInput,
   SCENARIOS,
@@ -14,7 +12,6 @@ import {
   startFixtureServer,
 } from "../../test/helpers/index.ts";
 import type { StoredResponse } from "../schema/index.ts";
-import { Secret } from "../store/index.ts";
 import { capturingFetch, createSdkAdapter, type ProviderRequest, type RenderInput, type StreamEvent } from "./index.ts";
 import { endpointOf, providerRecord } from "./registry.ts";
 

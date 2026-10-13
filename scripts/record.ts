@@ -103,7 +103,10 @@ async function record(s: Scenario, apiKey: string): Promise<Fixture> {
     history = [...history, ...final];
   }
   if (s.followUp !== undefined) {
-    const kept = endpointOf(providerRecord("nvidia")).quirks.reasoningReplay === "in-tool-loop" ? withoutReasoning(history) : history;
+    const kept =
+      endpointOf(providerRecord("nvidia")).quirks.reasoningReplay === "in-tool-loop"
+        ? withoutReasoning(history)
+        : history;
     await step([...kept, { role: "user", content: [{ type: "text", text: s.followUp }] }]);
   }
   return {
