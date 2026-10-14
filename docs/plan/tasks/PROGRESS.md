@@ -306,3 +306,8 @@ Next: M1-17.
 Done (PR #69, merged, CI green on three OSes): `main` was red on Linux because `isAlive` in `test/platform/process-tree/process-tree.test.ts` threw ESRCH when the process vanished between `kill(pid, 0)` and the `/proc/<pid>/stat` read. It now treats ESRCH/ENOENT on that read as dead. Test-only change; no product code touched.
 Learned: Per build loop step 2 this was the whole session; M1-17 was not started.
 Next: M1-17.
+
+## 2026-10-14 — M1-17 Grep and Glob
+Done (PR #71, merged, CI green on three OSes): `src/tools/grep.ts`, `glob.ts`, `rg.ts`, `sensitive-files.ts`: ripgrep with ignore files honored outside git, sensitive-file exclusions and count, 20 s / 20 MB caps with partial results, errors never shown as no matches, PATH fallback with the `apk add ripgrep` message, Glob's anchored `Bun.Glob` matching, ignored-file retry, case retry, newest-first, cap 100. AC-TOOLS-09/10/29/30/33 pass. Two fresh reviews with mutation runs; nothing above minor remains.
+Learned: Q36 holds my decisions: the sensitive list lives in `src/tools/sensitive-files.ts` (`.env.*` excluded whole, §7.2 home list not added); `ToolContext.env` was added (cli/main passes it in at M1-25); Grep sorts by path. Tests use `searchContext` (real pinned rg from `dist/cache`). `.jj` makes ripgrep treat a folder as a repo, so VCS-folder tests must not share a fixture with the no-`.git` test. Spec-change PRs still to do: Q20–Q22, Q25, Q27–Q30, Q33–Q36.
+Next: M1-18.
