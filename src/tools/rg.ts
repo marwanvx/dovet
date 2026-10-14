@@ -83,6 +83,7 @@ export async function runRg(
   args: readonly string[],
   cwd: AbsPath,
   limits: RgLimits,
+  stderrLimit = MAX_STDERR,
 ): Promise<RgRun | ToolOutput> {
   if (ctx.signal.aborted)
     return { stdout: "", stderr: "", exitCode: null, timedOut: false, capped: false, interrupted: true };
@@ -115,7 +116,7 @@ export async function runRg(
     };
     const [out, err, exitCode] = await Promise.all([
       drain(child.stdout, limits.maxBytes, overflow),
-      drain(child.stderr, MAX_STDERR, () => undefined),
+      drain(child.stderr, stderrLimit, () => undefined),
       child.exited,
     ]);
     return {
@@ -146,6 +147,7 @@ export function runFailure(run: RgRun): ToolOutput | undefined {
   if (run.timedOut || run.capped) return undefined;
   const { fatal } = stderrReport(run.stderr);
   if (run.exitCode === 2 && fatal !== undefined) return fail(`ripgrep failed:\n${fatal}`);
+  if (run.exitCode === 2 && run.stderr.trim() === "") return fail("ripgrep exited with code 2 and no message.");
   if (run.exitCode === null)
     return fail(`ripgrep was killed before it finished.${run.stderr ? `\n${run.stderr.trim()}` : ""}`);
   if (run.exitCode > 2) return fail(`ripgrep exited with code ${run.exitCode}.`);
@@ -200,6 +202,7 @@ export async function isIgnoredPath(
       ["--no-config", "--debug", "--files", "--hidden", "--no-require-git", "--max-depth", "1"],
       parent as AbsPath,
       limits,
+      limits.maxBytes,
     );
     if (isRun(run) && new RegExp(`ignoring (?:\\.[/\\\\])?${name}: Ignore\\(IgnoreMatch\\(Git`).test(run.stderr))
       return true;

@@ -104,7 +104,11 @@ export function createGlobTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
       skipped.length > 0 ? `(${skipped.length} sensitive files skipped)` : undefined,
       partialNote(listing.run, limits),
     ].filter((n): n is string => n !== undefined);
-    if (matches.length === 0) return reply(["No files found."], notes);
+    if (matches.length === 0)
+      return reply(
+        [listing.run.timedOut || listing.run.capped ? "Nothing found before the search stopped." : "No files found."],
+        notes,
+      );
 
     let ordered: string[];
     if (matches.length > MAX_SORT_BY_TIME) {

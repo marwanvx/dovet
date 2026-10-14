@@ -58,11 +58,13 @@ describe("Glob", () => {
     await files(cwd, { ".gitignore": "build\n", "a.js": "", "build/out.js": "" });
     const ctx = await searchContext(cwd);
     expect(text(await glob(ctx, { pattern: "*.js", path: "build" }))).toBe(join("build", "out.js"));
+    await files(cwd, { "build/.gitignore": "dist\n", "build/dist/z.js": "" });
+    expect(text(await glob(ctx, { pattern: "**/z.js", path: "build" }))).toBe(join("build", "dist", "z.js"));
     const all = await glob(
       await searchContext(cwd, { settings: Settings.parse({ glob: { respectGitignore: false } }) }),
       { pattern: "**/*.js" },
     );
-    expect(text(all).split("\n").sort()).toEqual(["a.js", join("build", "out.js")]);
+    expect(text(all).split("\n").sort()).toEqual(["a.js", join("build", "dist", "z.js"), join("build", "out.js")]);
   });
 
   // spec: AC-TOOLS-10
@@ -150,5 +152,20 @@ describe("Glob", () => {
     const out = await glob(ctx, { pattern: "*.txt" }, createGlobTool({ limits: { timeoutMs: 400 } }));
     expect(text(out)).toContain("a.txt");
     expect(text(out)).toContain("results are partial");
+  });
+
+  test("a timeout with nothing listed is not 'No files found.'", async () => {
+    const cwd = await workspace();
+    const base = await searchContext(cwd);
+    const ctx: ToolContext = {
+      ...base,
+      platform: {
+        ...base.platform,
+        spawn: (cmd) => base.platform.spawn({ ...cmd, argv: [process.execPath, "-e", "setInterval(() => {}, 1000);"] }),
+      },
+    };
+    const out = await glob(ctx, { pattern: "*.txt" }, createGlobTool({ limits: { timeoutMs: 300 } }));
+    expect(text(out)).toContain("results are partial");
+    expect(text(out)).not.toContain("No files found");
   });
 });

@@ -227,7 +227,8 @@ export function createGrepTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
       const matches = counts.reduce((sum, c) => sum + c.n, 0);
       footer = total > 0 ? [`Total: ${matches} matches in ${total} files.`] : [];
     }
-    if (total === 0 && input.offset === 0) return reply("No matches found.");
+    if (total === 0 && input.offset === 0)
+      return reply(partial ? "Nothing found before the search stopped." : "No matches found.");
     if (input.offset >= total) return reply(`No entries at this offset (total ${total}).`);
     const end = Math.min(total, input.offset + input.head_limit);
     const more =

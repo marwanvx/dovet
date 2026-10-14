@@ -131,12 +131,16 @@ describe("Grep: ignore files and sensitive files", () => {
       ".gitignore": "node_modules\n",
       "src/a.ts": "needle\n",
       "node_modules/x/i.js": "needle\n",
-      ".git/config": "needle\n",
+      ".hg/store": "needle\n",
+      ".jj/x": "needle\n",
+      "node_modules/x/.gitignore": "dist\n",
+      "node_modules/x/dist/a.js": "needle\n",
     });
     const ctx = await searchContext(cwd);
     expect(text(await grep(ctx, { pattern: "needle" }))).toBe("src/a.ts");
     const inside = await grep(ctx, { pattern: "needle", path: "node_modules/x" });
     expect(text(inside)).toContain("node_modules/x/i.js");
+    expect(text(inside)).toContain("node_modules/x/dist/a.js");
     expect(text(inside)).toContain("Searched an ignored directory.");
     expect(text(await grep(ctx, { pattern: "needle", path: "src" }))).not.toContain("Searched an ignored");
   });
@@ -184,6 +188,7 @@ describe("Grep: failures are never 'no matches'", () => {
     const ctx = fakeRg(await searchContext(cwd), "setInterval(() => {}, 1000);");
     const out = await grep(ctx, { pattern: "x" }, createGrepTool({ limits: { timeoutMs: 300 } }));
     expect(text(out)).toContain("results are partial");
+    expect(text(out)).not.toContain("No matches found");
   });
 
   // spec: AC-TOOLS-33
