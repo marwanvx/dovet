@@ -211,6 +211,10 @@ describe("path rules", () => {
     expect(run("Read(C:\\**)", "D:\\other")).toBeUndefined();
     expect(run("Read(C:\\**)", "C:\\anything\\at\\all")).toBe("deny:Read(C:\\**)");
     expect(run("Read(/keys/**)", "C:\\p\\keys\\a")).toBe("deny:Read(/keys/**)");
+    expect(run("Read(//c/Users/a/docs \\[v1\\]/**)", "C:\\Users\\a\\docs [v1]\\n.md")).toBe(
+      "deny:Read(//c/Users/a/docs \\[v1\\]/**)",
+    );
+    expect(run("Read(//c/Users/a/docs \\[v1\\]/**)", "C:\\Users\\a\\docs v\\n.md")).toBeUndefined();
   });
 });
 
