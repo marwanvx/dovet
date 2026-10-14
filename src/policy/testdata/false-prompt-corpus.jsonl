@@ -1,0 +1,12 @@
+{"language": "bash", "command": "ls *.ts", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "cd {root} && git status", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "cut -d / -f1 a.ts", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "awk '{print $1}' a.ts", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "git commit -m \"$(cat <<'EOF'\nfix: a\n\nbody\nEOF\n)\"", "expect": "allowed", "allow": ["Bash(git commit *)"], "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "cat <<EOF | python3\nprint(1)\nEOF", "expect": "sandbox", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "cd . && ls > /dev/null", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "for f in *.ts; do wc -l \"$f\"; done", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "cat a.ts | grep -n x | head -5", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "git log --oneline -5", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "echo --- done", "expect": "read-only", "source": "AC-PERM-21 (permissions.md)"}
+{"language": "bash", "command": "LANG=C ls", "expect": "understood", "source": "AC-PERM-21 (permissions.md)"}

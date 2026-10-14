@@ -4,7 +4,7 @@
 
 import bashWasm from "tree-sitter-bash/tree-sitter-bash.wasm" with { type: "file" };
 import powershellWasm from "tree-sitter-powershell/tree-sitter-powershell.wasm" with { type: "file" };
-import { LANGUAGE_VERSION, Language, MIN_COMPATIBLE_VERSION, Parser } from "web-tree-sitter";
+import { LANGUAGE_VERSION, Language, MIN_COMPATIBLE_VERSION, type Node, Parser } from "web-tree-sitter";
 import runtimeWasm from "web-tree-sitter/web-tree-sitter.wasm" with { type: "file" };
 
 export type ShellLanguage = "bash" | "powershell";
@@ -24,6 +24,8 @@ export type ShellParsers = {
   /** Where the three .wasm files were loaded from: inside the binary's embedded filesystem when compiled. */
   files: { runtime: string; bash: string; powershell: string };
   parse(language: ShellLanguage, command: string): ParsedCommand;
+  /** Runs `visit` on the syntax tree, freeing it afterwards; undefined when parsing took longer than `budgetMs` and was cancelled. */
+  withTree<T>(language: ShellLanguage, command: string, budgetMs: number, visit: (root: Node) => T): T | undefined;
 };
 
 async function bytes(path: string): Promise<Uint8Array> {
@@ -59,6 +61,20 @@ export async function loadShellParsers(): Promise<ShellParsers> {
       if (!tree) throw new Error(`tree-sitter returned no tree for a ${language} command`);
       try {
         return { root: tree.rootNode.type, hasError: tree.rootNode.hasError, tree: tree.rootNode.toString() };
+      } finally {
+        tree.delete();
+      }
+    },
+    withTree(language, command, budgetMs, visit) {
+      const parser = parsers[language];
+      const deadline = performance.now() + budgetMs;
+      // The callback's return value cancels the parse (true) though the typings say void.
+      const tree = parser.parse(command, null, { progressCallback: () => performance.now() > deadline });
+      // A cancelled parse otherwise resumes from where it stopped on the next call.
+      parser.reset();
+      if (!tree) return undefined;
+      try {
+        return visit(tree.rootNode);
       } finally {
         tree.delete();
       }

@@ -9,7 +9,7 @@ import {
   type RuleSource,
 } from "./parse.ts";
 import { type PathForms, pathForms, pathMatches } from "./paths.ts";
-import { type Subcommand, shellVariants, splitCommand } from "./shell.ts";
+import { needsExactRule, type Subcommand, shellVariants, splitCommand } from "./shell.ts";
 
 export type RuleSet = { list: readonly Rule[]; ctx: RuleContext };
 export type RuleMatch = { behavior: Behavior; rule: string; file: string; line?: number };
@@ -21,6 +21,8 @@ export type RuleCall = {
   paths?: Array<{ access: "read" | "edit"; path: string }>;
   /** Parsed subcommands of a shell call; absent when it couldn't be parsed. */
   commands?: Subcommand[];
+  /** False when the analyzer did not fully understand the command: allow rules then never apply to it (permissions §4.0). */
+  checkable?: boolean;
   host?: string;
 };
 
@@ -55,7 +57,8 @@ function resolve(call: RuleCall, ctx: RuleContext): Resolved {
   const paths = [...(call.paths ?? [])];
   for (const sub of call.commands ?? []) {
     for (const { op, target } of sub.redirects ?? []) {
-      if (target !== "/dev/null") paths.push({ access: op.startsWith("<") ? "read" : "edit", path: target });
+      if (target !== "/dev/null" && !/^nul$/i.test(target))
+        paths.push({ access: op.startsWith("<") ? "read" : "edit", path: target });
     }
   }
   const forms = paths.flatMap((p) => {
@@ -98,9 +101,13 @@ function pathRuleDecides(set: RuleSet, rule: Rule, r: Resolved, strict: boolean)
   );
 }
 
-const subHit = (rule: Rule, sub: Subcommand): boolean =>
-  rule.matcher.kind === "shell" &&
-  shellVariants(sub.argv, rule.behavior !== "allow").some((t) => (rule.matcher as { re: RegExp }).re.test(t));
+function subHit(rule: Rule, sub: Subcommand): boolean {
+  const m = rule.matcher;
+  if (m.kind !== "shell") return false;
+  const variants = shellVariants(sub.argv, rule.behavior !== "allow");
+  const exactOnly = rule.behavior === "allow" && m.text.includes("*");
+  return variants.some((t) => m.re.test(t) && !(exactOnly && needsExactRule(t.split(" "))));
+}
 
 function otherHit(rule: Rule, call: RuleCall): boolean {
   const m = rule.matcher;
@@ -140,10 +147,12 @@ export function evaluateRules(set: RuleSet, call: RuleCall): RuleMatch | undefin
   const bare = allows.find((a) => a.matcher.kind === "tool" && toolMatches(a, call.tool));
   if (bare !== undefined) return matchOf(bare);
   if (isShellTool(call.tool)) {
+    if (call.checkable === false) return undefined;
     const subs = call.commands ?? [];
     const used = subs.map((sub) => allows.find((a) => toolMatches(a, call.tool) && subHit(a, sub)));
-    const first = used[0];
-    return first !== undefined && used.every((u) => u !== undefined) ? matchOf(first) : undefined;
+    const first = used.find((u) => u !== undefined);
+    const covered = subs.every((sub, i) => used[i] !== undefined || sub.readOnly === true);
+    return first !== undefined && covered ? matchOf(first) : undefined;
   }
   const hit = allows.find((a) => (a.matcher.kind === "path" ? pathRuleDecides(set, a, r, true) : otherHit(a, call)));
   return hit && matchOf(hit);

@@ -1,6 +1,11 @@
 // Shell rule text: a stopgap command splitter and wrapper stripping (permissions §3.2) until M1-22 supplies parsed commands.
 export type Redirect = { op: string; target: string };
-export type Subcommand = { argv: string[]; redirects?: Redirect[] };
+export type Subcommand = {
+  argv: string[];
+  redirects?: Redirect[];
+  /** Set by the analyzer (permissions §4.6): the command only reads, so it needs no allow rule of its own. */
+  readOnly?: boolean;
+};
 
 const REDIRECT = /^(?:&>>?|>>|>\||>&?|<&?)/;
 const SEPARATORS = ["&&", "||", "|&", ";", "|", "&", "\n"];
@@ -8,7 +13,7 @@ const SEPARATORS = ["&&", "||", "|&", ";", "|", "&", "\n"];
 /** Splits a command into simple commands, or undefined when it holds anything this reader can't take apart exactly. */
 export function splitCommand(command: string): Subcommand[] | undefined {
   const out: Subcommand[] = [];
-  let cur: Required<Subcommand> = { argv: [], redirects: [] };
+  let cur: Required<Omit<Subcommand, "readOnly">> = { argv: [], redirects: [] };
   let word: string | undefined;
   let pending: string | undefined;
   const endWord = (): void => {
@@ -122,7 +127,7 @@ const WRAPPERS = new Map<string, Wrapper>([
   ["setsid", { safe: false, valued: [], positional: 0 }],
   ["flock", { safe: false, valued: ["-w", "-E", "--timeout", "--conflict-exit-code"], positional: 1 }],
 ]);
-const SAFE_ENV = new Set([
+export const SAFE_ENV = new Set([
   "NODE_ENV",
   "CI",
   "LANG",
@@ -135,7 +140,9 @@ const SAFE_ENV = new Set([
   "PYTHONUNBUFFERED",
   "GOOS",
   "GOARCH",
+  "DEBUG",
 ]);
+export const isSafeEnv = (name: string): boolean => SAFE_ENV.has(name) || name.startsWith("LC_");
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
 
 /** The command with one wrapper or leading assignment removed. `deep` (deny and ask rules) also strips exec wrappers and any assignment. */
@@ -143,7 +150,7 @@ function stripOne(argv: string[], deep: boolean): string[] | undefined {
   let i = 0;
   while (i < argv.length) {
     const name = ASSIGNMENT.exec(argv[i] ?? "")?.[1];
-    if (name === undefined || !(deep || SAFE_ENV.has(name))) break;
+    if (name === undefined || !(deep || isSafeEnv(name))) break;
     i++;
   }
   if (i > 0) return i < argv.length ? argv.slice(i) : undefined;
@@ -186,4 +193,20 @@ export function shellPattern(pattern: string, ignoreCase = false): RegExp {
     `^${body.split("*").map(escapeRegExp).join(".*")}${trailing ? "(?: .*)?" : ""}$`,
     ignoreCase ? "is" : "s",
   );
+}
+
+const EXEC_WRAPPERS = new Set(["watch", "setsid", "ionice", "flock"]);
+const FIND_ACTIONS = /^-(exec|execdir|ok|okdir|delete|fprint\w*|fls|files0-from)$/;
+const DAEMON_FLAGS = /^(-H|--host|--context|--url|--connection|--identity|--remote)(=|$)/;
+const FORCE_FLAGS = /^(--force|--no-verify|--amend)/;
+
+/** Commands only an exact-match rule may approve (permissions §3.2 "Never auto-approvable by prefix rules"). */
+export function needsExactRule(argv: string[]): boolean {
+  const [name = "", ...rest] = argv;
+  if (EXEC_WRAPPERS.has(name)) return true;
+  if (name === "find") return rest.some((a) => FIND_ACTIONS.test(a));
+  if (name === "docker" || name === "podman") return rest.some((a) => DAEMON_FLAGS.test(a));
+  if (name === "git" || name === "gh")
+    return rest.some((a) => FORCE_FLAGS.test(a) || (a === "-f" && rest.includes("push")));
+  return false;
 }

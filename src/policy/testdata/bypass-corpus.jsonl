@@ -1,0 +1,44 @@
+{"language": "bash", "command": "BASH_ARGV0=x ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "echo hi; BASHPID=1", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "OPTIND=1 cat a.ts", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "RANDOM=2+2", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "REPORTTIME=$(sleep 1) ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "[[ $x =~ $(id) ]] && ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "declare -n x=y; ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "typeset -n a=b", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "find . \\-exec rm {} \\;", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(find *)"]}
+{"language": "bash", "command": "TZ=\"$HOME\" rm -rf build", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(rm *)"]}
+{"language": "bash", "command": "rm -rf \"$(pwd)\"", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "sh -c \"rm -rf ~\"", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(sh *)"]}
+{"language": "bash", "command": "rm -rf ~ > ~/x", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(rm *)"]}
+{"language": "bash", "command": "rm -rf /c/Users/me", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "rm -rf /c/Users/RUNNER~1", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "rg foo*", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "grep -v dir/* .env", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "deny": ["Read(.env)"]}
+{"language": "bash", "command": "git diff --ignore-revs-file=.env", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "deny": ["Read(.env)"]}
+{"language": "bash", "command": "git blame --ignore-revs-file=.env a.ts", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "deny": ["Read(.env)"]}
+{"language": "bash", "command": "cd /etc && cat passwd", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "tee ~/.bashrc", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(tee *)"]}
+{"language": "bash", "command": "pkill -f dovet", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "docker -H tcp://x ps", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(docker *)"]}
+{"language": "bash", "command": "sleep 5 &", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(sleep *)"]}
+{"language": "bash", "command": "ls & rm -rf build", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "eval ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "source ./x.sh", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(source *)"]}
+{"language": "bash", "command": "echo `rm -rf x`", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(echo *)"]}
+{"language": "bash", "command": "cat <(rm x)", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "x=$((1+2)) ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "PATH=/tmp ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "echo ${x:-$(id)}", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "$cmd args", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "ls && ", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "watch ls", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(watch *)"]}
+{"language": "bash", "command": "git push --force origin main", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents", "allow": ["Bash(git push *)"]}
+{"language": "bash", "command": "echo a > ../outside.txt", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "cat ../../etc/passwd", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "cd ..; gc ..\\secret", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "$PSDefaultParameterValues['Get-Item:OutVariable']='y'", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "Get-Item x -OutVariable y", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "Get-ChildItem -Path ..\\..", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "Get-Content .env > ..\\out.txt", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "powershell", "command": "Remove-Item -Recurse build", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
