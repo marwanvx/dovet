@@ -35,8 +35,7 @@ export async function writeFileAtomic(path: string, data: string): Promise<void>
   }
 }
 
-/** Returns whether the file was created. */
-async function addToArray(file: string, path: string[], items: string[]): Promise<boolean> {
+async function addToArray(file: string, path: string[], items: string[]): Promise<void> {
   const existing = await readSettingsText(file);
   const created = existing === undefined;
   let text = existing ?? "{}\n";
@@ -48,7 +47,7 @@ async function addToArray(file: string, path: string[], items: string[]): Promis
   }
   const have = new Set(current ?? []);
   const missing = [...new Set(items)].filter((i) => !have.has(i));
-  if (missing.length === 0 && !created) return false;
+  if (missing.length === 0 && !created) return;
   const fmt = { insertSpaces: true, tabSize: 2, eol: text.includes("\r\n") ? "\r\n" : "\n" };
   if (current === undefined) {
     text = applyEdits(text, modify(text, path, missing, { formattingOptions: fmt }));
@@ -62,7 +61,6 @@ async function addToArray(file: string, path: string[], items: string[]): Promis
   }
   await mkdir(dirname(file), { recursive: true });
   await writeFileAtomic(file, text);
-  return created;
 }
 
 const missing = (err: unknown): undefined => {
@@ -96,6 +94,6 @@ async function excludeFromGit(projectRoot: string): Promise<void> {
 
 /** "Don't ask again": the rule goes to `<project>/.dovet/settings.local.json`, never into Claude Code's files. */
 export async function saveLocalRule(projectRoot: string, kind: RuleKind, rule: string): Promise<void> {
-  const created = await addToArray(join(projectRoot, LOCAL_FILE), ["permissions", kind], [rule]);
-  if (created) await excludeFromGit(projectRoot);
+  await addToArray(join(projectRoot, LOCAL_FILE), ["permissions", kind], [rule]);
+  await excludeFromGit(projectRoot);
 }

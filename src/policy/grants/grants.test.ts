@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, parse } from "node:path";
 import { tempProject } from "../../../test/helpers/index.ts";
 import type { Os } from "../../platform/index.ts";
@@ -106,6 +106,26 @@ describe("effectsOf", () => {
     expect(e.sandboxed).toBe(true);
   });
 
+  test("a shell command's effects depend on the sandbox: unsandboxed they are unknown, sandboxed they come from the findings", () => {
+    const st = state();
+    const effects = (command: string, sandboxed: boolean) => {
+      const req = shell(command, st, sandboxed);
+      return effectsOf(req, decide(req, st), sandboxed);
+    };
+    expect(effects("npm run build", false)).toMatchObject({ writes: "unknown", network: "unknown" });
+    expect(effects("npm run build", true)).toMatchObject({ writes: "workspace", network: "allowed-hosts" });
+    expect(effects("echo x > ../out", true).writes).toBe("outside");
+    expect(effects("touch .git/x", true).writes).toBe("protected");
+    expect(effects("touch .git/x", false).writes).toBe("protected");
+    expect(effects("npm run build &&", true).writes).toBe("unknown");
+  });
+
+  test("editing a sensitive file is a write, not a sensitive read", () => {
+    const st = state();
+    const req = fileReq("edit", join(root, ".env"));
+    expect(effectsOf(req, decide(req, st), false).sensitiveReads).toEqual([]);
+  });
+
   test("a read-only command has no effects; a new host is listed", () => {
     const st = state();
     const ls = shell("ls", st);
@@ -154,6 +174,15 @@ describe("suggestGrant", () => {
       expect(decide(req, st).behavior).toBe("ask");
       expect(suggestGrant(req, decide(req, st), st)).toBeUndefined();
     }
+  });
+
+  // spec: AC-PERM-18
+  test("more than five subcommands needing approval offer nothing", () => {
+    const st = state();
+    const five = shell("npm run a; git commit -m x; cargo build; make all; kubectl apply -f x", st);
+    expect(suggestGrant(five, decide(five, st), st)?.rules).toHaveLength(5);
+    const six = shell("npm run a; git commit -m x; cargo build; make all; kubectl apply -f x; yarn build", st);
+    expect(suggestGrant(six, decide(six, st), st)).toBeUndefined();
   });
 
   // spec: AC-PERM-18
@@ -254,9 +283,23 @@ describe("saveGrant", () => {
   });
 
   test("a session grant is returned for the agent to hold and is never written", async () => {
-    const before = readFileSync(join(root, ".dovet", "settings.local.json"), "utf8");
-    expect(await saveGrant({ scope: "session", rules: ["Edit(//x)"] }, root)).toEqual(["Edit(//x)"]);
-    expect(readFileSync(join(root, ".dovet", "settings.local.json"), "utf8")).toBe(before);
+    const repo = await tempProject({ ".git/HEAD": "x\n" });
+    try {
+      expect(await saveGrant({ scope: "session", rules: ["Edit(//x)"] }, repo.root)).toEqual(["Edit(//x)"]);
+      expect(existsSync(join(repo.root, ".dovet", "settings.local.json"))).toBe(false);
+    } finally {
+      await repo.dispose();
+    }
+  });
+
+  test("a settings.local.json that already exists is excluded from git on the next save", async () => {
+    const repo = await tempProject({ ".git/HEAD": "x\n", ".dovet/settings.local.json": "{}\n" });
+    try {
+      await saveGrant({ scope: "permanent", rules: ["Bash(ls)"] }, repo.root);
+      expect(readFileSync(join(repo.root, ".git", "info", "exclude"), "utf8")).toContain("/.dovet/settings.local.json");
+    } finally {
+      await repo.dispose();
+    }
   });
 });
 
@@ -337,6 +380,7 @@ describe("ruleSetFromSettings", () => {
     expect(error).toBeInstanceOf(SettingsError);
     expect(String(error)).toContain("git push --force origin main");
     expect(String(error)).toContain("expected ask but is deny");
+    expect(String(error)).toContain("decided by");
   });
 
   test("passing examples build a working rule set; a malformed rule fails naming the file", async () => {
