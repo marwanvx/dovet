@@ -19,6 +19,7 @@ export type ToolOutput = {
     offloadPath?: AbsPath;
     sandboxViolations?: string[];
     effects?: SessionEffect[];
+    fileChanges?: Array<{ path: AbsPath; op: "create" | "modify"; added: number; removed: number }>;
   };
 };
 
@@ -58,6 +59,8 @@ export interface ToolContext {
   readResults: ReadResultsIndex;
   /** Tokens still free before the compaction threshold (allow_large, tools §1.4). */
   contextFreeTokens: number;
+  /** Records a file's before-state for the checkpoint; a writing tool awaits it before it changes the file (null = new file). */
+  recordWrite(path: AbsPath, before: Uint8Array | null): Promise<void>;
   emit(e: ToolProgressEvent): void;
   platform: Platform;
 }

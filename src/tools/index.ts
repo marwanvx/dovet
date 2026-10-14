@@ -22,9 +22,14 @@ export type {
   ToolOutput,
   ToolProgressEvent,
 } from "./types.ts";
+export { createWriteTool, writeTool } from "./write.ts";
 
 import { readTool } from "./read.ts";
 import type { ToolDefinition } from "./types.ts";
+import { writeTool } from "./write.ts";
 
 /** Every built-in tool; each tool task appends here so the schema tests cover it. */
-export const builtinTools: readonly ToolDefinition<unknown>[] = [readTool as ToolDefinition<unknown>];
+export const builtinTools: readonly ToolDefinition<unknown>[] = [
+  readTool as ToolDefinition<unknown>,
+  writeTool as ToolDefinition<unknown>,
+];
