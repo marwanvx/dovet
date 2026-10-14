@@ -216,7 +216,7 @@ describe("path rules", () => {
 
 describe("symlinks", () => {
   function fixture() {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "dovet-rules-")));
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "dovet-rules-")));
     mkdirSync(join(root, "p", "docs"), { recursive: true });
     mkdirSync(join(root, "outside"));
     writeFileSync(join(root, "outside", "f.txt"), "x");
@@ -438,7 +438,7 @@ describe("edge cases", () => {
 
   // spec: AC-PERM-06
   test("a symlinked working directory still matches relative rules by its target", () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), "dovet-cwd-")));
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "dovet-cwd-")));
     mkdirSync(join(root, "real"));
     symlinkSync(join(root, "real"), join(root, "link"), "junction");
     const os = process.platform as Os;
