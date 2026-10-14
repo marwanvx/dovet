@@ -285,6 +285,30 @@ describe("shapes that are not understood", () => {
       expect(allReadOnly(analyze(command, "powershell"))).toBe(false);
   });
 
+  // spec: AC-PERM-20
+  test("PowerShell cd into a provider path is refused even when such a directory exists", () => {
+    for (const command of ["cd FileSystem::/etc; gc passwd", "cd env:; gc PATH"]) {
+      const a = analyzeShell(parsers, "powershell", command, { ...analyzeOptions(), isDirectory: () => true });
+      expect(allReadOnly(a)).toBe(false);
+    }
+  });
+
+  // spec: AC-PERM-03
+  test("PowerShell aliases of writing and process cmdlets match rules written with the cmdlet name", () => {
+    const pairs = [
+      ["ren", "Rename-Item"],
+      ["kill", "Stop-Process"],
+      ["start", "Start-Process"],
+      ["si", "Set-Item"],
+      ["irm", "Invoke-RestMethod"],
+      ["sv", "Set-Variable"],
+    ];
+    for (const [alias, cmdlet] of pairs)
+      expect(decide(`${alias} x`, { deny: [`PowerShell(${cmdlet} *)`] }, "powershell")).toBe(
+        `deny:PowerShell(${cmdlet} *)`,
+      );
+  });
+
   // spec: AC-PERM-22
   test("glob time counts against the budget", () => {
     const slowGlob = (): string[] => {

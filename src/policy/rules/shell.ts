@@ -261,6 +261,17 @@ const CMDLET_ALIASES: Record<string, string> = {
   start: "Start-Process",
   irm: "Invoke-RestMethod",
   icm: "Invoke-Command",
+  kill: "Stop-Process",
+  spps: "Stop-Process",
+  ii: "Invoke-Item",
+  tee: "Tee-Object",
+  sp: "Set-ItemProperty",
+  rp: "Remove-ItemProperty",
+  clc: "Clear-Content",
+  ipmo: "Import-Module",
+  sv: "Set-Variable",
+  set: "Set-Variable",
+  sajb: "Start-Job",
 };
 
 /** The cmdlet an alias stands for (`rm` → `Remove-Item`); other names come back unchanged. */

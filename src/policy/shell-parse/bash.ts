@@ -178,7 +178,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return false;
     }
     if (cond) ctx.fail(`${name} inside a condition or loop`);
-    if (!ctx.isDirectory(target)) {
+    if (!ctx.opts.isDirectory(target)) {
       ctx.fail(`${name} target is not a directory`);
       return false;
     }
@@ -257,7 +257,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     const values: string[] = [];
     for (const w of n.childrenForFieldName("value").map((c) => word(c, st))) {
       if (!w.literal) ctx.fail("for loop over a computed list");
-      else if (w.glob) values.push(...ctx.opts.glob(w.text, st.cwd));
+      else if (w.glob) values.push(...ctx.opts.glob(w.text, st.cwd, ctx.deadline.at));
       else values.push(w.text);
     }
     const body = fresh(st);

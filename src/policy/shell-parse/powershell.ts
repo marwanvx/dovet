@@ -134,7 +134,7 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
       else if (target?.literal && !target.glob && parsed.length === 1) {
         if (lower === "push-location") st.stack.push(st.cwd);
         const next = ctx.toAbsolute(target.text, st.cwd);
-        if (isProviderPath(target.text) || !ctx.isDirectory(next)) {
+        if (isProviderPath(target.text) || !ctx.opts.isDirectory(next)) {
           ctx.fail(`${canonical} target is not a directory`);
           return;
         }

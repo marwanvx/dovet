@@ -100,10 +100,8 @@ export function createContext(opts: AnalyzeOptions) {
     }
     return ok;
   };
-  const isDirectory = (path: string): boolean => opts.isDirectory(path);
   return {
     opts,
-    isDirectory,
     commands,
     operands,
     reasons,
