@@ -293,7 +293,8 @@ export function createBashTool(opts: {
           await mkdir(outputDir, { recursive: true, mode: 0o700 });
           await writeFile(path, shown, { mode: 0o600 });
           offloadPath = path as AbsPath;
-          shown = `${shown.slice(0, 2_000)}\n[Output too long (${shown.length} chars). Full output saved to ${path}. Read it with offset/limit or search it.]`;
+          const last = shown.charCodeAt(1_999);
+          shown = `${shown.slice(0, last >= 0xd800 && last <= 0xdbff ? 1_999 : 2_000)}\n[Output too long (${shown.length} chars). Full output saved to ${path}. Read it with offset/limit or search it.]`;
         }
       } catch (e) {
         if (!isErrno(e, "ENOSPC", "EDQUOT")) throw e;

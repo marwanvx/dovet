@@ -439,6 +439,17 @@ describe.skipIf(process.platform === "win32")("Bash: sweep edge cases", () => {
     expect(text(out)).toContain("timeout 900 sleep 1001");
   });
 
+  test("a sweep that cannot run is reported and does not fail the command", async () => {
+    const r = await rig();
+    r.ctx = {
+      ...r.ctx,
+      platform: { ...r.ctx.platform, sweep: () => Promise.reject(new Error("ps not found")) },
+    };
+    const out = await bash(r, { command: "echo hi" });
+    expect(out.status).toBe("ok");
+    expect(text(out)).toBe("hi\nCouldn't look for processes the command left running: ps not found");
+  });
+
   test("a timeout shows the model at most a 10,000-character excerpt", async () => {
     const r = await rig();
     const out = await bash(r, { command: "yes 0123456789 | head -c 3000000; sleep 5", timeout: 1500 });
