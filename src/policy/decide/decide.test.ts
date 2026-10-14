@@ -178,7 +178,7 @@ describe("critical paths", () => {
     ])
       expect(crit(["rm", "-rf", t]), t).toBeDefined();
     expect(crit(["rm", "-rf", home])).toBeDefined();
-    for (const t of ["build", "./dist", "src/x.ts", "/tmp/x", "*.o", "$HOME/proj/tmp"])
+    for (const t of ["build", "./dist", "src/x.ts", join(root, "x"), "*.o", "$HOME/proj/tmp"])
       expect(crit(["rm", "-rf", t]), t).toBeUndefined();
     expect(crit(["cat", "/"])).toBeUndefined();
   });
@@ -271,7 +271,10 @@ describe("critical paths", () => {
   test("PowerShell Remove-Item of system paths or a bare wildcard is denied in every mode", () => {
     for (const mode of ["default", "bypassPermissions", "acceptEdits"] as const) {
       expect(sh("Remove-Item -Recurse -Force *", state(mode), { language: "powershell" }).behavior).toBe("deny");
-      expect(sh("Remove-Item -Recurse /usr", state(mode), { language: "powershell" }).behavior).toBe("deny");
+      expect(
+        sh(`Remove-Item -Recurse ${os === "win32" ? "C:\\Windows" : "/usr"}`, state(mode), { language: "powershell" })
+          .behavior,
+      ).toBe("deny");
     }
     expect(sh("Remove-Item build", state("acceptEdits"), { language: "powershell" }).behavior).toBe("allow");
   });
