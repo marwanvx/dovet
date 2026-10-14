@@ -19,7 +19,13 @@ export type ToolOutput = {
     offloadPath?: AbsPath;
     sandboxViolations?: string[];
     effects?: SessionEffect[];
-    fileChanges?: Array<{ path: AbsPath; op: "create" | "modify"; added: number; removed: number }>;
+    fileChanges?: Array<{
+      path: AbsPath;
+      op: "create" | "modify";
+      added: number;
+      removed: number;
+      match?: "exact" | "prefix-strip" | "indent";
+    }>;
   };
 };
 
