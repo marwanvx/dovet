@@ -6,7 +6,7 @@ import { isErrno, isWithin } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 import { sha256Of, sniffEncoding } from "./codec.ts";
-import { limitOutput } from "./output.ts";
+import { OUTPUT_LIMIT } from "./output.ts";
 import { MAX_SCAN_BYTES } from "./read-scan.ts";
 import { exitOneIsBenign, fileView, interactiveNotice, rewritesWorktree } from "./shell-command.ts";
 import { commandEnv, parseEnvFile, type ShellSnapshot } from "./shell-env.ts";
@@ -219,7 +219,13 @@ export function createBashTool(opts: {
       const out = await collectOutput(child, {
         onChunk: (c) => ctx.emit({ kind: "tail", text: decoder.decode(c, { stream: true }) }),
         afterExit: async () => {
-          stragglers = await ctx.platform.sweep(group, runMarker);
+          try {
+            stragglers = await ctx.platform.sweep(group, runMarker);
+          } catch (e) {
+            notes.push(
+              `Couldn't look for processes the command left running: ${e instanceof Error ? e.message : String(e)}`,
+            );
+          }
         },
         maxBytes: cap,
         onLimit: () => {
@@ -257,10 +263,17 @@ export function createBashTool(opts: {
       if (timedOut)
         return {
           status: "timeout",
-          content: body(`Command timed out after ${Math.round(timeoutMs / 1000)}s\n${text}`),
+          content: body(
+            `Command timed out after ${Math.round(timeoutMs / 1000)}s\n${headAndTail(text, FAILURE_EXCERPT)}`,
+          ),
           meta,
         };
-      if (ctx.signal.aborted) return { status: "interrupted", content: body(`Interrupted by the user\n${text}`), meta };
+      if (ctx.signal.aborted)
+        return {
+          status: "interrupted",
+          content: body(`Interrupted by the user\n${headAndTail(text, FAILURE_EXCERPT)}`),
+          meta,
+        };
       const benign = out.code === 1 && exitOneIsBenign(input.command);
       if (out.code !== 0 && !benign) {
         return {
@@ -275,15 +288,16 @@ export function createBashTool(opts: {
       let shown = text === "" ? "(no output)" : text;
       let offloadPath: AbsPath | undefined;
       try {
-        const limited = await limitOutput(shown, { dir: outputDir, id });
-        shown = limited.text;
-        offloadPath = limited.offloadPath as AbsPath | undefined;
+        if (shown.length > OUTPUT_LIMIT) {
+          const path = join(outputDir, `${id}.txt`);
+          await mkdir(outputDir, { recursive: true, mode: 0o700 });
+          await writeFile(path, shown, { mode: 0o600 });
+          offloadPath = path as AbsPath;
+          shown = `${shown.slice(0, 2_000)}\n[Output too long (${shown.length} chars). Full output saved to ${path}. Read it with offset/limit or search it.]`;
+        }
       } catch (e) {
         if (!isErrno(e, "ENOSPC", "EDQUOT")) throw e;
-        await Promise.all([
-          rm(join(outputDir, `${id}.txt`), { force: true }),
-          rm(join(outputDir, `${id}.json`), { force: true }),
-        ]);
+        await rm(join(outputDir, `${id}.txt`), { force: true });
         shown = `Disk full: output was cut at ${Buffer.byteLength(shown)} bytes`;
       }
       return { status: "ok", content: body(shown), meta: offloadPath ? { ...meta, offloadPath } : meta };

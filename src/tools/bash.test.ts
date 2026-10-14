@@ -403,6 +403,57 @@ describe.skipIf(process.platform === "win32")("Bash: process lifecycle", () => {
   });
 });
 
+describe.skipIf(process.platform === "win32")("Bash: sweep edge cases", () => {
+  const escapee = (r: Rig, n: string, pre: string, wrapper = ""): string =>
+    `${wrapper}perl -MPOSIX -e 'fork and exit; POSIX::setsid(); ${pre} open F, ">", "${r.cwd}/${n}.pid"; print F $$; close F; exec "/bin/sleep", "1003"' &`;
+
+  // spec: AC-TOOLS-40
+  test("an escapee that ignores SIGTERM is killed after the grace period", async () => {
+    const r = await rig();
+    const out = await bash(r, { command: `${escapee(r, "t", '$SIG{TERM}="IGNORE";')}\nsleep 0.3` });
+    expect(text(out)).toContain("Stopped 1 background process(es)");
+    await Bun.sleep(100);
+    expect(alive(await pidOf(join(r.cwd, "t.pid")))).toBe(false);
+  });
+
+  // spec: AC-TOOLS-26
+  test("an escapee with a cleared environment holds the pipe for at most the 500 ms drain", async () => {
+    const r = await rig();
+    const perl = Bun.which("perl") as string;
+    const started = Date.now();
+    const cleared = `env -i ${perl} -MPOSIX -e 'fork and exit; POSIX::setsid(); open F, ">", "${r.cwd}/e.pid"; print F $$; close F; exec "/bin/sleep", "1004"' &`;
+    const out = await bash(r, { command: `${cleared}\nsleep 0.3; echo done` });
+    expect(out.status).toBe("ok");
+    expect(text(out)).toContain("done");
+    expect(Date.now() - started).toBeLessThan(2500);
+    const pid = await pidOf(join(r.cwd, "e.pid"));
+    process.kill(pid, "SIGKILL");
+  });
+
+  // spec: AC-TOOLS-40
+  test("the criterion's own commands: setsid sleep and timeout sleep", async () => {
+    if (Bun.which("setsid") === null || Bun.which("timeout") === null) return;
+    const r = await rig();
+    const out = await bash(r, { command: "setsid sleep 1000 &\ntimeout 900 sleep 1001 &\nsleep 0.3" });
+    expect(text(out)).toContain("sleep 1000");
+    expect(text(out)).toContain("timeout 900 sleep 1001");
+  });
+
+  test("a timeout shows the model at most a 10,000-character excerpt", async () => {
+    const r = await rig();
+    const out = await bash(r, { command: "yes 0123456789 | head -c 3000000; sleep 5", timeout: 1500 });
+    expect(out.status).toBe("timeout");
+    expect(text(out).length).toBeLessThan(10_200);
+  });
+
+  test("the working file holds the output as printed: JSON is not reformatted", async () => {
+    const r = await rig();
+    const out = await bash(r, { command: "echo '['; seq 1 6000 | sed 's/$/,/'; echo '0]'" });
+    const file = await readFile(out.meta?.offloadPath as string, "utf8");
+    expect(file.startsWith("[\n1,\n2,\n")).toBe(true);
+  });
+});
+
 describe.skipIf(process.platform === "win32")("Bash: files read and changed", () => {
   async function repo(): Promise<Rig> {
     const r = await rig();
