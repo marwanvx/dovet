@@ -5,6 +5,8 @@ export type Subcommand = {
   redirects?: Redirect[];
   /** Set by the analyzer (permissions §4.6): the command only reads, so it needs no allow rule of its own. */
   readOnly?: boolean;
+  /** The simulated working directory the command runs in (permissions §4.0 item 5). */
+  cwd?: string;
 };
 
 const REDIRECT = /^(?:&>>?|>>|>\||>&?|<&?)/;
@@ -13,7 +15,7 @@ const SEPARATORS = ["&&", "||", "|&", ";", "|", "&", "\n"];
 /** Splits a command into simple commands, or undefined when it holds anything this reader can't take apart exactly. */
 export function splitCommand(command: string): Subcommand[] | undefined {
   const out: Subcommand[] = [];
-  let cur: Required<Omit<Subcommand, "readOnly">> = { argv: [], redirects: [] };
+  let cur: Required<Pick<Subcommand, "argv" | "redirects">> = { argv: [], redirects: [] };
   let word: string | undefined;
   let pending: string | undefined;
   const endWord = (): void => {
@@ -170,6 +172,13 @@ function stripOne(argv: string[], deep: boolean): string[] | undefined {
   }
   j += w.positional;
   return j < argv.length ? argv.slice(j) : undefined;
+}
+
+/** The command and then itself with each wrapper stripped off the front (`sudo env X=1 git push` → `git push`). */
+export function strippedArgvs(argv: string[]): string[][] {
+  const out = [argv];
+  for (let cur = stripOne(argv, true); cur !== undefined; cur = stripOne(cur, true)) out.push(cur);
+  return out;
 }
 
 /** The text a rule is tried against: the argv re-joined with single spaces, then once per wrapper stripped off the front. */

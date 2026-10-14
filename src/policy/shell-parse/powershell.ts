@@ -87,7 +87,7 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
   }
 
   function command(n: Node): void {
-    const sub: Subcommand = { argv: [] };
+    const sub: Subcommand = { argv: [], cwd: st.cwd };
     const nameNode = n.childForFieldName("command_name");
     const raw = nameNode?.text ?? "";
     const canonical = canonicalCmdlet(raw);

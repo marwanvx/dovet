@@ -1,9 +1,12 @@
 // Public surface of the `policy` module (docs/specs/architecture.md "Modules"): Permission rules, shell parsing, path policy, sandbox, taint state, secret redaction.
 // Other modules import only from this file.
 
+export type { Action, Decision, Env, Finding, FindingKind, Request, State } from "./decide/index.ts";
+export { decide, exampleDecider, planExitChoices } from "./decide/index.ts";
 export type {
   Behavior,
   Example,
+  ExampleDecide,
   Rule,
   RuleCall,
   RuleContext,

@@ -188,18 +188,36 @@ function unreachable(list: readonly Rule[]): RuleIssue[] {
 
 export type Example = Record<string, string>;
 
+/** Decides an example through the built-in checks too; undefined for a tool it does not know. */
+export type ExampleDecide = (
+  tool: string,
+  value: string,
+  cwd: string,
+  mode?: string,
+) => { behavior: Behavior; by: string } | undefined;
+
 /** Checks `permissions.examples` against the rules; a mismatch names the rule that actually decides. */
 export function checkExamples(
   set: RuleSet,
   examples: readonly Example[],
-  opts: { cwd?: string; file?: string } = {},
+  opts: { cwd?: string; file?: string; decide?: ExampleDecide } = {},
 ): RuleIssue[] {
   const cwd = opts.cwd ?? "/";
   const issues: RuleIssue[] = [];
   for (const example of examples) {
-    const tool = Object.keys(example).find((k) => k !== "expect");
+    const tool = Object.keys(example).find((k) => k !== "expect" && k !== "mode");
     const value = tool === undefined ? undefined : example[tool];
     if (tool === undefined || value === undefined) continue;
+    const decided = opts.decide?.(tool, value, cwd, example.mode);
+    if (decided !== undefined) {
+      if (decided.behavior !== example.expect)
+        issues.push({
+          severity: "error",
+          file: opts.file ?? "permissions.examples",
+          message: `example ${tool}: ${JSON.stringify(value)} expected ${example.expect} but is ${decided.behavior}, decided by ${decided.by}`,
+        });
+      continue;
+    }
     const call: RuleCall = { tool, cwd };
     if (isShellTool(tool)) {
       const commands = splitCommand(value);

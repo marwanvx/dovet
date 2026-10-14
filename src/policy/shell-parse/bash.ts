@@ -187,7 +187,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
   }
 
   function command(n: Node, st: State, cond: boolean, preset: Node[]): void {
-    const sub: Subcommand = { argv: [] };
+    const sub: Subcommand = { argv: [], cwd: st.cwd };
     const args: Word[] = [];
     let name: Word | undefined;
     let prefixed = false;
