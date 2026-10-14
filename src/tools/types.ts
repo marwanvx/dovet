@@ -81,9 +81,9 @@ export interface ToolDefinition<I, O = ToolOutput> {
   mutates: "none" | "files" | "system" | "network";
   normalize?: InputNormalization;
   /** String fields that are paths or patterns; a null byte in one is refused. */
+  pathFields?: readonly string[];
   /** The tool applies its own size limit, so the generic 30,000-character output limit is skipped (Read). */
   limitsOwnOutput?: true;
-  pathFields?: readonly string[];
   describeAction(input: I, ctx: ToolContext): ActionDescriptor;
   run(input: I, ctx: ToolContext): Promise<O>;
 }

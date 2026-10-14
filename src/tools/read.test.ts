@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,7 +22,7 @@ afterEach(async () => {
 });
 
 async function workspace(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "dovet-read-"));
+  const dir = realpathSync.native(await mkdtemp(join(tmpdir(), "dovet-read-")));
   dirs.push(dir);
   return dir;
 }
@@ -176,7 +177,7 @@ describe("Read: text views", () => {
   // spec: AC-TOOLS-01
   test("images and PDFs are described as binary even without a NUL byte; a symlink reports both paths to the policy", async () => {
     const cwd = await workspace();
-    await writeFile(join(cwd, "doc.pdf"), "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n");
+    await writeFile(join(cwd, "doc.pdf"), "just text\n");
     await writeFile(join(cwd, "noext"), "%PDF-1.4\nplain text only\n");
     await writeFile(join(cwd, "real.txt"), "x\n");
     await symlink(join(cwd, "real.txt"), join(cwd, "ln"));
