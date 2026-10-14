@@ -2,6 +2,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { tempProject } from "../../../test/helpers/index.ts";
+import type { Os } from "../../platform/index.ts";
 import { evaluateRules, loadRules, type RuleCall, type RuleSet, type Subcommand } from "../rules/index.ts";
 import { type Analysis, analyzeShell, powershellExitOneIsBenign } from "./analyze.ts";
 import { expandGlob, isDirectory } from "./glob.ts";
@@ -25,6 +26,9 @@ beforeAll(async () => {
   dispose = project.dispose;
 });
 afterAll(() => dispose());
+
+// Shell text takes forward slashes; a Windows backslash would be an escape.
+const posix = (p: string): string => p.replaceAll("\\", "/");
 
 const analyzeOptions = () => ({ cwd: root, workingDirs: [root], glob: expandGlob, isDirectory });
 
@@ -50,7 +54,7 @@ function rulesFor(lists: { allow?: string[]; ask?: string[]; deny?: string[] }):
         deny: texts(lists.deny),
       },
     ],
-    { os: "linux", home: "/home/u", canonicalize: (p) => p },
+    { os: process.platform as Os, home: "/home/u", canonicalize: (p) => p },
   ).rules;
 }
 
@@ -209,8 +213,8 @@ describe("file operands, globs and the simulated cwd", () => {
 
   // spec: AC-PERM-20
   test("git after a cd into another directory is not read-only, but a cd into the project is", () => {
-    expect(allReadOnly(analyze(`cd ${join(root, "src")} && git status`))).toBe(false);
-    expect(allReadOnly(analyze(`cd ${root} && git status`))).toBe(true);
+    expect(allReadOnly(analyze(`cd ${posix(join(root, "src"))} && git status`))).toBe(false);
+    expect(allReadOnly(analyze(`cd ${posix(root)} && git status`))).toBe(true);
   });
 
   // spec: AC-PERM-20
@@ -496,7 +500,7 @@ describe("false-prompt corpus", () => {
     const entries = await corpus("false-prompt-corpus.jsonl");
     const failed: string[] = [];
     for (const e of entries) {
-      const a = analyze(e.command.replaceAll("{root}", root), e.language);
+      const a = analyze(e.command.replaceAll("{root}", posix(root)), e.language);
       const rules = rulesFor({ allow: e.allow ?? [] });
       const ok =
         e.expect === "read-only"
