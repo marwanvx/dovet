@@ -124,11 +124,17 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
       const owner = userInfo().uid;
       const foreign = owner !== -1 && Number(existing.uid) !== owner;
       if (existing.nlink > 1n && opts.keepHardLink) reason = "the hard link";
+      else if (existing.nlink > 1n) reason = undefined;
       else if (existing.dev !== dirBefore.dev) reason = "its mount";
       else if (foreign) reason = "its owner";
       else if ((mode & 0o7000) !== 0) reason = "its special mode bits";
       if (reason === undefined) {
         replaced = (await viaTemp(mode, false)) === "done";
+        if (!replaced && existing.nlink > 1n)
+          return {
+            ok: false,
+            message: `${path} has ${existing.nlink} hard links and cannot be replaced here; writing in place would change the other links. Nothing was written.`,
+          };
         if (!replaced && opts.os === "win32") busy = true;
         else if (!replaced) reason = "its mount";
         else if (existing.nlink > 1n)

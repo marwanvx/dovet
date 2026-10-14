@@ -199,12 +199,12 @@ describe("Write: strategies", () => {
     const before = await stat(file);
     const ctx = context(cwd);
     await readFull(ctx, "g.txt");
-    const out = await write(ctx, "g.txt", "new content\n");
+    const out = await write(ctx, "g.txt", "n\n");
     expect(text(out)).toContain("Written in place to keep its special mode bits.");
     const after = await stat(file);
     expect(after.ino).toBe(before.ino);
     expect(after.mode & 0o7777).toBe(0o2644);
-    expect(await readFile(file, "utf8")).toBe("new content\n");
+    expect(await readFile(file, "utf8")).toBe("n\n");
   });
 
   // spec: AC-TOOLS-23
@@ -272,6 +272,29 @@ describe("Write: strategies", () => {
   });
 
   // spec: AC-TOOLS-31
+  test("a setgid hard link is replaced, never written through", async () => {
+    if (process.platform === "win32") return;
+    const cwd = await workspace();
+    const outside = await workspace();
+    await writeFile(join(outside, "t"), "safe\n");
+    await chmod(join(outside, "t"), 0o2644);
+    await link(join(outside, "t"), join(cwd, "l.txt"));
+    const ctx = context(cwd);
+    await readFull(ctx, "l.txt");
+    expect((await write(ctx, "l.txt", "mine\n")).status).toBe("ok");
+    expect(await readFile(join(outside, "t"), "utf8")).toBe("safe\n");
+  });
+
+  test("a valid file rewritten from invalid UTF-8 accepts U+FFFD afterwards", async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, "b.txt"), Buffer.from([0x61, 0xff, 0x0a]));
+    const ctx = context(cwd);
+    await readFull(ctx, "b.txt");
+    expect((await write(ctx, "b.txt", "ok\n")).status).toBe("ok");
+    expect((await write(ctx, "b.txt", "\uFFFD is fine\n")).status).toBe("ok");
+  });
+
+  // spec: AC-TOOLS-31
   test("with the keep-link choice approved, both names change", async () => {
     if (process.platform === "win32") return;
     const cwd = await workspace();
@@ -307,7 +330,7 @@ describe("Write: strategies", () => {
     expect(attempts).toBe(6);
     expect(delays).toEqual([50, 100, 200, 400, 800]);
     expect(res).toMatchObject({ ok: true });
-    expect(res.ok && res.notes.join(" ")).toContain("Written in place");
+    expect(res.ok && res.notes).toEqual(["Written in place because another program has the file open."]);
     expect(await readFile(file, "utf8")).toBe("new\n");
   });
 

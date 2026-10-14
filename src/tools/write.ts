@@ -124,7 +124,7 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
       mtimeMs: after.mtimeMs,
       size: after.size,
       partial: false,
-      encoding,
+      encoding: encoding === "invalid" ? "utf8" : encoding,
       eol,
     });
     const { added, removed } = lineDelta(oldText, input.content);
