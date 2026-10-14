@@ -440,7 +440,7 @@ describe("edge cases", () => {
   test("a symlinked working directory still matches relative rules by its target", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "dovet-cwd-")));
     mkdirSync(join(root, "real"));
-    symlinkSync(join(root, "real"), join(root, "link"));
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
     const os = process.platform as Os;
     const canonicalize = (p: string) => canonicalizePath(p, root, os);
     const r = load({ allow: ["Edit(vault/**)"] }, { os, canonicalize });
