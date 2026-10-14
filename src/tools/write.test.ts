@@ -388,13 +388,13 @@ describe("Write: encoding, line endings, mode, verification", () => {
   test("a new file's mode follows the umask", async () => {
     if (process.platform === "win32") return;
     const cwd = await workspace();
-    const previous = process.umask(0o027);
+    const previous = process.umask(0o002);
     try {
       await write(context(cwd), "m.txt", "x\n");
     } finally {
       process.umask(previous);
     }
-    expect((await stat(join(cwd, "m.txt"))).mode & 0o777).toBe(0o640);
+    expect((await stat(join(cwd, "m.txt"))).mode & 0o777).toBe(0o664);
   });
 
   test("an existing file keeps its mode", async () => {
@@ -436,21 +436,42 @@ describe("Write: encoding, line endings, mode, verification", () => {
     expect(!res.ok && res.message).toContain("cloud-synced");
   });
 
-  test("the checkpoint is told the before-state first", async () => {
+  // spec: AC-TOOLS-05
+  test("the checkpoint is told the before-state while the file is still untouched, on both write paths", async () => {
     const cwd = await workspace();
     await writeFile(join(cwd, "a.txt"), "old\n");
-    const recorded: Array<[string, string | null]> = [];
+    await writeFile(join(cwd, "g.txt"), "old\n");
+    if (process.platform !== "win32") await chmod(join(cwd, "g.txt"), 0o2644);
+    const recorded: Array<[string, string | null, string | null]> = [];
     const ctx = context(cwd, {
       recordWrite: async (p, before) => {
-        recorded.push([p, before === null ? null : Buffer.from(before).toString()]);
+        const onDisk = await readFile(p, "utf8").catch(() => null);
+        recorded.push([p, before === null ? null : Buffer.from(before).toString(), onDisk]);
       },
     });
     await readFull(ctx, "a.txt");
+    await readFull(ctx, "g.txt");
     await write(ctx, "a.txt", "new\n");
+    await write(ctx, "g.txt", "new\n");
     await write(ctx, "fresh.txt", "x\n");
     expect(recorded).toEqual([
-      [join(cwd, "a.txt"), "old\n"],
-      [join(cwd, "fresh.txt"), null],
+      [join(cwd, "a.txt"), "old\n", "old\n"],
+      [join(cwd, "g.txt"), "old\n", "old\n"],
+      [join(cwd, "fresh.txt"), null, null],
     ]);
+  });
+
+  test("a file that appears while a new file is being written is not overwritten", async () => {
+    const cwd = await workspace();
+    const file = join(cwd, "race.txt");
+    const out = await write(context(cwd), "race.txt", "mine\n", {
+      beforeRename: async () => {
+        await writeFile(file, "theirs\n");
+      },
+    });
+    expect(out.status).toBe("error");
+    expect(text(out)).toContain("appeared while it was being written");
+    expect(await readFile(file, "utf8")).toBe("theirs\n");
+    expect(await readdir(cwd)).toEqual(["race.txt"]);
   });
 });

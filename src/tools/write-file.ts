@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { link, lstat, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { isErrno, type Os } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
@@ -14,7 +15,7 @@ export type WriteHooks = {
   sleep?: (ms: number) => Promise<void>;
 };
 export type WriteOptions = { os: Os; keepHardLink?: boolean; hooks?: WriteHooks | undefined };
-export type WriteOutcome = { ok: true; notes: string[] } | { ok: false; message: string };
+export type WriteOutcome = { ok: true; notes: string[] } | { ok: false; message: string; appeared?: true };
 
 const VERIFY_LIMIT = 10 * 1024 * 1024;
 const BACKOFF_MS = [50, 100, 200, 400, 800];
@@ -86,6 +87,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
   }
 
   async function inPlace(): Promise<void> {
+    if (!sameIdentity(dirBefore, await stat(dir, { bigint: true }))) throw new DirectoryChanged(dir);
     const handle = await open(path, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       await write(handle, data);
@@ -109,13 +111,18 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
     let busy = false;
     if (existing === undefined) {
       const made = await viaTemp(undefined, true);
-      if (made === "exists") return writeBytes(path, data, opts);
+      if (made === "exists")
+        return {
+          ok: false,
+          appeared: true,
+          message: `${path} appeared while it was being written; nothing was written.`,
+        };
       replaced = made === "done";
       if (!replaced) reason = "its mount";
     } else {
       const mode = Number(existing.mode & 0o7777n);
-      const owner = process.getuid?.();
-      const foreign = owner !== undefined && Number(existing.uid) !== owner;
+      const owner = userInfo().uid;
+      const foreign = owner !== -1 && Number(existing.uid) !== owner;
       if (existing.nlink > 1n && opts.keepHardLink) reason = "the hard link";
       else if (existing.dev !== dirBefore.dev) reason = "its mount";
       else if (foreign) reason = "its owner";

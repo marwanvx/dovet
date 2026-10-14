@@ -116,7 +116,7 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
     await mkdir(dirname(path), { recursive: true });
     await ctx.recordWrite(path, before);
     const res = await writeBytes(path, bytes, { os: ctx.platform.os, hooks: opts.hooks });
-    if (!res.ok) return fail(res.message);
+    if (!res.ok) return fail(res.appeared ? `${res.message} Read ${path} in full, then write again.` : res.message);
 
     const after = await stat(path);
     ctx.readState.set(path, {
