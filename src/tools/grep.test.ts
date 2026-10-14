@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { Settings } from "../schema/index.ts";
 import { createGrepTool, createToolRegistry, type ToolContext, type ToolOutput } from "./index.ts";
 import { searchContext, text, workspace } from "./test-context.ts";
@@ -10,6 +10,8 @@ async function grep(ctx: ToolContext, input: Record<string, unknown>, tool = cre
   if (!prepared.ok) throw new Error(prepared.message);
   return tool.run(prepared.input as never, ctx);
 }
+
+const os = (path: string): string => path.replaceAll("/", sep);
 
 async function files(cwd: string, entries: Record<string, string>): Promise<void> {
   for (const [name, body] of Object.entries(entries)) {
@@ -74,14 +76,14 @@ describe("Grep: modes and paging", () => {
 
   test("content mode groups matches by file with line numbers and marks context with '-'", async () => {
     const cwd = await workspace();
-    await files(cwd, { "src/a.ts": "one\ntwo\nneedle\nfour\nfive\nsix\nneedle\n", "b.ts": "needle\n" });
+    await files(cwd, { os("src/a.ts"): "one\ntwo\nneedle\nfour\nfive\nsix\nneedle\n", "b.ts": "needle\n" });
     const out = await grep(await searchContext(cwd), {
       pattern: "needle",
       output_mode: "content",
       "-B": 1,
       "-A": 1,
     });
-    expect(text(out)).toBe("b.ts\n1:needle\n\nsrc/a.ts\n2-two\n3:needle\n4-four\n--\n6-six\n7:needle");
+    expect(text(out)).toBe(os("b.ts\n1:needle\n\nsrc/a.ts\n2-two\n3:needle\n4-four\n--\n6-six\n7:needle"));
   });
 
   test("-n false drops line numbers; -i and multiline are honored", async () => {
@@ -97,10 +99,10 @@ describe("Grep: modes and paging", () => {
 
   test("`-l` and `-c` flags and `file_path` are rewritten", async () => {
     const cwd = await workspace();
-    await files(cwd, { "d/a.txt": "x\nx\n" });
+    await files(cwd, { os("d/a.txt"): "x\nx\n" });
     const ctx = await searchContext(cwd);
-    expect(text(await grep(ctx, { pattern: "x", "-c": true, file_path: "d" }))).toContain("d/a.txt:2");
-    expect(text(await grep(ctx, { pattern: "x", "-l": true, "-r": true }))).toBe("d/a.txt");
+    expect(text(await grep(ctx, { pattern: "x", "-c": true, file_path: "d" }))).toContain(os("d/a.txt:2"));
+    expect(text(await grep(ctx, { pattern: "x", "-l": true, "-r": true }))).toBe(os("d/a.txt"));
   });
 
   test("paths outside the working directory are absolute; a single-file path still reports counts", async () => {
@@ -129,16 +131,16 @@ describe("Grep: ignore files and sensitive files", () => {
     const cwd = await workspace();
     await files(cwd, {
       ".gitignore": "node_modules\n",
-      "src/a.ts": "needle\n",
-      "node_modules/x/i.js": "needle\n",
+      os("src/a.ts"): "needle\n",
+      os("node_modules/x/i.js"): "needle\n",
       "node_modules/x/.gitignore": "dist\n",
-      "node_modules/x/dist/a.js": "needle\n",
+      os("node_modules/x/dist/a.js"): "needle\n",
     });
     const ctx = await searchContext(cwd);
-    expect(text(await grep(ctx, { pattern: "needle" }))).toBe("src/a.ts");
+    expect(text(await grep(ctx, { pattern: "needle" }))).toBe(os("src/a.ts"));
     const inside = await grep(ctx, { pattern: "needle", path: "node_modules/x" });
-    expect(text(inside)).toContain("node_modules/x/i.js");
-    expect(text(inside)).toContain("node_modules/x/dist/a.js");
+    expect(text(inside)).toContain(os("node_modules/x/i.js"));
+    expect(text(inside)).toContain(os("node_modules/x/dist/a.js"));
     expect(text(inside)).toContain("Searched an ignored directory.");
     expect(text(await grep(ctx, { pattern: "needle", path: "src" }))).not.toContain("Searched an ignored");
   });

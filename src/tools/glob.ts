@@ -44,6 +44,7 @@ export function createGlobTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
       root = ctx.platform.canonicalize(input.path ?? cwd, cwd);
     } catch (e) {
       if (e instanceof PathRefused) return fail(e.message);
+      if (isErrno(e, "EACCES", "EPERM")) return fail(`Permission denied: ${input.path ?? cwd}`);
       throw e;
     }
     try {

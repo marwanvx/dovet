@@ -89,8 +89,10 @@ describe("Glob", () => {
   test("on a case-insensitive OS `*.TS` finds a.ts through the retry; on a case-sensitive one it does not", async () => {
     const cwd = await workspace();
     await files(cwd, { "a.ts": "" });
-    const mac = await glob(await searchContext(cwd, {}, "darwin"), { pattern: "*.TS" });
-    expect(text(mac)).toBe("(matched ignoring case)\na.ts");
+    const windows = process.platform === "win32";
+    const insensitive = await glob(await searchContext(cwd, {}, windows ? "win32" : "darwin"), { pattern: "*.TS" });
+    expect(text(insensitive)).toBe("(matched ignoring case)\na.ts");
+    if (windows) return;
     const linux = await glob(await searchContext(cwd, {}, "linux"), { pattern: "*.TS" });
     expect(text(linux)).toBe("No files found.");
   });

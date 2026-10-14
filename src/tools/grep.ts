@@ -132,6 +132,7 @@ export function createGrepTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
       target = ctx.platform.canonicalize(input.path ?? cwd, cwd);
     } catch (e) {
       if (e instanceof PathRefused) return fail(e.message);
+      if (isErrno(e, "EACCES", "EPERM")) return fail(`Permission denied: ${input.path ?? cwd}`);
       throw e;
     }
     let isFile: boolean;
