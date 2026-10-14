@@ -311,6 +311,14 @@ export function createBashTool(opts: {
           },
         });
         if (ps === undefined || viaCommand || out.code === 0 || !isPolicyRefusal(out.merged.toString("utf8"))) break;
+        // The wrapper's `finally` writes the cwd file once the script has started, so a refusal never has one.
+        if (
+          await access(cwdFile).then(
+            () => true,
+            () => false,
+          )
+        )
+          break;
         viaCommand = true;
         notes.push("Group Policy enforces a PowerShell execution policy; commands run with -Command from now on.");
       }

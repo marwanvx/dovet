@@ -121,15 +121,10 @@ describe("Git Bash nul redirects", () => {
       command: "ls >/dev/null 2>&1; cat a &>/dev/null",
       changed: true,
     });
+    expect(rewrite("echo a2>nul")).toEqual({ command: "echo a2>/dev/null", changed: true });
+    expect(rewrite("(echo y)>nul; dir>nul 2>&1").command).toBe("(echo y)>/dev/null; dir>/dev/null 2>&1");
     expect(rewrite("echo x >> nul | cat").command).toBe("echo x >> /dev/null | cat");
-    for (const same of [
-      'echo "2>nul"',
-      "echo '2>nul'",
-      "echo x > null",
-      "echo x > nul.txt",
-      "echo 2>nulx",
-      "echo a2>nul",
-    ]) {
+    for (const same of ['echo "2>nul"', "echo '2>nul'", "echo x > null", "echo x > nul.txt", "echo 2>nulx"]) {
       expect(rewrite(same)).toEqual({ command: same, changed: false });
     }
   });

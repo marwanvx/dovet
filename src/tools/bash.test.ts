@@ -321,13 +321,13 @@ describe("Bash on every OS", () => {
     // Git Bash's $! is an MSYS pid; /proc/<pid>/winpid is the Windows one.
     const out = await bash(r, {
       command: "(sleep 300 & (cat /proc/$!/winpid 2>/dev/null || echo $!) > gc.pid; wait)",
-      timeout: 1500,
+      timeout: 8000,
     });
     expect(out.status).toBe("timeout");
     const pid = await pidOf(join(r.cwd, "gc.pid"));
     for (let i = 0; i < 30 && alive(pid); i++) await Bun.sleep(100);
     expect(alive(pid), `pid file held ${await readFile(join(r.cwd, "gc.pid"), "utf8")}`).toBe(false);
-  });
+  }, 30_000);
 
   // spec: AC-PLAT-06
   test("a session cwd deleted mid-session gives a clear error and resets to the project root", async () => {

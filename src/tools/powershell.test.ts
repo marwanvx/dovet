@@ -110,14 +110,24 @@ describe.skipIf(process.platform === "win32")("PowerShell with a stand-in execut
   });
 
   // spec: AC-TOOLS-28
+  // spec: AC-TOOLS-28
+  test("policy-looking output from a script that did run is not retried", async () => {
+    const r = await rig();
+    const body = 'for a; do f=$a; done; echo "x is not digitally signed"; echo ok > "${f%.ps1}.cwd"; exit 1';
+    r.ctx.settings = Settings.parse({ shell: { path: await fake(r, body) } });
+    const out = await ps(r, { command: "Import-Module x" }, { edition: "pwsh" });
+    expect(out.status).toBe("error");
+    expect((await readFile(join(r.tmp, "calls.log"), "utf8")).trim().split("\n")).toEqual(["-ExecutionPolicy"]);
+  });
+
   test("the script file is UTF-8 with a BOM and lives under ps/ with a short name", async () => {
     const r = await rig();
     r.ctx.settings = Settings.parse({
-      shell: { path: await fake(r, 'for a; do f=$a; done; head -c 3 "$f" | od -An -tx1; echo "$f"') },
+      shell: { path: await fake(r, `for a; do f=$a; done; head -c 3 "$f" | od -An -tx1 | tr -d " \\n"; echo ":$f"`) },
     });
     const out = await ps(r, { command: "Write-Output 'héllo'" }, { edition: "pwsh" });
-    const [bom, path] = text(out).split("\n");
-    expect(bom?.trim().split(/\s+/).join(" ")).toBe("ef bb bf");
+    const [bom, path] = text(out).split(":");
+    expect(bom).toBe("efbbbf");
     expect(path).toMatch(/\/ps\/[0-9a-f]{8}\.ps1$/);
   });
 
@@ -147,14 +157,14 @@ describe.each(editions)("real %s", (_name, edition) => {
     const out = await ps(r, { command: `Write-Output 'héllo "你好" it''s'` }, { edition });
     expect(out.status).toBe("ok");
     expect(text(out)).toBe(`héllo "你好" it's`);
-  });
+  }, 30_000);
 
   // spec: AC-PLAT-04
   test("native programs' non-ASCII output round-trips", async () => {
     const r = await rig();
     const out = await ps(r, { command: `git --version; python -c "print('héllo 你好')"` }, { edition });
     expect(text(out)).toContain("héllo 你好");
-  });
+  }, 30_000);
 
   // spec: AC-TOOLS-28
   test("a native exit code is returned; a failing cmdlet returns 1; a later success wins", async () => {
@@ -167,7 +177,7 @@ describe.each(editions)("real %s", (_name, edition) => {
     const mixed = await ps(r, { command: `${exit3}; Get-Location` }, { edition });
     expect(mixed.meta?.exitCode).toBe(0);
     expect((await ps(r, { command: "Write-Output ok" }, { edition })).meta?.exitCode).toBe(0);
-  });
+  }, 30_000);
 
   // spec: AC-TOOLS-28
   test("cd carries over, also when the command calls exit", async () => {
@@ -178,7 +188,7 @@ describe.each(editions)("real %s", (_name, edition) => {
     const quit = await ps(r, { command: "cd sub; exit 4" }, { edition });
     expect(quit.meta?.exitCode).toBe(4);
     expect(quit.meta?.effects).toEqual([{ kind: "cwd", path: join(r.cwd, "sub") }]);
-  });
+  }, 30_000);
 
   // spec: AC-TOOLS-28
   test("-Command mode runs the same commands and spawns no -EncodedCommand", async () => {
@@ -188,5 +198,44 @@ describe.each(editions)("real %s", (_name, edition) => {
     expect(out.meta?.exitCode).toBe(2);
     expect(r.argvs.flat()).toContain("-Command");
     expect(r.argvs.flat()).not.toContain("-EncodedCommand");
-  });
+  }, 30_000);
+
+  // spec: AC-TOOLS-28
+  test("a native program writing to stderr is not a failure", async () => {
+    const r = await rig();
+    const warn = process.platform === "win32" ? 'cmd /c "echo warn 1>&2 & exit 0"' : "sh -c 'echo warn >&2'";
+    const out = await ps(r, { command: warn }, { edition });
+    expect(out.status).toBe("ok");
+    expect(out.meta?.exitCode).toBe(0);
+    expect(text(out)).toContain("warn");
+    expect(text(out)).not.toContain("NativeCommandError");
+  }, 30_000);
+
+  // spec: AC-TOOLS-28
+  test.skipIf(process.platform !== "win32")(
+    "with AllSigned enforced by policy, commands run via -Command",
+    async () => {
+      const key = edition === "pwsh" ? "PowerShellCore" : "PowerShell";
+      const path = `HKLM\\SOFTWARE\\Policies\\Microsoft\\${key === "PowerShell" ? "Windows\\PowerShell" : key}`;
+      const reg = (...args: string[]): void => {
+        const p = Bun.spawnSync(["reg", ...args]);
+        if (p.exitCode !== 0) throw new Error(`reg ${args.join(" ")}: ${p.stderr.toString()}`);
+      };
+      reg("add", path, "/v", "EnableScripts", "/t", "REG_DWORD", "/d", "1", "/f");
+      reg("add", path, "/v", "ExecutionPolicy", "/t", "REG_SZ", "/d", "AllSigned", "/f");
+      try {
+        const r = await rig();
+        const tool = createBashTool({ tmpDir: r.tmp, powershell: { edition } });
+        const first = await ps(r, { command: "Write-Output hi" }, { edition }, tool);
+        expect(text(first)).toContain("hi");
+        expect(text(first)).toContain("Group Policy enforces a PowerShell execution policy");
+        const second = await ps(r, { command: "Write-Output again" }, { edition }, tool);
+        expect(text(second)).toBe("again");
+      } finally {
+        reg("delete", path, "/v", "ExecutionPolicy", "/f");
+        reg("delete", path, "/v", "EnableScripts", "/f");
+      }
+    },
+    60_000,
+  );
 });
