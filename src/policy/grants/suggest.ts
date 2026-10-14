@@ -1,13 +1,13 @@
 import { posix, win32 } from "node:path";
 import { isWithin } from "../../platform/index.ts";
-import type { Decision, Request, State } from "../decide/index.ts";
+import { type Decision, decide, type Request, type State } from "../decide/index.ts";
 import {
   escapeLiteral,
   evaluateRules,
   loadRules,
   needsExactRule,
-  type RuleSet,
   type Subcommand,
+  strippedArgvs,
   toPosix,
 } from "../rules/index.ts";
 
@@ -80,6 +80,27 @@ const EXACT_ONLY = new Set([
   "kill",
   "pkill",
   "killall",
+  "timeout",
+  "nice",
+  "stdbuf",
+  "command",
+  "builtin",
+  "noglob",
+  "node",
+  "python",
+  "python3",
+  "perl",
+  "ruby",
+  "php",
+  "lua",
+  "npx",
+  "bunx",
+  "pnpx",
+  "curl",
+  "wget",
+  "http",
+  "nc",
+  "ncat",
   "shred",
   "truncate",
   "mkfs",
@@ -88,32 +109,51 @@ const EXACT_ONLY = new Set([
   ".",
 ]);
 
+/** Verbs that run whatever comes next, so only the exact command may be saved. */
+const RUNNING_VERBS: Record<string, readonly string[]> = {
+  npm: ["exec", "x"],
+  pnpm: ["exec", "dlx"],
+  yarn: ["dlx", "exec"],
+  bun: ["x"],
+  go: ["run"],
+  cargo: ["run"],
+  uv: ["run", "tool"],
+  poetry: ["run"],
+  deno: ["run"],
+  dotnet: ["run"],
+  docker: ["run", "exec"],
+  podman: ["run", "exec"],
+  kubectl: ["exec", "run"],
+  gh: ["api"],
+};
+
 const program = (argv0: string | undefined): string =>
   (argv0 ?? "")
     .replace(/^.*[\\/]/, "")
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
-function shellRule(tool: string, sub: Subcommand): string | undefined {
-  const { argv } = sub;
+function shellRule(tool: string, called: Subcommand): string | undefined {
+  const argv = strippedArgvs(called.argv).at(-1) ?? called.argv;
   const [first = "", second] = argv;
   if (first === "" || NON_ASCII.test(first) || argv.some((w) => w.includes("*"))) return undefined;
   const name = program(first);
-  const exact = needsExactRule(argv) || EXACT_ONLY.has(name) || /[\\/]/.test(first);
-  if (exact || argv.length === 1) return `${tool}(${argv.join(" ")})`;
-  if (VERBS.has(name)) return second?.startsWith("-") ? `${tool}(${argv.join(" ")})` : `${tool}(${first} ${second} *)`;
+  const exact = () => (argv.some((w) => /\s/.test(w)) ? undefined : `${tool}(${argv.join(" ")})`);
+  if (needsExactRule(argv) || EXACT_ONLY.has(name) || /[\\/]/.test(first) || argv.length === 1) return exact();
+  if (VERBS.has(name)) {
+    if (second?.startsWith("-") || RUNNING_VERBS[name]?.includes(second ?? "")) return exact();
+    return `${tool}(${first} ${second} *)`;
+  }
   return `${tool}(${first} *)`;
 }
 
-/** The rules would allow every call they were made from, tested the way a later call will be (permissions §6 "Saved rules must round-trip"). */
-function roundTrips(set: RuleSet, tool: string, rules: string[], subs: Subcommand[], cwd: string): boolean {
+/** The rules lift the prompt for the call they were made from, tested through the full decision (permissions §6 "Saved rules must round-trip"). */
+function roundTrips(req: Request, st: State, rules: string[]): boolean {
   const { rules: made } = loadRules(
-    [{ file: "(grant)", baseDir: cwd, allow: rules.map((text) => ({ text })) }],
-    set.ctx,
+    [{ file: "(grant)", baseDir: st.env.cwd, allow: rules.map((text) => ({ text })) }],
+    st.rules.ctx,
   );
-  return subs.every(
-    (sub) => evaluateRules(made, { tool, cwd: sub.cwd ?? cwd, commands: [sub], checkable: true })?.behavior === "allow",
-  );
+  return decide(req, { ...st, rules: { ...st.rules, list: [...st.rules.list, ...made.list] } }).behavior === "allow";
 }
 
 function shellGrant(req: Request, d: Decision, st: State): Grant | undefined {
@@ -138,7 +178,7 @@ function shellGrant(req: Request, d: Decision, st: State): Grant | undefined {
     if (rule === undefined) return undefined;
     if (!rules.includes(rule)) rules.push(rule);
   }
-  return roundTrips(st.rules, req.tool, rules, needed, st.env.cwd) ? { scope: "permanent", rules } : undefined;
+  return roundTrips(req, st, rules) ? { scope: "permanent", rules } : undefined;
 }
 
 const dirname = (st: State, path: string): string => (st.env.os === "win32" ? win32 : posix).dirname(path);
@@ -167,8 +207,9 @@ function fileGrant(req: Request, d: Decision, st: State): Grant | undefined {
     ...new Set(
       asks.map((f) => {
         const path = f.path ?? "";
-        if (f.kind === "outside" && a.kind === "read")
-          return `Read(${escapeLiteral(absRule(st, dirname(st, path)))}/**)`;
+        const dir = dirname(st, path);
+        if (f.kind === "outside" && a.kind === "read" && dir !== dirname(st, dir) && dir !== st.env.home)
+          return `Read(${escapeLiteral(absRule(st, dir))}/**)`;
         return exactRule(st, tool, path);
       }),
     ),
@@ -178,7 +219,7 @@ function fileGrant(req: Request, d: Decision, st: State): Grant | undefined {
 
 /** The rules "Yes, and don't ask again" would save for a prompted call, or undefined when only one-time approval is safe. */
 export function suggestGrant(req: Request, decision: Decision, st: State): Grant | undefined {
-  if (decision.behavior !== "ask" || decision.countdown === true) return undefined;
+  if (decision.behavior !== "ask") return undefined;
   const a = req.action;
   switch (a.kind) {
     case "shell":

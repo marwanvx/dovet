@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, parse } from "node:path";
 import { tempProject } from "../../../test/helpers/index.ts";
 import type { Os } from "../../platform/index.ts";
 import { canonicalizePath } from "../../platform/index.ts";
@@ -14,7 +14,7 @@ import {
   sessionPaths,
 } from "../../store/index.ts";
 import { decide, type Env, type Request, type State } from "../decide/index.ts";
-import { evaluateRules, loadRules, type RuleSet } from "../rules/index.ts";
+import { escapeLiteral, evaluateRules, loadRules, type RuleSet, toPosix } from "../rules/index.ts";
 import { analyzeShell } from "../shell-parse/analyze.ts";
 import { expandGlob, isDirectory } from "../shell-parse/glob.ts";
 import { loadShellParsers, type ShellParsers } from "../shell-parse/load.ts";
@@ -136,24 +136,57 @@ describe("suggestGrant", () => {
     }
   });
 
-  test("never Bash(*): a wildcard in an argument, a forced push, or an unparsed command withholds or narrows", () => {
+  test("never Bash(*): a forced push is saved exactly; a wildcard argument or an unparsed command offers nothing", () => {
     const st = state();
-    const glob = shell("echo 'a*'", st);
-    expect(suggestGrant(glob, decide(glob, st), st)?.rules ?? []).not.toContain("Bash(*)");
+    const glob = shell("npm run 'a*'", st);
+    expect(suggestGrant(glob, decide(glob, st), st)).toBeUndefined();
     const force = shell("git push --force origin feature", st);
     expect(suggestGrant(force, decide(force, st), st)?.rules).toEqual(["Bash(git push --force origin feature)"]);
     const odd = shell("echo $(", st);
     expect(suggestGrant(odd, decide(odd, st), st)).toBeUndefined();
   });
 
-  test("more than five subcommands, bidirectional text and safety prompts offer nothing", () => {
+  // spec: AC-PERM-18
+  test("a command with an invisible or bidirectional character offers nothing, in the program, an argument or a redirect", () => {
     const st = state();
-    const six = shell("a1 && a2 && a3 && a4 && a5 && a6", st);
-    expect(suggestGrant(six, decide(six, st), st)).toBeUndefined();
-    const bidi = shell("echo ‮evil", st);
-    expect(suggestGrant(bidi, decide(bidi, st), st)).toBeUndefined();
-    const git = fileReq("edit", join(root, ".git", "config"));
-    expect(suggestGrant(git, decide(git, st), st)).toBeUndefined();
+    for (const command of ["npm run b\u202Euild", "npm\u200B run build", "python x.py > o\u202Eut.txt"]) {
+      const req = shell(command, st);
+      expect(decide(req, st).behavior).toBe("ask");
+      expect(suggestGrant(req, decide(req, st), st)).toBeUndefined();
+    }
+  });
+
+  // spec: AC-PERM-18
+  test("a rule that would not lift the prompt again is not offered", () => {
+    const plan = state({}, "plan");
+    const req = shell("npm run build", plan);
+    expect(decide(req, plan).behavior).toBe("ask");
+    expect(suggestGrant(req, decide(req, plan), plan)).toBeUndefined();
+  });
+
+  test("a rule never covers more than the approved program: wrappers are stripped, runners and interpreters are saved exactly", () => {
+    const st = state();
+    const rulesOf = (command: string) => {
+      const req = shell(command, st);
+      return suggestGrant(req, decide(req, st), st)?.rules;
+    };
+    expect(rulesOf("timeout 5 npm test")).toEqual(["Bash(npm test *)"]);
+    expect(rulesOf("python -c 'print(1)'")).toEqual(["Bash(python -c print(1))"]);
+    expect(rulesOf("npm exec foo")).toEqual(["Bash(npm exec foo)"]);
+    expect(rulesOf("cargo run --release")).toEqual(["Bash(cargo run --release)"]);
+    expect(rulesOf("gh api repos/o/r")).toEqual(["Bash(gh api repos/o/r)"]);
+    expect(rulesOf("curl -d @f https://x.example")).toEqual(["Bash(curl -d @f https://x.example)"]);
+    expect(rulesOf("rm 'a b'")).toBeUndefined();
+  });
+
+  test("a call that stays unliftable offers nothing: a critical removal, in bypass mode too", () => {
+    for (const mode of ["default", "bypassPermissions"] as const) {
+      const st = state({}, mode);
+      for (const command of ["rm -rf /", "rm -rf ~"]) {
+        const req = shell(command, st);
+        expect(suggestGrant(req, decide(req, st), st)).toBeUndefined();
+      }
+    }
   });
 
   test("file edits are for the session; WebFetch saves a domain rule; a tainted session offers no host rule", () => {
@@ -195,6 +228,19 @@ describe("suggestGrant", () => {
     expect(
       evaluateRules(after.rules, { tool: "Read", cwd: root, paths: [{ access: "read", path: outside }] })?.behavior,
     ).toBe("allow");
+  });
+});
+
+describe("suggestGrant for files", () => {
+  test("a tainted session offers no rule for a sensitive read; a read at the filesystem root offers an exact file", () => {
+    const st = state({ tainted: true });
+    const sensitive = fileReq("read", join(root, ".env"));
+    expect(suggestGrant(sensitive, decide(sensitive, st), st)).toBeUndefined();
+
+    const top = parse(root).root + "dovet-grant-probe.txt";
+    const req = fileReq("read", top);
+    const g = suggestGrant(req, decide(req, state()), state());
+    expect(g?.rules).toEqual([`Read(${escapeLiteral(`/${toPosix(top, os)}`)})`]);
   });
 });
 
@@ -259,6 +305,23 @@ describe("ruleSetFromSettings", () => {
       ruleContext: { os, home: env().home, canonicalize: env().canonicalize },
       configDir: join(root, "cfg"),
     });
+
+  test("a path rule in user settings is anchored at the config directory", async () => {
+    const dir = (await tempProject()).root;
+    mkdirSync(join(dir, "cfg"), { recursive: true });
+    writeFileSync(join(dir, "cfg", "settings.json"), JSON.stringify({ permissions: { deny: ["Read(/secret/**)"] } }));
+    const loaded = await loadSettings({ dirs: { config: join(dir, "cfg") }, home: dir, projectRoot: dir, env: {} });
+    const { rules } = ruleSetFromSettings({
+      loaded,
+      env: env(),
+      parsers,
+      ruleContext: { os, home: env().home, canonicalize: env().canonicalize },
+      configDir: join(dir, "cfg"),
+    });
+    const call = (path: string) => ({ tool: "Read", cwd: root, paths: [{ access: "read" as const, path }] });
+    expect(evaluateRules(rules, call(join(dir, "cfg", "secret", "k")))?.behavior).toBe("deny");
+    expect(evaluateRules(rules, call(join(root, "secret", "k")))).toBeUndefined();
+  });
 
   // spec: AC-PERM-29
   test("a failing permissions.examples entry fails at load and names the deciding rule", async () => {

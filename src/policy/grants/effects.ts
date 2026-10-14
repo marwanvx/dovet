@@ -38,7 +38,7 @@ export function effectsOf(req: Request, decision: Decision, sandboxed: boolean):
       };
     case "shell": {
       const subs = a.analysis.commands;
-      if (a.analysis.understood && subs !== undefined && subs.every((s) => s.readOnly === true))
+      if (a.analysis.understood && subs?.every((s) => s.readOnly === true) === true)
         return { ...base, writes: "none", network: "none" };
       if (!sandboxed) {
         const writes = findings.some((f) => f.kind === "protected") ? "protected" : "unknown";
