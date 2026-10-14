@@ -8,4 +8,5 @@ export {
   type SnapshotTimings,
   type Snapshotter,
   type SnapshotterOptions,
+  type TreeChange,
 } from "./snapshotter.ts";

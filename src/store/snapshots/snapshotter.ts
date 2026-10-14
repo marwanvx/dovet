@@ -80,8 +80,19 @@ export interface RestoreResult {
   skipped: SkippedPath[];
 }
 
+/** One file that differs between two trees; counts are 0 for a binary file. */
+export interface TreeChange {
+  path: string;
+  status: "A" | "M" | "D";
+  added: number;
+  removed: number;
+}
+
 export interface Snapshotter {
+  /** The repository's top level: paths in snapshots and changes are relative to it. */
+  root: string;
   snapshot(): Promise<SnapshotResult>;
+  changes(before: string, after: string): Promise<TreeChange[]>;
   /**
    * Makes the workspace match `tree`: rewrites changed files, deletes files created since. `checkpointSkipped` is the
    * `skipped` list of the snapshot that made `tree`: those paths existed then but are not in the tree, so they are
@@ -296,6 +307,26 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     return { tree, hashed: toHash.length, skipped, timings };
   }
 
+  async function changes(before: string, after: string): Promise<TreeChange[]> {
+    for (const t of [before, after]) if (!OBJECT_ID.test(t)) throw new Error(`not a tree id: ${t}`);
+    const run = (flag: string): Promise<Uint8Array> =>
+      runGit(ctx, ["diff-tree", "-r", "-z", "--no-renames", flag, before, after], { env: privateEnv });
+    const names = splitNul(await run("--name-status"));
+    const counts = new Map<string, { added: number; removed: number }>();
+    for (const record of splitNul(await run("--numstat"))) {
+      const m = /^(\d+|-)\t(\d+|-)\t(.*)$/s.exec(record);
+      if (m?.[3] !== undefined) counts.set(m[3], { added: Number(m[1]) || 0, removed: Number(m[2]) || 0 });
+    }
+    const out: TreeChange[] = [];
+    for (let i = 0; i + 1 < names.length; i += 2) {
+      const status = names[i];
+      const path = names[i + 1];
+      if (path === undefined || (status !== "A" && status !== "M" && status !== "D")) continue;
+      out.push({ path, status, ...(counts.get(path) ?? { added: 0, removed: 0 }) });
+    }
+    return out;
+  }
+
   async function restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult> {
     if (!OBJECT_ID.test(tree)) throw new Error(`not a tree id: ${tree}`);
     const keep = new Set(checkpointSkipped.map((s) => s.path));
@@ -356,7 +387,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     return result;
   }
 
-  return { snapshot, restore };
+  return { root, snapshot, changes, restore };
 }
 
 /** Starts a new session's stat cache from the newest other session's (they share one object store). */

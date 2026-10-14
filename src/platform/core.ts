@@ -28,6 +28,7 @@ export function createPlatformCore(deps: {
     canonicalize: (p, cwd) => canonicalizePath(p, cwd, os),
     spawn: processes.spawn,
     killTree: processes.killTree,
+    sweep: processes.sweep,
     libexec: (name) => libexecPath(execPath, os, name),
     // ASSUMPTION (QUESTIONS Q18): Platform.resolve
     resolve: exec.resolve,

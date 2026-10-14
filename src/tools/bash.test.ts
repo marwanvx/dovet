@@ -3,7 +3,15 @@ import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createPlatformCore } from "../platform/index.ts";
 import { type AbsPath, Settings } from "../schema/index.ts";
-import { createBashTool, createToolRegistry, type ToolContext, type ToolOutput } from "./index.ts";
+import { openSnapshotter } from "../store/index.ts";
+import {
+  createBashTool,
+  createReadTool,
+  createToolRegistry,
+  createWriteTool,
+  type ToolContext,
+  type ToolOutput,
+} from "./index.ts";
 import { commandEnv, scopedSettingsEnv, startShellSnapshot } from "./shell-env.ts";
 import { context, text, workspace } from "./test-context.ts";
 
@@ -278,5 +286,193 @@ describe.skipIf(process.platform === "win32")("settings env", () => {
     await writeFile(join(r.cwd, "vars.env"), "# c\nexport A=1\nB='two words'\n");
     const tool = createBashTool({ tmpDir: r.tmp, snapshot: snapshotOf(r) });
     expect(text(await bash(r, { command: 'echo "$A|$B"' }, tool))).toBe("1|two words");
+  });
+});
+
+const gitIn = (cwd: string, ...args: string[]): string => {
+  const r = Bun.spawnSync(
+    ["git", "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args],
+    { cwd, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } },
+  );
+  if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
+  return r.stdout.toString();
+};
+
+async function pidOf(path: string): Promise<number> {
+  for (let i = 0; i < 100; i++) {
+    const n = Number((await readFile(path, "utf8").catch(() => "")).trim());
+    if (n > 0) return n;
+    await Bun.sleep(20);
+  }
+  throw new Error(`${path} never got a pid`);
+}
+
+describe.skipIf(process.platform === "win32")("Bash: results", () => {
+  // spec: AC-TOOLS-07
+  test("grep with no match is a success, false is a failure with a 10k excerpt, 50k output goes to a file", async () => {
+    const r = await rig();
+    await writeFile(join(r.cwd, "a.txt"), "hello\n");
+    const none = await bash(r, { command: "grep nothing a.txt" });
+    expect(none.status).toBe("ok");
+    expect(none.meta?.exitCode).toBe(1);
+    expect((await bash(r, { command: "false" })).status).toBe("error");
+
+    const failed = await bash(r, { command: "yes 0123456789 | head -c 40000; exit 1" });
+    expect(failed.status).toBe("error");
+    expect(text(failed).startsWith("Exit code 1\n")).toBe(true);
+    expect(text(failed).length).toBeLessThan(10_100);
+    expect(failed.meta?.offloadPath).toBeUndefined();
+
+    const big = await bash(r, { command: "yes 0123456789 | head -c 50000" });
+    expect(big.status).toBe("ok");
+    const path = big.meta?.offloadPath;
+    expect(path).toBeDefined();
+    expect(text(big)).toContain(`Full output saved to ${path}`);
+    expect(text(big).length).toBeLessThan(2_400);
+    expect((await readFile(path as string, "utf8")).length).toBeGreaterThan(49_000);
+
+    const edge = await bash(r, { command: "yes 0123456789 | head -c 29999" });
+    expect(edge.meta?.offloadPath).toBeUndefined();
+  });
+
+  // spec: AC-PLAT-04
+  test("non-ASCII output round-trips", async () => {
+    const r = await rig();
+    expect(text(await bash(r, { command: 'echo "héllo 你好 🎉"' }))).toBe("héllo 你好 🎉");
+  });
+
+  test("a command that floods the output is stopped at the cap and says so", async () => {
+    const r = await rig();
+    const tool = createBashTool({ tmpDir: r.tmp, outputCapBytes: 2_000_000 });
+    const out = await bash(r, { command: "yes" }, tool);
+    expect(text(out)).toContain("Output exceeded 2 MB; the command was stopped");
+  });
+});
+
+describe.skipIf(process.platform === "win32")("Bash: process lifecycle", () => {
+  // spec: AC-TOOLS-08
+  test("a timeout kills grandchildren too", async () => {
+    const r = await rig();
+    const out = await bash(r, { command: `(sleep 300 & echo $! > ${r.cwd}/gc.pid; wait)`, timeout: 700 });
+    expect(out.status).toBe("timeout");
+    const pid = await pidOf(join(r.cwd, "gc.pid"));
+    await Bun.sleep(100);
+    expect(alive(pid)).toBe(false);
+  });
+
+  // spec: AC-TOOLS-08
+  test("git commit without a message is refused before it runs", async () => {
+    const r = await rig();
+    gitIn(r.cwd, "init", "-q");
+    await writeFile(join(r.cwd, "a.txt"), "x\n");
+    gitIn(r.cwd, "add", "a.txt");
+    const out = await bash(r, { command: "git commit" });
+    expect(out.status).toBe("error");
+    expect(text(out)).toBe(
+      'This command needs an interactive terminal, which isn\'t available. Use a non-interactive form (e.g. git commit -m "…").',
+    );
+    expect(() => gitIn(r.cwd, "log")).toThrow();
+  });
+
+  // spec: AC-TOOLS-26
+  test("a backgrounded sleep does not hold the command; it is stopped and the result says so", async () => {
+    const r = await rig();
+    const out = await bash(r, { command: `sleep 1000 & echo $! > ${r.cwd}/bg.pid; echo done` });
+    expect(out.status).toBe("ok");
+    expect(out.meta?.durationMs).toBeLessThan(1000);
+    expect(text(out)).toContain("done");
+    expect(text(out)).toContain(
+      `Stopped 1 background process(es) the command left running (e.g. "sleep 1000"). Long-running servers aren't supported in v0.1; start them yourself in a terminal.`,
+    );
+    expect(alive(await pidOf(join(r.cwd, "bg.pid")))).toBe(false);
+  });
+
+  // spec: AC-TOOLS-40
+  test("processes that left the group by setsid or a double fork are stopped and named", async () => {
+    const r = await rig();
+    const daemon = (n: string, argv: string): string =>
+      `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); open F, ">", "${r.cwd}/${n}.pid"; print F $$; close F; exec ${argv}' &`;
+    const out = await bash(r, {
+      command: `${daemon("a", '"sleep", "1001"')}\n${daemon("b", '"sleep", "1002"')}\nsleep 0.3`,
+    });
+    expect(out.status).toBe("ok");
+    expect(text(out)).toContain("Stopped 2 background process(es)");
+    expect(text(out)).toContain("sleep 1001");
+    expect(text(out)).toContain("sleep 1002");
+    for (const n of ["a", "b"]) expect(alive(await pidOf(join(r.cwd, `${n}.pid`)))).toBe(false);
+  });
+});
+
+describe.skipIf(process.platform === "win32")("Bash: files read and changed", () => {
+  async function repo(): Promise<Rig> {
+    const r = await rig();
+    gitIn(r.cwd, "init", "-q");
+    await writeFile(join(r.cwd, "a.ts"), "const a   =  1\n");
+    await writeFile(join(r.cwd, "keep.ts"), "keep\n");
+    gitIn(r.cwd, "add", ".");
+    gitIn(r.cwd, "commit", "-q", "-m", "init");
+    const snapshotter = await openSnapshotter({
+      workspace: r.cwd,
+      projectDir: join(r.tmp, "project"),
+      session: "s",
+      env: r.ctx.env,
+      platform: process.platform,
+    });
+    r.ctx = { ...r.ctx, snapshots: snapshotter };
+    return r;
+  }
+  const run = (r: Rig, tool: "Read" | "Write", input: Record<string, unknown>): Promise<ToolOutput> => {
+    const def = tool === "Read" ? createReadTool() : createWriteTool();
+    const prepared = createToolRegistry([def]).prepare(tool, input);
+    if (!prepared.ok) throw new Error(prepared.message);
+    return def.run(prepared.input as never, r.ctx);
+  };
+
+  // spec: AC-TOOLS-41
+  test("a command that reformats a read file lists it as changed; the next Write without a re-read is stale", async () => {
+    const r = await repo();
+    const file = join(r.cwd, "a.ts");
+    await run(r, "Read", { file_path: file });
+    const out = await bash(r, { command: "printf 'const a = 1;\\n' > a.ts; printf 'new\\nfile\\n' > b.ts" });
+    expect(text(out)).toBe(
+      "(no output)\nFiles changed while this ran: a.ts (+1 −1, re-read before editing), b.ts (+2 −0)",
+    );
+    expect(out.meta?.fileChanges).toEqual([
+      { path: file, op: "modify", added: 1, removed: 1 },
+      { path: join(r.cwd, "b.ts"), op: "create", added: 2, removed: 0 },
+    ]);
+    const refused = await run(r, "Write", { file_path: file, content: "mine\n" });
+    expect(refused.status).toBe("error");
+    expect(text(refused)).toContain("changed since you read it");
+    expect(await readFile(file, "utf8")).toBe("const a = 1;\n");
+    await run(r, "Read", { file_path: file });
+    expect((await run(r, "Write", { file_path: file, content: "mine\n" })).status).toBe("ok");
+  });
+
+  test("more than 20 changed files are counted, and an unchanged tree lists nothing", async () => {
+    const r = await repo();
+    expect(text(await bash(r, { command: "true" }))).toBe("(no output)");
+    const out = await bash(r, { command: "for i in $(seq 1 25); do echo $i > f$i.txt; done" });
+    expect(text(out)).toContain("and 5 more");
+    expect(text(out).match(/f\d+\.txt/g)?.length).toBe(20);
+  });
+
+  // spec: AC-TOOLS-41
+  test("cat, head and grep of one file count as a read of it; pipes and empty output do not", async () => {
+    const r = await repo();
+    const file = join(r.cwd, "a.ts");
+    await bash(r, { command: "cat a.ts | head -1" });
+    expect(r.ctx.readState.get(file)).toBeUndefined();
+    await bash(r, { command: "grep nothing a.ts" });
+    expect(r.ctx.readState.get(file)).toBeUndefined();
+    await bash(r, { command: "grep -n const a.ts" });
+    expect(r.ctx.readState.get(file)?.partial).toBe(true);
+    await bash(r, { command: "head -n 1 a.ts" });
+    expect(r.ctx.readState.get(file)?.partial).toBe(true);
+    await bash(r, { command: "cat a.ts" });
+    const whole = r.ctx.readState.get(file);
+    expect(whole?.partial).toBe(false);
+    expect(whole?.size).toBe(15);
+    expect(whole?.sha256).toBe(new Bun.CryptoHasher("sha256").update("const a   =  1\n").digest("hex"));
   });
 });

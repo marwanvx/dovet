@@ -1,5 +1,6 @@
 import { posix, win32 } from "node:path";
 import { isErrno } from "./errno.ts";
+import { sweepStragglers } from "./sweep.ts";
 import type { ChildHandle, Os, Platform } from "./types.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -13,7 +14,7 @@ export function createProcessManager(deps: {
   env: Env;
   kill: (pid: number, signal: NodeJS.Signals | 0) => void;
   termGraceMs: number;
-}): Pick<Platform, "spawn" | "killTree"> {
+}): Pick<Platform, "spawn" | "killTree" | "sweep"> {
   const { os, env, kill, termGraceMs } = deps;
   const groups = new Map<string, Set<number>>();
 
@@ -112,6 +113,10 @@ export function createProcessManager(deps: {
         return proc.exitCode;
       });
       return { pid, stdout: proc.stdout, stderr: proc.stderr, exited: Promise.race([exited, killFailed]) };
+    },
+
+    sweep(group, marker) {
+      return sweepStragglers({ os, kill, termGraceMs, pgids: [...(groups.get(group) ?? [])], marker });
     },
 
     async killTree(group) {
