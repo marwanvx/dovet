@@ -131,8 +131,6 @@ describe("Grep: ignore files and sensitive files", () => {
       ".gitignore": "node_modules\n",
       "src/a.ts": "needle\n",
       "node_modules/x/i.js": "needle\n",
-      ".hg/store": "needle\n",
-      ".jj/x": "needle\n",
       "node_modules/x/.gitignore": "dist\n",
       "node_modules/x/dist/a.js": "needle\n",
     });
@@ -143,6 +141,12 @@ describe("Grep: ignore files and sensitive files", () => {
     expect(text(inside)).toContain("node_modules/x/dist/a.js");
     expect(text(inside)).toContain("Searched an ignored directory.");
     expect(text(await grep(ctx, { pattern: "needle", path: "src" }))).not.toContain("Searched an ignored");
+  });
+
+  test("VCS metadata folders are never searched", async () => {
+    const cwd = await workspace();
+    await files(cwd, { ".hg/store": "needle\n", ".jj/x": "needle\n", ".git/config": "needle\n", "a.txt": "needle\n" });
+    expect(text(await grep(await searchContext(cwd), { pattern: "needle" }))).toBe("a.txt");
   });
 
   test("sensitive files are skipped and counted; a sensitive file given as path is searched", async () => {
@@ -188,6 +192,13 @@ describe("Grep: failures are never 'no matches'", () => {
     const ctx = fakeRg(await searchContext(cwd), "setInterval(() => {}, 1000);");
     const out = await grep(ctx, { pattern: "x" }, createGrepTool({ limits: { timeoutMs: 300 } }));
     expect(text(out)).toContain("results are partial");
+    expect(text(out)).not.toContain("No matches found");
+  });
+
+  test("exit code 2 with no message is an error, not 'No matches found'", async () => {
+    const cwd = await workspace();
+    const out = await grep(fakeRg(await searchContext(cwd), "process.exit(2)"), { pattern: "x" });
+    expect(out.status).toBe("error");
     expect(text(out)).not.toContain("No matches found");
   });
 
