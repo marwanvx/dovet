@@ -8,6 +8,20 @@ export type ChildHandle = {
   exited: Promise<number | null>;
 };
 
+export type ShellChoice = {
+  kind: "bash" | "git-bash" | "powershell";
+  path: AbsPath;
+  /** `pwsh` is PowerShell 7+, `windows` is 5.1. */
+  edition?: "pwsh" | "windows";
+  /** Why the setting was not followed, when it was not. */
+  note?: string;
+};
+
+export type ShellSetting = {
+  windows?: "auto" | "git-bash" | "powershell" | undefined;
+  gitBashPath?: string | undefined;
+};
+
 export type Os = "linux" | "darwin" | "win32";
 
 export interface Platform {
@@ -27,6 +41,7 @@ export interface Platform {
   sweep(group: string, marker: string): Promise<Array<{ pid: number; name: string }>>;
   shells(): { bash?: AbsPath; powershell?: AbsPath; gitBash?: AbsPath };
   clipboard: { readImage(): Promise<Uint8Array | null>; writeText(t: string): Promise<void> };
+  resolveShell(setting?: ShellSetting): Promise<ShellChoice | undefined>;
   libexec(name: "rg" | "srt"): AbsPath;
   // ASSUMPTION (QUESTIONS Q18): not yet in interfaces §2b
   resolve(program: string): Promise<AbsPath | undefined>;

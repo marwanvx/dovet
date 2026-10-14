@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { exitOneIsBenign, fileView, INTERACTIVE_NOTICE, interactiveNotice, rewritesWorktree } from "./shell-command.ts";
+import {
+  exitOneIsBenign,
+  fileView,
+  INTERACTIVE_NOTICE,
+  interactiveNotice,
+  rewriteNulRedirects,
+  rewritesWorktree,
+} from "./shell-command.ts";
 import { simpleCommands } from "./shell-words.ts";
 
 describe("shell command shapes", () => {
@@ -102,5 +109,28 @@ describe("shell command shapes", () => {
     expect(simpleCommands("cat <<EOF\nx\nEOF")).toBeUndefined();
     expect(simpleCommands("a && b | c; d &")?.map((s) => s.words)).toEqual([["a"], ["b"], ["c"], ["d"]]);
     expect(simpleCommands("echo hi # note")?.[0]?.words).toEqual(["echo", "hi"]);
+  });
+});
+
+describe("Git Bash nul redirects", () => {
+  // spec: AC-PLAT-06
+  test("unquoted CMD-style nul targets become /dev/null; quoted, longer and file names are left alone", () => {
+    const rewrite = (c: string) => rewriteNulRedirects(c);
+    expect(rewrite("echo x 2>nul")).toEqual({ command: "echo x 2>/dev/null", changed: true });
+    expect(rewrite("ls >NUL 2>&1; cat a &>nul")).toEqual({
+      command: "ls >/dev/null 2>&1; cat a &>/dev/null",
+      changed: true,
+    });
+    expect(rewrite("echo x >> nul | cat").command).toBe("echo x >> /dev/null | cat");
+    for (const same of [
+      'echo "2>nul"',
+      "echo '2>nul'",
+      "echo x > null",
+      "echo x > nul.txt",
+      "echo 2>nulx",
+      "echo a2>nul",
+    ]) {
+      expect(rewrite(same)).toEqual({ command: same, changed: false });
+    }
   });
 });

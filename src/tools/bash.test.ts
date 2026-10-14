@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPlatformCore } from "../platform/index.ts";
 import { type AbsPath, Settings } from "../schema/index.ts";
@@ -23,7 +24,8 @@ async function rig(env: Record<string, string> = {}, settings: Record<string, un
   const cwd = await workspace();
   const home = await workspace();
   const tmp = await workspace();
-  const launch = { PATH: process.env.PATH ?? "", HOME: home, SHELL: BASH, ...env };
+  const windows = process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "", TEMP: tmpdir() } : {};
+  const launch = { PATH: process.env.PATH ?? "", HOME: home, SHELL: BASH, ...windows, ...env };
   const core = createPlatformCore({
     os: process.platform as "linux",
     arch: process.arch,
@@ -74,7 +76,6 @@ const alive = (pid: number): boolean => {
   }
 };
 
-// Git Bash execution on Windows is exercised with the shell selection in M1-20.
 describe.skipIf(process.platform === "win32")("Bash", () => {
   // spec: AC-TOOLS-06
   test("finds nvm's node through the snapshot; cwd carries over, exports and an outside cwd do not", async () => {
@@ -307,6 +308,58 @@ async function pidOf(path: string): Promise<number> {
   throw new Error(`${path} never got a pid`);
 }
 
+describe("Bash on every OS", () => {
+  // spec: AC-PLAT-04
+  test("non-ASCII output round-trips", async () => {
+    const r = await rig();
+    expect(text(await bash(r, { command: 'echo "héllo 你好 🎉"' }))).toBe("héllo 你好 🎉");
+  });
+
+  // spec: AC-TOOLS-08
+  test("a timeout kills grandchildren too", async () => {
+    const r = await rig();
+    // Git Bash's $! is an MSYS pid; /proc/<pid>/winpid is the Windows one.
+    const out = await bash(r, {
+      command: "(sleep 300 & (cat /proc/$!/winpid 2>/dev/null || echo $!) > gc.pid; wait)",
+      timeout: 1500,
+    });
+    expect(out.status).toBe("timeout");
+    const pid = await pidOf(join(r.cwd, "gc.pid"));
+    await Bun.sleep(200);
+    expect(alive(pid)).toBe(false);
+  });
+
+  // spec: AC-PLAT-06
+  test("a session cwd deleted mid-session gives a clear error and resets to the project root", async () => {
+    const r = await rig();
+    const sub = join(r.cwd, "sub");
+    await mkdir(sub);
+    const inSub = { ...r, ctx: { ...r.ctx, session: { ...r.ctx.session, cwd: sub as AbsPath } } };
+    await rm(sub, { recursive: true });
+    const out = await bash(inSub, { command: "echo hi" });
+    expect(out.status).toBe("error");
+    expect(text(out)).toContain(`The working directory ${sub} no longer exists`);
+    expect(text(out)).toContain(`reset to ${r.cwd}`);
+    expect(out.meta?.effects).toEqual([{ kind: "cwd", path: r.cwd }]);
+  });
+
+  // spec: AC-PLAT-06
+  test.skipIf(process.platform !== "win32")(
+    "Git Bash: 2>nul creates no nul file; Python prints non-ASCII",
+    async () => {
+      const r = await rig();
+      const out = await bash(r, { command: "echo x 2>nul; echo y >nul; echo done" });
+      expect(text(out)).toContain("done");
+      expect(text(out)).toContain("rewritten to /dev/null");
+      expect(await readdir(r.cwd)).not.toContain("nul");
+      if (Bun.which("python") !== null) {
+        const py = await bash(r, { command: `python -c "print('héllo 你好')"` });
+        expect(text(py)).toBe("héllo 你好");
+      }
+    },
+  );
+});
+
 describe.skipIf(process.platform === "win32")("Bash: results", () => {
   // spec: AC-TOOLS-07
   test("grep with no match is a success, false is a failure with a 10k excerpt, 50k output goes to a file", async () => {
@@ -335,12 +388,6 @@ describe.skipIf(process.platform === "win32")("Bash: results", () => {
     expect(edge.meta?.offloadPath).toBeUndefined();
   });
 
-  // spec: AC-PLAT-04
-  test("non-ASCII output round-trips", async () => {
-    const r = await rig();
-    expect(text(await bash(r, { command: 'echo "héllo 你好 🎉"' }))).toBe("héllo 你好 🎉");
-  });
-
   test("a command that floods the output is stopped at the cap and says so", async () => {
     const r = await rig();
     const tool = createBashTool({ tmpDir: r.tmp, outputCapBytes: 2_000_000 });
@@ -350,16 +397,6 @@ describe.skipIf(process.platform === "win32")("Bash: results", () => {
 });
 
 describe.skipIf(process.platform === "win32")("Bash: process lifecycle", () => {
-  // spec: AC-TOOLS-08
-  test("a timeout kills grandchildren too", async () => {
-    const r = await rig();
-    const out = await bash(r, { command: `(sleep 300 & echo $! > ${r.cwd}/gc.pid; wait)`, timeout: 700 });
-    expect(out.status).toBe("timeout");
-    const pid = await pidOf(join(r.cwd, "gc.pid"));
-    await Bun.sleep(100);
-    expect(alive(pid)).toBe(false);
-  });
-
   // spec: AC-TOOLS-08
   test("git commit without a message is refused before it runs", async () => {
     const r = await rig();

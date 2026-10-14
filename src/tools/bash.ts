@@ -1,4 +1,4 @@
-// Bash (tools §5): a fresh process per command, the command written verbatim into a script file, cwd carried over.
+// Bash (tools §5) and PowerShell (§6): a fresh process per command, the command written into a script file, cwd carried over.
 import { access, constants, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -7,8 +7,15 @@ import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 import { sha256Of, sniffEncoding } from "./codec.ts";
 import { OUTPUT_LIMIT } from "./output.ts";
+import { type Edition, isPolicyRefusal, powershellArgv, powershellScript } from "./powershell-script.ts";
 import { MAX_SCAN_BYTES } from "./read-scan.ts";
-import { exitOneIsBenign, fileView, interactiveNotice, rewritesWorktree } from "./shell-command.ts";
+import {
+  exitOneIsBenign,
+  fileView,
+  interactiveNotice,
+  rewriteNulRedirects,
+  rewritesWorktree,
+} from "./shell-command.ts";
 import { commandEnv, parseEnvFile, type ShellSnapshot } from "./shell-env.ts";
 import { headAndTail, sanitizeOutput } from "./shell-output.ts";
 import type { SessionEffect, ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
@@ -51,12 +58,34 @@ export function createBashTool(opts: {
   /** The command is stopped once its output passes this many bytes. */
   outputCapBytes?: number;
   snapshot?: ShellSnapshot | undefined;
+  /** PowerShell instead of bash; `edition` picks the 5.1 wrapper and tool description. */
+  powershell?: {
+    edition: Edition /** Start in `-Command` mode, as after a Group Policy refusal. */;
+    viaCommand?: boolean;
+  };
 }): ToolDefinition<BashInput> {
   let noteShown = false;
+  let viaCommand = opts.powershell?.viaCommand ?? false;
+  const ps = opts.powershell;
+  const toolName = ps === undefined ? "Bash" : "PowerShell";
 
   async function findShell(ctx: ToolContext): Promise<{ path: AbsPath; warning?: string }> {
     const configured = ctx.settings.shell?.path;
     if (configured !== undefined) return { path: configured as AbsPath };
+    if (ps !== undefined) {
+      const found =
+        ctx.platform.shells().powershell ??
+        (await ctx.platform.resolve(ps.edition === "pwsh" ? "pwsh" : "powershell")) ??
+        (await ctx.platform.resolve("pwsh"));
+      if (found === undefined) throw new Error("PowerShell was not found: install PowerShell or set shell.path");
+      return { path: found };
+    }
+    if (ctx.platform.os === "win32") {
+      const choice = await ctx.platform.resolveShell(ctx.settings.shell);
+      if (choice?.kind !== "git-bash")
+        throw new Error("Git Bash was not found: install Git for Windows or set shell.path");
+      return { path: choice.path };
+    }
     const found = ctx.platform.shells().bash ?? (await ctx.platform.resolve("bash"));
     if (found !== undefined) return { path: found };
     for (const candidate of ["/bin/bash", "/bin/sh"] as const) {
@@ -128,10 +157,32 @@ export function createBashTool(opts: {
     return `Files changed while this ran: ${shown.join(", ")}${more}`;
   }
 
+  async function missingCwd(ctx: ToolContext): Promise<ToolOutput | undefined> {
+    try {
+      await stat(ctx.session.cwd);
+      return undefined;
+    } catch (e) {
+      if (!isErrno(e, "ENOENT", "ENOTDIR")) throw e;
+    }
+    const root = ctx.session.workingDirs[0] ?? ctx.session.cwd;
+    return {
+      status: "error",
+      content: [
+        {
+          kind: "text",
+          text: `The working directory ${ctx.session.cwd} no longer exists (deleted or unmounted). The working directory is reset to ${root}; run the command again.`,
+        },
+      ],
+      meta: { effects: root === ctx.session.cwd ? [] : [{ kind: "cwd", path: root }] },
+    };
+  }
+
   async function run(input: BashInput, ctx: ToolContext): Promise<ToolOutput> {
     const interactive = interactiveNotice(input.command);
     if (interactive !== undefined) return { status: "error", content: [{ kind: "text", text: interactive }] };
     const started = Date.now();
+    const gone = await missingCwd(ctx);
+    if (gone !== undefined) return gone;
     const shell = await findShell(ctx);
     const snapshot = (await raceAbort(opts.snapshot?.ready(), ctx.signal)) ?? { env: null };
     if (ctx.signal.aborted)
@@ -157,6 +208,14 @@ export function createBashTool(opts: {
         ],
       };
     }
+    let command = input.command;
+    if (ctx.platform.os === "win32" && ps === undefined) {
+      const rewritten = rewriteNulRedirects(command);
+      if (rewritten.changed) {
+        command = rewritten.command;
+        notes.push("A redirect to `nul` was rewritten to /dev/null (Git Bash would create a file named nul).");
+      }
+    }
     const runMarker = `DOVET_RUN=${crypto.randomUUID()}`;
     const { env: baseEnv } = commandEnv({
       os: ctx.platform.os,
@@ -178,16 +237,16 @@ export function createBashTool(opts: {
     }
 
     const id = crypto.randomUUID().slice(0, 8);
-    const dir = join(opts.tmpDir, "sh");
+    const dir = join(opts.tmpDir, ps === undefined ? "sh" : "ps");
     const outputDir = opts.outputDir ?? join(opts.tmpDir, "out");
-    const script = join(dir, `${id}.sh`);
+    const script = join(dir, ps === undefined ? `${id}.sh` : `${id}.ps1`);
     const cwdFile = join(dir, `${id}.cwd`);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    await writeFile(
-      script,
-      `set +H\ntrap ${quote(`${ctx.platform.os === "win32" ? "pwd -W" : "pwd -P"} > ${quote(cwdFile)}`)} EXIT\ncd -- ${quote(ctx.session.cwd)} || exit 1\n${input.command}\n`,
-      { mode: 0o600 },
-    );
+    const scriptText =
+      ps === undefined
+        ? `set +H\ntrap ${quote(`${ctx.platform.os === "win32" ? "pwd -W" : "pwd -P"} > ${quote(cwdFile)}`)} EXIT\ncd -- ${quote(ctx.session.cwd)} || exit 1\n${command}\n`
+        : powershellScript({ command: input.command, cwd: ctx.session.cwd, cwdFile, edition: ps.edition });
+    await writeFile(script, ps === undefined ? scriptText : `\uFEFF${scriptText}`, { mode: 0o600 });
 
     const timeoutMs = Math.min(
       input.timeout ?? ctx.settings.shell?.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -202,7 +261,7 @@ export function createBashTool(opts: {
     const onAbort = (): void => abort.abort();
     ctx.signal.addEventListener("abort", onAbort, { once: true });
     if (ctx.signal.aborted) onAbort();
-    const group = `bash:${ctx.session.id}:${id}`;
+    const group = `${toolName.toLowerCase()}:${ctx.session.id}:${id}`;
     try {
       if (abort.signal.aborted) {
         return {
@@ -217,35 +276,44 @@ export function createBashTool(opts: {
           ],
         };
       }
-      const child = ctx.platform.spawn({
-        argv: [shell.path, script],
-        cwd: ctx.session.cwd,
-        env,
-        stdin: "null",
-        signal: abort.signal,
-        group,
-      });
       const cap = opts.outputCapBytes ?? OUTPUT_CAP_BYTES;
       let capped = false;
       let stragglers: Array<{ name: string }> = [];
       const decoder = new TextDecoder();
-      const out = await collectOutput(child, {
-        onChunk: (c) => ctx.emit({ kind: "tail", text: decoder.decode(c, { stream: true }) }),
-        afterExit: async () => {
-          try {
-            stragglers = await ctx.platform.sweep(group, runMarker);
-          } catch (e) {
-            notes.push(
-              `Couldn't look for processes the command left running: ${e instanceof Error ? e.message : String(e)}`,
-            );
-          }
-        },
-        maxBytes: cap,
-        onLimit: () => {
-          capped = true;
-          abort.abort();
-        },
-      });
+      let out: Awaited<ReturnType<typeof collectOutput>>;
+      for (;;) {
+        const child = ctx.platform.spawn({
+          argv:
+            ps === undefined
+              ? [shell.path, script]
+              : powershellArgv({ exe: shell.path, scriptPath: script, scriptText, viaCommand }),
+          cwd: ctx.session.cwd,
+          env,
+          stdin: "null",
+          signal: abort.signal,
+          group,
+        });
+        out = await collectOutput(child, {
+          onChunk: (c) => ctx.emit({ kind: "tail", text: decoder.decode(c, { stream: true }) }),
+          afterExit: async () => {
+            try {
+              stragglers = await ctx.platform.sweep(group, runMarker);
+            } catch (e) {
+              notes.push(
+                `Couldn't look for processes the command left running: ${e instanceof Error ? e.message : String(e)}`,
+              );
+            }
+          },
+          maxBytes: cap,
+          onLimit: () => {
+            capped = true;
+            abort.abort();
+          },
+        });
+        if (ps === undefined || viaCommand || out.code === 0 || !isPolicyRefusal(out.merged.toString("utf8"))) break;
+        viaCommand = true;
+        notes.push("Group Policy enforces a PowerShell execution policy; commands run with -Command from now on.");
+      }
       let text = sanitizeOutput(out.merged);
       if (capped) text += `\nOutput exceeded ${Math.round(cap / 1_000_000)} MB; the command was stopped.`;
       if (stragglers.length > 0) {
@@ -330,7 +398,7 @@ export function createBashTool(opts: {
     }
     let final: string;
     try {
-      final = (await readFile(cwdFile, "utf8")).replace(/\r?\n$/, "");
+      final = (await readFile(cwdFile, "utf8")).replace(/^\uFEFF/, "").split(/\r?\n/)[0] ?? "";
       if (ctx.platform.os === "win32") final = final.replaceAll("/", "\\");
     } catch (e) {
       if (isErrno(e, "ENOENT")) return [];
@@ -344,16 +412,17 @@ export function createBashTool(opts: {
   }
 
   return {
-    name: "Bash",
+    name: toolName,
     input: BashInput,
-    descriptionFile: "tools/Bash.md",
+    descriptionFile:
+      ps === undefined ? "tools/Bash.md" : ps.edition === "pwsh" ? "tools/PowerShell.md" : "tools/PowerShell51.md",
     errorExample: { command: "ls -la", description: "List files in the current directory", timeout: 120_000 },
     parallelSafe: false,
     mutates: "system",
     describeAction(input) {
       return {
         kind: "shell",
-        shell: "bash",
+        shell: ps === undefined ? "bash" : "powershell",
         command: input.command,
         sandboxed: false,
         unsandboxedRetry: input.dangerouslyDisableSandbox === true,

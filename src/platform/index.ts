@@ -8,4 +8,5 @@ export { GIT_HARDENING_ARGS, type GitCall, type GitHead, hardenedGitEnv, readGit
 export { type LibexecName, libexecPath } from "./libexec.ts";
 export { describeOs } from "./os-label.ts";
 export { canonicalizePath, isWithin, lexicalPath, PathRefused, pathKey } from "./paths.ts";
-export type { ChildHandle, Os, Platform } from "./types.ts";
+export { resolveShell, type ShellDeps } from "./shell.ts";
+export type { ChildHandle, Os, Platform, ShellChoice, ShellSetting } from "./types.ts";

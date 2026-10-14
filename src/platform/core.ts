@@ -1,8 +1,10 @@
 import type { AbsPath } from "../schema/index.ts";
 import { createExecResolver } from "./exec.ts";
+import { runHardenedGit } from "./git.ts";
 import { libexecPath } from "./libexec.ts";
 import { canonicalizePath } from "./paths.ts";
 import { createProcessManager } from "./process.ts";
+import { fileExists, resolveShell } from "./shell.ts";
 import type { Os, Platform } from "./types.ts";
 
 /** What exists so far; `shells()` and `clipboard` join in the tasks that build them (M1-20, M3). */
@@ -22,6 +24,12 @@ export function createPlatformCore(deps: {
   const { os, arch, execPath, env, projectRoot } = deps;
   const exec = createExecResolver({ os, env, projectRoot });
   const processes = createProcessManager({ os, env, kill: deps.kill, termGraceMs: deps.termGraceMs ?? 3000 });
+  const gitExecPath = async (): Promise<string | undefined> => {
+    const git = await exec.resolve("git");
+    if (git === undefined) return undefined;
+    const out = await runHardenedGit({ git, cwd: projectRoot, env }, ["--exec-path"]);
+    return out.code === 0 ? out.stdout.trim() : undefined;
+  };
   return {
     os,
     arch,
@@ -32,5 +40,7 @@ export function createPlatformCore(deps: {
     libexec: (name) => libexecPath(execPath, os, name),
     // ASSUMPTION (QUESTIONS Q18): Platform.resolve
     resolve: exec.resolve,
+    resolveShell: (setting) =>
+      resolveShell({ os, env, resolve: exec.resolve, exists: fileExists, gitExecPath }, setting),
   };
 }
