@@ -8,7 +8,8 @@ export type AnalyzeOptions = {
   workingDirs: readonly string[];
   home?: string;
   /** Expands an unquoted glob in `cwd`; matches are relative to it unless the pattern is absolute. */
-  glob(pattern: string, cwd: string): string[];
+  glob(pattern: string, cwd: string, deadline?: number): string[];
+  isDirectory(path: string): boolean;
   /** Parser time allowed, in ms (permissions §4.0 item 7). */
   budgetMs?: number;
 };
@@ -79,7 +80,11 @@ export function createContext(opts: AnalyzeOptions) {
           ok = false;
           continue;
         }
-        const matches = opts.glob(w.text, cwd);
+        const matches = opts.glob(w.text, cwd, deadline.at);
+        if (performance.now() > deadline.at) {
+          fail("analysis budget exceeded");
+          return false;
+        }
         if (matches.length > MAX_GLOB_MATCHES) {
           fail(`glob ${w.text} matches more than ${MAX_GLOB_MATCHES} files`);
           ok = false;
@@ -95,5 +100,19 @@ export function createContext(opts: AnalyzeOptions) {
     }
     return ok;
   };
-  return { opts, commands, operands, reasons, state, deadline, fail, toAbsolute, tildeOk, inside, checkPaths };
+  const isDirectory = (path: string): boolean => opts.isDirectory(path);
+  return {
+    opts,
+    isDirectory,
+    commands,
+    operands,
+    reasons,
+    state,
+    deadline,
+    fail,
+    toAbsolute,
+    tildeOk,
+    inside,
+    checkPaths,
+  };
 }

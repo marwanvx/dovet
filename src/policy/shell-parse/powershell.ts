@@ -50,6 +50,9 @@ function literal(n: Node): Word {
   return { text: t, literal: plain, glob: plain && /[*?[]/.test(t) };
 }
 
+/** A provider-qualified path (`env:PATH`, `HKCU:\\x`, `FileSystem::/etc`): not a file under the working directories. */
+const isProviderPath = (text: string): boolean => text.includes("::") || /^[A-Za-z][\w.]+:/.test(text);
+
 export type PowerShellState = { cwd: string; stack: string[] };
 
 export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): void {
@@ -130,16 +133,22 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
       if (lower === "pop-location" && st.stack.length > 0) st.cwd = st.stack.pop() ?? st.cwd;
       else if (target?.literal && !target.glob && parsed.length === 1) {
         if (lower === "push-location") st.stack.push(st.cwd);
-        st.cwd = ctx.toAbsolute(target.text, st.cwd);
+        const next = ctx.toAbsolute(target.text, st.cwd);
+        if (isProviderPath(target.text) || !ctx.isDirectory(next)) {
+          ctx.fail(`${canonical} target is not a directory`);
+          return;
+        }
+        st.cwd = next;
         sub.readOnly = lower === "set-location" && ctx.inside(st.cwd) && redirectsOk;
       } else ctx.fail(`${canonical} without a literal target`);
       return;
     }
     const paths = classify(lower, parsed);
-    if (paths?.some((w) => /^[A-Za-z]\w+:/.test(w.text))) {
+    if (paths?.some((w) => isProviderPath(w.text))) {
       ctx.fail("provider path");
       return;
     }
+    if (paths?.length === 0 && lower === "get-childitem") paths.push({ text: ".", literal: true, glob: false });
     if (paths !== undefined) sub.readOnly = ctx.checkPaths(paths, st.cwd, "read") && redirectsOk;
   }
 

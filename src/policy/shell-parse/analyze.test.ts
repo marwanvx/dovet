@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tempProject } from "../../../test/helpers/index.ts";
 import { evaluateRules, loadRules, type RuleCall, type RuleSet, type Subcommand } from "../rules/index.ts";
 import { type Analysis, analyzeShell, powershellExitOneIsBenign } from "./analyze.ts";
-import { expandGlob } from "./glob.ts";
+import { expandGlob, isDirectory } from "./glob.ts";
 import { loadShellParsers, type ShellLanguage, type ShellParsers } from "./load.ts";
 
 let parsers: ShellParsers;
@@ -25,12 +25,15 @@ beforeAll(async () => {
 });
 afterAll(() => dispose());
 
+const analyzeOptions = () => ({ cwd: root, workingDirs: [root], glob: expandGlob, isDirectory });
+
 const analyze = (command: string, language: ShellLanguage = "bash", over: { cwd?: string; budgetMs?: number } = {}) =>
   analyzeShell(parsers, language, command, {
     cwd: over.cwd ?? root,
     workingDirs: [root],
     home: join(root, "..", "home"),
     glob: expandGlob,
+    isDirectory,
     ...(over.budgetMs === undefined ? {} : { budgetMs: over.budgetMs }),
   });
 
@@ -182,6 +185,7 @@ describe("file operands, globs and the simulated cwd", () => {
         cwd: many.root,
         workingDirs: [many.root],
         glob: expandGlob,
+        isDirectory,
       });
       expect(a.commands?.[0]?.readOnly).toBe(false);
       expect(a.reasons.join()).toContain("more than 1000");
@@ -238,6 +242,8 @@ describe("shapes that are not understood", () => {
     ["a quoted variable", 'echo "$HOME"'],
     ["an unquoted here-document with an expansion", "cat <<EOF\n${x:-1}\nEOF"],
     ["a nested deny target", "echo ${x:-$(rm -rf y)}"],
+    ["backticks in an unquoted here-document", "cat <<EOF\n`rm -rf y`\nEOF"],
+    ["a cd with a bad tilde", "cd ~root; ls"],
     ["a UNC path", "cat //server/share/x"],
     ["a cd inside a condition", "false || cd src"],
     ["a cd to a missing directory", "cd nonexistent; ls"],
@@ -249,11 +255,50 @@ describe("shapes that are not understood", () => {
   // spec: AC-PERM-20
   test("deny rules see commands nested in rejected constructs", () => {
     for (const command of [
+      'echo "${x:-$(rm -rf y)}"',
+      "cat <<EOF\n`rm -rf y`\nEOF",
       "echo ${x:-$(rm -rf y)}",
       "cat <<EOF\n$(rm -rf y)\nEOF",
       "for ((i=0;i<1;i++)); do rm -rf x; done",
     ])
       expect(decide(command, { deny: ["Bash(rm *)"] })).toBe("deny:Bash(rm *)");
+  });
+
+  // spec: AC-PERM-20
+  test("a directory-less ls, find and gci still report the cwd as an operand", () => {
+    expect(analyze("cd src; ls").operands).toEqual([{ access: "read", path: join(root, "src") }]);
+    expect(analyze("find -name x").operands).toEqual([{ access: "read", path: root }]);
+    expect(analyze("gci", "powershell").operands).toEqual([{ access: "read", path: root }]);
+  });
+
+  // spec: AC-PERM-20
+  test("PowerShell cd into a provider path or a missing directory is not followed", () => {
+    for (const command of [
+      "cd env:; gc PATH",
+      "cd FileSystem::/etc; gc passwd",
+      "cd Microsoft.PowerShell.Core\\FileSystem::/etc; gc passwd",
+      "cd nonexist; gc ..\\a.ts",
+      "cd a.ts; gc ..\\a.ts",
+      "gc Microsoft.PowerShell.Core\\FileSystem::/etc/passwd",
+    ])
+      expect(allReadOnly(analyze(command, "powershell"))).toBe(false);
+  });
+
+  // spec: AC-PERM-22
+  test("glob time counts against the budget", () => {
+    const slowGlob = (): string[] => {
+      const end = performance.now() + 30;
+      while (performance.now() < end);
+      return [];
+    };
+    const a = analyzeShell(parsers, "bash", "cat *.zzz", { ...analyzeOptions(), glob: slowGlob, budgetMs: 10 });
+    expect(a.understood).toBe(false);
+    expect(a.commands?.[0]?.readOnly).not.toBe(true);
+  });
+
+  // spec: AC-PERM-04
+  test("a +refspec push is a force push", () => {
+    expect(decide("git push origin +main", { allow: ["Bash(git push *)"] })).toBeUndefined();
   });
 
   // spec: AC-PERM-20
@@ -267,7 +312,12 @@ describe("shapes that are not understood", () => {
   test("~user, ~+ and a missing home never resolve inside the project", () => {
     expect(allReadOnly(analyze("cat ~root/x"))).toBe(false);
     expect(allReadOnly(analyze("cat ~+/x"))).toBe(false);
-    const noHome = analyzeShell(parsers, "bash", "cat ~/x", { cwd: root, workingDirs: [root], glob: expandGlob });
+    const noHome = analyzeShell(parsers, "bash", "cat ~/x", {
+      cwd: root,
+      workingDirs: [root],
+      glob: expandGlob,
+      isDirectory,
+    });
     expect(allReadOnly(noHome)).toBe(false);
   });
 
@@ -327,7 +377,7 @@ describe("fail-closed analysis", () => {
         throw new Error("out of memory");
       },
     } as unknown as ShellParsers;
-    const a = analyzeShell(broken, "bash", "ls", { cwd: root, workingDirs: [root], glob: expandGlob });
+    const a = analyzeShell(broken, "bash", "ls", { cwd: root, workingDirs: [root], glob: expandGlob, isDirectory });
     expect(a).toMatchObject({ commands: undefined, understood: false });
     expect(a.reasons.join()).toContain("out of memory");
   });

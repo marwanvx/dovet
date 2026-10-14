@@ -1,5 +1,4 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
-import { statSync } from "node:fs";
 import type { Node } from "web-tree-sitter";
 import { isSafeEnv, type Redirect, type Subcommand } from "../rules/index.ts";
 import type { Context } from "./context.ts";
@@ -14,18 +13,10 @@ export type Walk = {
 };
 
 const MAX_DEPTH = 8;
-const CWD_DEFAULT = new Set(["ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
+const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
-
-const isDirectory = (path: string): boolean => {
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
-};
 
 const fresh = (st: State): State => ({ ...st, stack: [...st.stack], loops: new Map(st.loops), depth: st.depth + 1 });
 
@@ -138,6 +129,11 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
               ctx.fail("here-document with expansions");
               statement(p, fresh(st), true);
             }
+            // tree-sitter leaves backticks in an unquoted body as plain text.
+            for (const m of c.text.matchAll(/`([^`]*)`/g)) {
+              ctx.fail("here-document with command substitution");
+              walk.script(m[1] ?? "", fresh(st));
+            }
           }
         } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
       }
@@ -182,7 +178,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return false;
     }
     if (cond) ctx.fail(`${name} inside a condition or loop`);
-    if (!isDirectory(target)) {
+    if (!ctx.isDirectory(target)) {
       ctx.fail(`${name} target is not a directory`);
       return false;
     }

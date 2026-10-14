@@ -207,7 +207,12 @@ export function needsExactRule(argv: string[]): boolean {
   if (name === "find") return rest.some((a) => FIND_ACTIONS.test(a));
   if (name === "docker" || name === "podman") return rest.some((a) => DAEMON_FLAGS.test(a));
   if (name === "git" || name === "gh")
-    return rest.some((a) => FORCE_FLAGS.test(a) || (/^-[a-zA-Z]*f/.test(a) && rest.includes("push")));
+    return rest.some(
+      (a) =>
+        FORCE_FLAGS.test(a) ||
+        (/^-[a-zA-Z]*f/.test(a) && rest.includes("push")) ||
+        (/^\+/.test(a) && rest.includes("push")),
+    );
   return false;
 }
 
@@ -248,6 +253,14 @@ const CMDLET_ALIASES: Record<string, string> = {
   sc: "Set-Content",
   ac: "Add-Content",
   ni: "New-Item",
+  si: "Set-Item",
+  ren: "Rename-Item",
+  rni: "Rename-Item",
+  rv: "Remove-Variable",
+  saps: "Start-Process",
+  start: "Start-Process",
+  irm: "Invoke-RestMethod",
+  icm: "Invoke-Command",
 };
 
 /** The cmdlet an alias stands for (`rm` → `Remove-Item`); other names come back unchanged. */

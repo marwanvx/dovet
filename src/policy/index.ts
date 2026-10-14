@@ -19,6 +19,6 @@ export type { SandboxOs, SandboxStartOptions, SrtHelperFile } from "./sandbox/in
 export { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor, startSandbox } from "./sandbox/init.ts";
 export type { Analysis, AnalyzeOptions, Operand } from "./shell-parse/analyze.ts";
 export { analyzeShell, powershellExitOneIsBenign } from "./shell-parse/analyze.ts";
-export { expandGlob } from "./shell-parse/glob.ts";
+export { expandGlob, isDirectory } from "./shell-parse/glob.ts";
 export type { ParsedCommand, ShellLanguage, ShellParsers } from "./shell-parse/load.ts";
 export { loadShellParsers } from "./shell-parse/load.ts";
