@@ -110,10 +110,9 @@ describe.skipIf(process.platform === "win32")("PowerShell with a stand-in execut
   });
 
   // spec: AC-TOOLS-28
-  // spec: AC-TOOLS-28
   test("policy-looking output from a script that did run is not retried", async () => {
     const r = await rig();
-    const body = 'for a; do f=$a; done; echo "x is not digitally signed"; echo ok > "${f%.ps1}.cwd"; exit 1';
+    const body = `for a; do f=$a; done; echo "x is not digitally signed"; echo ok > "\${f%.ps1}.cwd"; exit 1`;
     r.ctx.settings = Settings.parse({ shell: { path: await fake(r, body) } });
     const out = await ps(r, { command: "Import-Module x" }, { edition: "pwsh" });
     expect(out.status).toBe("error");
@@ -137,6 +136,7 @@ describe.skipIf(process.platform === "win32")("PowerShell with a stand-in execut
     expect([pwsh.name, pwsh.descriptionFile]).toEqual(["PowerShell", "tools/PowerShell.md"]);
     expect(old.descriptionFile).toBe("tools/PowerShell51.md");
     expect(createBashTool({ tmpDir: "/t" }).name).toBe("Bash");
+    expect(createBashTool({ tmpDir: "/t", gitBash: true }).descriptionFile).toBe("tools/BashGitBash.md");
   });
 });
 
@@ -209,6 +209,22 @@ describe.each(editions)("real %s", (_name, edition) => {
     expect(out.meta?.exitCode).toBe(0);
     expect(text(out)).toContain("warn");
     expect(text(out)).not.toContain("NativeCommandError");
+  }, 30_000);
+
+  // spec: AC-TOOLS-28
+  test("a succeeding native program whose stderr is merged with 2>&1 exits 0", async () => {
+    const r = await rig();
+    const warn = process.platform === "win32" ? 'cmd /c "echo warn 1>&2" 2>&1' : "sh -c 'echo warn >&2' 2>&1";
+    const out = await ps(r, { command: warn }, { edition });
+    expect(out.status).toBe("ok");
+    expect(out.meta?.exitCode).toBe(0);
+  }, 30_000);
+
+  // spec: AC-TOOLS-28
+  test("default formatting survives the wrapper", async () => {
+    const r = await rig();
+    const out = await ps(r, { command: "Get-Item ." }, { edition });
+    expect(text(out)).toContain("LastWriteTime");
   }, 30_000);
 
   // spec: AC-TOOLS-28

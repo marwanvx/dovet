@@ -43,7 +43,8 @@ async function findGitBash(deps: ShellDeps, configured: string | undefined): Pro
   const localAppData = lookup(deps.env, "LocalAppData");
   if (localAppData !== undefined) add(win32.join(localAppData, "Programs", "Git", "bin", "bash.exe"));
   for (const c of candidates) {
-    if (win32.isAbsolute(c) && !/\\windows\\system32\\/i.test(c) && (await deps.exists(c))) return c as AbsPath;
+    if (win32.isAbsolute(c) && !/\\windows\\(system32|sysnative)\\/i.test(win32.normalize(c)) && (await deps.exists(c)))
+      return c as AbsPath;
   }
   return undefined;
 }

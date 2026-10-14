@@ -60,13 +60,17 @@ export function createBashTool(opts: {
   snapshot?: ShellSnapshot | undefined;
   /** PowerShell instead of bash; `edition` picks the 5.1 wrapper and tool description. */
   powershell?: {
-    edition: Edition /** Start in `-Command` mode, as after a Group Policy refusal. */;
+    edition: Edition;
+    /** Start in `-Command` mode, as after a Group Policy refusal. */
     viaCommand?: boolean;
   };
+  /** The shell is Git Bash: use the description with its path rules. */
+  gitBash?: boolean;
 }): ToolDefinition<BashInput> {
   let noteShown = false;
   let viaCommand = opts.powershell?.viaCommand ?? false;
   const ps = opts.powershell;
+  let gitBashPath: AbsPath | undefined;
   const toolName = ps === undefined ? "Bash" : "PowerShell";
 
   async function findShell(ctx: ToolContext): Promise<{ path: AbsPath; warning?: string }> {
@@ -81,10 +85,13 @@ export function createBashTool(opts: {
       return { path: found };
     }
     if (ctx.platform.os === "win32") {
-      const choice = await ctx.platform.resolveShell(ctx.settings.shell);
-      if (choice?.kind !== "git-bash")
-        throw new Error("Git Bash was not found: install Git for Windows or set shell.path");
-      return { path: choice.path };
+      if (gitBashPath === undefined) {
+        const choice = await ctx.platform.resolveShell(ctx.settings.shell);
+        if (choice?.kind !== "git-bash")
+          throw new Error("Git Bash was not found: install Git for Windows or set shell.path");
+        gitBashPath = choice.path as AbsPath;
+      }
+      return { path: gitBashPath };
     }
     const found = ctx.platform.shells().bash ?? (await ctx.platform.resolve("bash"));
     if (found !== undefined) return { path: found };
@@ -457,7 +464,13 @@ export function createBashTool(opts: {
     name: toolName,
     input: BashInput,
     descriptionFile:
-      ps === undefined ? "tools/Bash.md" : ps.edition === "pwsh" ? "tools/PowerShell.md" : "tools/PowerShell51.md",
+      ps === undefined
+        ? opts.gitBash === true
+          ? "tools/BashGitBash.md"
+          : "tools/Bash.md"
+        : ps.edition === "pwsh"
+          ? "tools/PowerShell.md"
+          : "tools/PowerShell51.md",
     errorExample: { command: "ls -la", description: "List files in the current directory", timeout: 120_000 },
     parallelSafe: false,
     mutates: "system",

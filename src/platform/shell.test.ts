@@ -63,6 +63,16 @@ describe("resolveShell", () => {
     const env = { DOVET_GIT_BASH_PATH: wsl };
     const found = await resolveShell(deps({ env, files: [wsl], programs: { powershell: "C:\\ps\\powershell.exe" } }));
     expect(found?.kind).toBe("powershell");
+    for (const other of ["C:/Windows/System32/bash.exe", "C:\\Windows\\Sysnative\\bash.exe"]) {
+      const via = await resolveShell(
+        deps({
+          env: { DOVET_GIT_BASH_PATH: other },
+          files: [other],
+          programs: { powershell: "C:\\ps\\powershell.exe" },
+        }),
+      );
+      expect(via?.kind).toBe("powershell");
+    }
   });
 
   // spec: AC-PLAT-01

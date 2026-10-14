@@ -37,7 +37,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
     throw e;
   });
   const notes: string[] = [];
-  let mode: number | undefined = undefined;
+  let mode: number | undefined;
 
   async function viaTemp(mode: number | undefined, onlyIfAbsent: boolean): Promise<"done" | "exists" | "busy"> {
     const temp = join(dir, `.${basename(path)}.dovet-${randomBytes(6).toString("hex")}.tmp`);

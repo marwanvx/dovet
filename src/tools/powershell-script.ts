@@ -11,7 +11,7 @@ export const isPolicyRefusal = (output: string): boolean => POLICY_ERROR.test(ou
 
 /**
  * The script text. The first line of `cwdFile` is the final directory, the second the language mode. The exit code is
- * the last native program's when the last pipeline was one (its `$LASTEXITCODE` agrees with `$?`), else 1 if `$?` is false.
+ * the last native program's when the last pipeline was one (its `$LASTEXITCODE` agrees with `$?`, or is 0 while 5.1 turned stderr under `2>&1` into error records), else 1 if `$?` is false.
  */
 export function powershellScript(opts: { command: string; cwd: string; cwdFile: string; edition: Edition }): string {
   const edition =
@@ -27,11 +27,11 @@ export function powershellScript(opts: { command: string; cwd: string; cwdFile: 
     "$global:LASTEXITCODE = $null",
     "try {",
     opts.command,
-    "$__ok = $?; $__native = $LASTEXITCODE",
+    "$__ok = $?; $__native = $LASTEXITCODE; $__nce = ($Error.Count -gt 0) -and ([string]$Error[0].FullyQualifiedErrorId -like 'NativeCommandError*')",
     "} finally {",
     `try { Set-Content -LiteralPath ${q(opts.cwdFile)} -Value ((Get-Location).ProviderPath + "\`n" + $ExecutionContext.SessionState.LanguageMode) -Encoding UTF8 } catch {}`,
     "}",
-    "if ($null -ne $__native -and (($__native -eq 0) -eq $__ok)) { exit $__native }",
+    "if ($null -ne $__native -and ((($__native -eq 0) -eq $__ok) -or ($__native -eq 0 -and $__nce))) { exit $__native }",
     "if ($__ok) { exit 0 } else { exit 1 }",
     "",
   ].join("\n");
