@@ -7,7 +7,16 @@ export const REMOTE_VERSION = 1;
 export type RemoteKind = "push" | "publish" | "upload" | "deploy";
 type Remote = { kind: RemoteKind; label: string };
 
-const GIT_OPTION_VALUES = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+const GIT_OPTION_VALUES = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--config-env",
+  "--attr-source",
+]);
 
 /** `git -C dir -c k=v push …` → `["push", …]`. */
 function gitArgs(args: string[]): string[] {
@@ -32,7 +41,8 @@ const curlUpload = (args: string[]): boolean =>
     (a, i) =>
       /^--(data|form|json|upload-file)/.test(a) ||
       /^-[A-Za-z]*[dFT]/.test(a) ||
-      /^-X\s*(POST|PUT|PATCH|DELETE)$/i.test(a) ||
+      /^-[A-Za-z]*X\s*(POST|PUT|PATCH|DELETE)$/i.test(a) ||
+      (/^-[A-Za-z]*X$/.test(a) && /^(POST|PUT|PATCH|DELETE)$/i.test(args[i + 1] ?? "")) ||
       /^--request=(POST|PUT|PATCH|DELETE)$/i.test(a) ||
       ((a === "-X" || a === "--request") && /^(POST|PUT|PATCH|DELETE)$/i.test(args[i + 1] ?? "")),
   );
@@ -40,7 +50,9 @@ const ghApiWrites = (args: string[]): boolean =>
   args.some(
     (a, i) =>
       /^(-f|-F|--field|--raw-field|--input)$/.test(a) ||
+      /^-[fF].|^--(field|raw-field|input)=/.test(a) ||
       ((a === "-X" || a === "--method") && !/^GET$/i.test(args[i + 1] ?? "")) ||
+      (/^-X./.test(a) && !/^-XGET$/i.test(a)) ||
       (/^--method=/.test(a) && !/^GET$/i.test(a.slice(9))),
   );
 const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;

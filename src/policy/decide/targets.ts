@@ -17,6 +17,7 @@ export const FS_COMMANDS = new Set([
   "remove-item",
 ]);
 const EVERY_ARG = new Set([
+  "tee",
   "mkdir",
   "touch",
   "rm",

@@ -720,6 +720,31 @@ describe("review findings", () => {
     expect(issues).toEqual([]);
   });
 
+  // spec: AC-PERM-07
+  test("tee behind a wrapper is a write to its file", () => {
+    for (const c of [
+      "sudo tee .git/config",
+      "timeout 5 tee .git/config",
+      "nice tee .bashrc",
+      "cat a.ts | sudo tee .git/config",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+    expect(sh("nice tee .env", state("default", { allow: ["Bash"] })).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-29
+  test("git options with values, gh api and curl spellings, and wildcard rules for force-push", () => {
+    for (const c of ["git --config-env a=b push -f origin main", "git --attr-source HEAD push -f origin main"])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    for (const c of ["gh api -XPOST /x", "gh api -fa=b /x", "gh api --field=a=b /x", "curl -sX POST https://h"]) {
+      expect(sh(c, state("default", {}, { sandboxAutoAllow: true }), { sandboxed: true }).behavior, c).toBe("ask");
+      expect(sh(c, state("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
+    }
+    const st = state("default", { allow: ["Bash(git push*)", "Bash(git -C *)"] }, { sandboxAutoAllow: true });
+    expect(sh("git push --mirror origin", st, { sandboxed: true }).behavior).toBe("deny");
+    expect(sh("git -C . push origin main", st, { sandboxed: true }).behavior).toBe("ask");
+  });
+
   // spec: AC-PERM-29
   test("options before the subcommand and a full path do not hide a remote action", () => {
     for (const c of [
