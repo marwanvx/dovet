@@ -2,6 +2,8 @@
 // Other modules import only from this file.
 
 export { createEditTool, editTool } from "./edit.ts";
+export { createGlobTool, globTool } from "./glob.ts";
+export { createGrepTool, grepTool } from "./grep.ts";
 export { limitOutput, type OffloadTarget, OUTPUT_LIMIT } from "./output.ts";
 export { createReadTool, readTool } from "./read.ts";
 export {
@@ -27,6 +29,8 @@ export type {
 export { createWriteTool, writeTool } from "./write.ts";
 
 import { editTool } from "./edit.ts";
+import { globTool } from "./glob.ts";
+import { grepTool } from "./grep.ts";
 import { readTool } from "./read.ts";
 import type { ToolDefinition } from "./types.ts";
 import { writeTool } from "./write.ts";
@@ -36,4 +40,6 @@ export const builtinTools: readonly ToolDefinition<unknown>[] = [
   readTool as ToolDefinition<unknown>,
   writeTool as ToolDefinition<unknown>,
   editTool as ToolDefinition<unknown>,
+  grepTool as ToolDefinition<unknown>,
+  globTool as ToolDefinition<unknown>,
 ];
