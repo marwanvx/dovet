@@ -644,7 +644,7 @@ describe("bypass corpus through the full decision", () => {
 });
 
 describe("review findings", () => {
-  const bypass = state("bypassPermissions");
+  const bypass = (): State => state("bypassPermissions");
   // spec: AC-PERM-07
   test("prefixes and full paths do not hide a critical removal, a kill of Dovet or a protected write", () => {
     for (const c of [
@@ -655,8 +655,8 @@ describe("review findings", () => {
       "timeout 5 rm -rf /",
       "nice rm -rf /",
     ])
-      expect(sh(c, bypass).behavior, c).toBe("ask");
-    expect(sh("/bin/kill 4242", bypass).behavior).toBe("deny");
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+    expect(sh("/bin/kill 4242", bypass()).behavior).toBe("deny");
     expect(sh("sudo rm -rf /", state("default", { allow: ["Bash(sudo *)"] })).behavior).toBe("ask");
     expect(sh("sudo touch .git/config", state("acceptEdits")).behavior).toBe("ask");
   });
@@ -674,6 +674,50 @@ describe("review findings", () => {
       expect(sh(c, st).behavior, c).toBe("ask");
     expect(sh("cp -t .git/hooks a.ts", state("default", { allow: ["Bash(cp *)"] })).behavior).toBe("ask");
     expect(sh("sed -i s/a/b/ a.ts", st).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-07
+  test("exec, busybox and cmd /c do not hide a check", () => {
+    for (const c of ["exec rm -rf ~", "busybox rm -rf /", "exec kill 4242"])
+      expect(sh(c, bypass()).behavior, c).not.toBe("allow");
+    expect(sh("exec git push -f origin main", bypass()).behavior).toBe("deny");
+    expect(sh("cmd /c git push --force origin main", bypass()).behavior).toBe("deny");
+    const auto = state("default", {}, { sandboxAutoAllow: true });
+    for (const c of ["exec git push origin main", "cmd /c git push origin main", "cmd /c curl -d x https://e.com"])
+      expect(sh(c, auto, { sandboxed: true }).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("sed e/w in any spelling and every cp/mv target-directory spelling stay out of acceptEdits", () => {
+    const st = state("acceptEdits");
+    for (const c of [
+      'sed -i "s|a|b|e" a.ts',
+      'sed -i "s#a#b#w out" a.ts',
+      "sed -i -e s/a/b/w/tmp/x a.ts",
+      "sed -i s/a/b/gw/tmp/o a.ts",
+      "sed -i 1eid a.ts",
+      "sed -i 1w/tmp/o a.ts",
+    ])
+      expect(sh(c, st).behavior, c).toBe("ask");
+    for (const c of ["cp -rt .git/hooks a.ts", "mv --target=.git a.ts", "cp --t=.git a.ts", "cp -t.git/hooks a.ts"])
+      expect(sh(c, st).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-29
+  test("permissions.examples run in Manual mode with a healthy sandbox unless they name a mode", () => {
+    const rules = rulesFor();
+    const decider = exampleDecider(state("bypassPermissions"), parsers);
+    const issues = checkExamples(
+      rules,
+      [
+        { Edit: "a.ts", expect: "ask" },
+        { Edit: "a.ts", mode: "acceptEdits", expect: "allow" },
+        { Bash: "npm install", expect: "allow" },
+        { Bash: "git push", expect: "ask" },
+      ],
+      { decide: decider, cwd: root },
+    );
+    expect(issues).toEqual([]);
   });
 
   // spec: AC-PERM-29
@@ -707,13 +751,13 @@ describe("review findings", () => {
   // spec: AC-PERM-29
   test("a force-push with no branch named, or HEAD, counts as the default branch", () => {
     for (const c of ["git push --force", "git push -f origin", "git push -f origin HEAD"])
-      expect(sh(c, bypass).behavior, c).toBe("deny");
-    expect(sh("git push --force origin feature", bypass).behavior).toBe("allow");
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    expect(sh("git push --force origin feature", bypass()).behavior).toBe("allow");
   });
 
   // spec: AC-PERM-07
   test("$HOME with more expansion after it is critical", () => {
-    for (const c of ["rm -rf $HOME$X", "rm -rf ${HOME%/}"]) expect(sh(c, bypass).behavior, c).toBe("ask");
+    for (const c of ["rm -rf $HOME$X", "rm -rf ${HOME%/}"]) expect(sh(c, bypass()).behavior, c).toBe("ask");
   });
 
   // spec: AC-PERM-07

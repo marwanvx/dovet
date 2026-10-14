@@ -157,21 +157,41 @@ function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false
 }
 
 /** An allow rule that names the command: no wildcard, or at least two fixed words before it (`git push*`, not `git *`). */
-function namesCommand(rule: string): boolean {
+function namesCommand(rule: string, label?: string): boolean {
   if (TOOL_WIDE.test(rule)) return false;
   const text = rule.slice(rule.indexOf("(") + 1, rule.lastIndexOf(")"));
   const star = text.indexOf("*");
-  return star < 0 || text.slice(0, star).trim().split(/\s+/).length >= 2;
+  if (star < 0) return true;
+  const prefix = text.slice(0, star).trim().split(/\s+/);
+  const verb = label?.split(" ")[1];
+  const named = verb === undefined || ["upload", "to"].includes(verb) || prefix.includes(verb);
+  return prefix.length >= 2 && named;
 }
 
-function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean): boolean {
+function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean, label?: string): boolean {
   const m = evaluateRules(st.rules, {
     tool,
     cwd: sub.cwd ?? st.env.cwd,
     commands: [{ ...sub, readOnly: false }],
     checkable: true,
   });
-  return m?.behavior === "allow" && namesCommand(m.rule) && !(exact && m.rule.includes("*"));
+  return m?.behavior === "allow" && namesCommand(m.rule, label) && !(exact && m.rule.includes("*"));
+}
+
+const PEELED = new Set(["exec", "busybox"]);
+
+/** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front. */
+function variants(argv: string[]): string[][] {
+  const out: string[][] = [];
+  const queue = [argv];
+  for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
+    for (const v of strippedArgvs(a)) {
+      if (out.some((o) => o.join("\0") === v.join("\0"))) continue;
+      out.push(v);
+      if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
+    }
+  }
+  return out;
 }
 
 function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shell" }>): Finding[] {
@@ -182,7 +202,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   for (const sub0 of a.analysis.commands ?? []) {
     const unwrapped = unwrapCmd(sub0);
     const viaCmd = unwrapped !== sub0;
-    for (const v of strippedArgvs(unwrapped.argv)) {
+    const all = variants(unwrapped.argv);
+    for (const v of all) {
       const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
       const system = systemRemoval(env, sub, viaCmd);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
@@ -204,18 +225,18 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const words = [...sub0.argv.slice(1), ...(sub0.redirects ?? []).map((r) => r.target)];
     const net = words.find((w) => NETWORK_PATH.test(w));
     if (net !== undefined) out.push(finding("network-path", `network path: ${net}`, "ask"));
-    const sub = sub0;
-    const remote = remoteAction(sub.argv);
+    const sub = { ...unwrapped };
+    const remote = all.map((v) => remoteAction(v)).find((r) => r !== undefined);
     if (remote !== undefined)
       out.push(
         finding(
           "remote",
           `remote action: ${remote.label}`,
           st.tainted === true ? "deny" : "ask",
-          st.tainted === true ? {} : { liftable: true, lifted: explicitAllow(st, tool, sub, false) },
+          st.tainted === true ? {} : { liftable: true, lifted: explicitAllow(st, tool, sub, false, remote.label) },
         ),
       );
-    const force = forcePushToDefault(sub.argv, branches);
+    const force = all.map((v) => forcePushToDefault(v, branches)).find((f) => f !== undefined);
     if (force !== undefined && !explicitAllow(st, tool, sub, true))
       out.push(finding("force-push", `force-push to the default branch: ${force}`, "deny"));
   }

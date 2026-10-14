@@ -74,22 +74,28 @@ export function shellTargets(sub: Subcommand, fallbackCwd: string): Target[] {
 
 function targetDirectory(args: string[]): string | undefined {
   for (const [i, a] of args.entries()) {
-    if (a === "-t" || a === "--target-directory") return args[i + 1];
-    const attached = /^(?:--target-directory=|-t)(.+)$/.exec(a);
-    if (attached !== null) return attached[1];
+    const long = /^--([a-z-]+)(?:=(.*))?$/.exec(a);
+    if (long !== null && "target-directory".startsWith(long[1] ?? "x") && (long[1] ?? "").startsWith("t"))
+      return long[2] ?? args[i + 1];
+    const short = /^-[a-zA-Z]*?t(.*)$/.exec(a);
+    if (short !== null) return short[1] === "" ? args[i + 1] : short[1];
   }
   return undefined;
 }
 
-/** A `sed` script that can run a command or write a file by itself (`e`, `w`, `W`, `s///e`, `s///w`) or comes from a file. */
+const SAFE_SED = /^(?:[\d$,]*\s*(?:s([/|#,:@])(?:(?!\1).)*\1(?:(?!\1).)*\1[gpiIm\d]*|[pdq])\s*;?\s*)+$/;
+
+/** True unless every script is plain `s///`, `p`, `d` or `q` commands: `e`, `w`, `W`, `r` and script files can run commands or write files. */
 export function sedEscapes(args: string[]): boolean {
   if (args.some((a) => /^(-[a-zA-Z]*f|--file)/.test(a))) return true;
-  const scripts = args.some((a) => /^(-[a-zA-Z]*e|--expression)/.test(a))
-    ? args
-        .filter((_, i) => /^(-[a-zA-Z]*e|--expression)/.test(args[i - 1] ?? ""))
-        .concat(args.filter((a) => /^--expression=/.test(a)))
+  const isE = (a: string | undefined): boolean => /^(-[a-zA-Z]*e|--expression)$/.test(a ?? "");
+  const scripts = args.some((a) => isE(a) || /^--expression=/.test(a))
+    ? [
+        ...args.filter((_, i) => isE(args[i - 1])),
+        ...args.filter((a) => /^--expression=/.test(a)).map((a) => a.slice(13)),
+      ]
     : args.filter((a) => !isFlag(a)).slice(0, 1);
-  return scripts.some((s) => /(^|[\s;{}\d$,!])[ewW](\s|$)|\/[gpiImM0-9]*[ew][gpiImM0-9]*($|[;\s}])/.test(s));
+  return scripts.length === 0 || !scripts.every((s) => SAFE_SED.test(s));
 }
 
 export const unresolvedTarget = (path: string): boolean => /[*?[{$`~]/.test(path);
