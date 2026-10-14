@@ -460,7 +460,6 @@ describe("PowerShell", () => {
 });
 
 type Entry = {
-  m123?: boolean;
   language: ShellLanguage;
   command: string;
   source: string;
@@ -485,8 +484,7 @@ describe("bypass corpus", () => {
       const a = analyze(e.command, e.language);
       const tool = e.language === "bash" ? "Bash" : "PowerShell";
       const match = evaluateRules(rulesFor({ allow: e.allow ?? [], deny: e.deny ?? [] }), call(a, tool));
-      // m123: only M1-23's critical-path, sensitive-file or outside-directory checks can stop a prefix allow rule.
-      const byRule = match?.behavior === "allow" && e.m123 !== true;
+      const byRule = match?.behavior === "allow";
       const byReadOnly = allReadOnly(a) && match?.behavior !== "deny";
       if (byRule || byReadOnly) approved.push(e.command);
     }
