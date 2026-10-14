@@ -320,9 +320,10 @@ describe("Bash on every OS", () => {
     const r = await rig();
     // Git Bash's $! is an MSYS pid; /proc/<pid>/winpid is the Windows one.
     const out = await bash(r, {
-      command: "(sleep 300 & (cat /proc/$!/winpid 2>/dev/null || echo $!) > gc.pid; wait)",
+      command: "(sleep 300 & (cat /proc/$!/winpid 2>/dev/null || echo $!) > gc.pid; ps -W; wait)",
       timeout: 8000,
     });
+    console.log("DIAGOUT", text(out));
     expect(out.status).toBe("timeout");
     const pid = await pidOf(join(r.cwd, "gc.pid"));
     for (let i = 0; i < 30 && alive(pid); i++) await Bun.sleep(100);
