@@ -1,11 +1,11 @@
 // Write (tools §2): whole-file create or replace.
-import { createHash } from "node:crypto";
 import { access, constants, lstat, mkdir, readFile, readlink, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { lineDelta, placeholderViolation } from "./change-guard.ts";
+import { decode, dominantEol, encode, sha256Of } from "./codec.ts";
 import { newFileEol } from "./eol.ts";
 import type { Encoding } from "./read-scan.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
@@ -16,40 +16,6 @@ type WriteInput = z.infer<typeof WriteInput>;
 
 const fail = (text: string): ToolOutput => ({ status: "error", content: [{ kind: "text", text }] });
 
-function decode(bytes: Uint8Array, encoding: Encoding): string {
-  switch (encoding) {
-    case "utf8-bom":
-      return new TextDecoder().decode(bytes.subarray(3));
-    case "utf16le":
-      return new TextDecoder("utf-16le").decode(bytes.subarray(2));
-    case "utf16be":
-      return new TextDecoder("utf-16be").decode(bytes.subarray(2));
-    default:
-      return new TextDecoder().decode(bytes);
-  }
-}
-
-function encode(text: string, encoding: Encoding): Uint8Array {
-  switch (encoding) {
-    case "utf8-bom":
-      return Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text)]);
-    case "utf16le":
-      return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
-    case "utf16be":
-      return Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, "utf16le").swap16()]);
-    default:
-      return Buffer.from(text);
-  }
-}
-
-function dominantEol(text: string, fallback: "\n" | "\r\n" | "mixed"): "\n" | "\r\n" {
-  const crlf = text.split("\r\n").length - 1;
-  const lf = text.split("\n").length - 1 - crlf;
-  if (crlf !== lf) return crlf > lf ? "\r\n" : "\n";
-  return fallback === "\r\n" ? "\r\n" : "\n";
-}
-
-const sha256Of = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 const countLines = (s: string): number => (s === "" ? 0 : s.replace(/\r?\n$/, "").split(/\r?\n/).length);
 
 export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): ToolDefinition<WriteInput> {

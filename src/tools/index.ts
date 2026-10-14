@@ -1,5 +1,7 @@
 // Public surface of the `tools` module (docs/specs/architecture.md "Modules"): Built-in tools, tool registry, output limiting and offloading, read-state tracking.
 // Other modules import only from this file.
+
+export { createEditTool, editTool } from "./edit.ts";
 export { limitOutput, type OffloadTarget, OUTPUT_LIMIT } from "./output.ts";
 export { createReadTool, readTool } from "./read.ts";
 export {
@@ -24,6 +26,7 @@ export type {
 } from "./types.ts";
 export { createWriteTool, writeTool } from "./write.ts";
 
+import { editTool } from "./edit.ts";
 import { readTool } from "./read.ts";
 import type { ToolDefinition } from "./types.ts";
 import { writeTool } from "./write.ts";
@@ -32,4 +35,5 @@ import { writeTool } from "./write.ts";
 export const builtinTools: readonly ToolDefinition<unknown>[] = [
   readTool as ToolDefinition<unknown>,
   writeTool as ToolDefinition<unknown>,
+  editTool as ToolDefinition<unknown>,
 ];
