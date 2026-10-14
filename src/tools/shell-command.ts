@@ -113,3 +113,39 @@ export function fileView(command: string): { file: string; whole: boolean } | un
   if (file === "-") return undefined;
   return { file, whole: program === "cat" && flags.length === 0 };
 }
+
+const NUL_REDIRECT = /^(>>?)(\s*)nul(?![\w./\\-])/i;
+
+/** Git Bash creates a real file named `nul` for `2>nul`; point such unquoted redirects at /dev/null (tools §5.3). */
+export function rewriteNulRedirects(command: string): { command: string; changed: boolean } {
+  let out = "";
+  let quote: string | undefined;
+  let changed = false;
+  for (let i = 0; i < command.length; i++) {
+    const c = command.charAt(i);
+    if (quote !== undefined) {
+      if (c === "\\" && quote === '"') {
+        out += c + command.charAt(i + 1);
+        i++;
+        continue;
+      }
+      if (c === quote) quote = undefined;
+    } else if (c === "\\") {
+      out += c + command.charAt(i + 1);
+      i++;
+      continue;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    } else if (c === ">") {
+      const m = NUL_REDIRECT.exec(command.slice(i));
+      if (m !== null) {
+        out += `${m[1]}${m[2]}/dev/null`;
+        i += m[0].length - 1;
+        changed = true;
+        continue;
+      }
+    }
+    out += c;
+  }
+  return { command: out, changed };
+}

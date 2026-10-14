@@ -159,5 +159,6 @@ export function commandEnv(deps: {
     PYTHONUNBUFFERED: "1",
     ...(os === "win32" ? { PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" } : {}),
   });
+  if (os === "win32" && env.LANG === undefined) env.LANG = "C.UTF-8";
   return { env, ignored };
 }
