@@ -105,6 +105,14 @@ describe("Edit: staleness", () => {
     expect(await readFile(file, "utf8")).toBe("alpha\nBETA\n");
   });
 
+  test("a changed file where old_string matches only ignoring indentation is refused", async () => {
+    const { file, ctx } = await setup("a.txt", "\tone\n\tmore\n");
+    await writeFile(file, "\tone\n\tmore\nextra\n");
+    const out = await edit(ctx, "a.txt", "one\nmore", "x");
+    expect(text(out)).toContain("Read it again");
+    expect(await readFile(file, "utf8")).toBe("\tone\n\tmore\nextra\n");
+  });
+
   test("a changed file where old_string is no longer unique is refused", async () => {
     const { file, ctx } = await setup("a.txt", "beta\n");
     await writeFile(file, "beta\nbeta\n");
@@ -168,6 +176,8 @@ describe("Edit: exact matching", () => {
     const out = await edit(ctx, "c.ts", "function compute(total, itemz) {\n  return total + items.length;\n}", "x");
     expect(text(out)).toMatch(/^old_string not found in .*c\.ts\. Closest match \(lines 1–3, \d+% similar\):\n/);
     expect(text(out)).toContain("- function compute(total, itemz) {\n+ function compute(total, items) {");
+    const typo = await edit(ctx, "c.ts", "function compute(total, itemz) {", "x");
+    expect(text(typo)).toContain("Closest match (lines 1–1,");
     expect(text(await edit(ctx, "c.ts", "something unrelated", "x"))).toMatch(
       /^old_string not found in [^\n]*c\.ts\.$/,
     );
@@ -221,6 +231,23 @@ describe("Edit: looser levels", () => {
     expect(second.status).toBe("ok");
     expect(second.meta?.fileChanges?.[0]?.match).toBe("exact");
     expect(await readFile(file, "utf8")).toBe("    foo()\nbar()\n");
+  });
+
+  // spec: AC-TOOLS-15
+  test("an ambiguous exact match never falls through to a looser level that would be unique", async () => {
+    const src = "foo()\n  foo()  bar\n";
+    const { file, ctx } = await setup("f.txt", src);
+    const out = await edit(ctx, "f.txt", "foo()", "baz()");
+    expect(text(out)).toContain("matches 2 places (lines 1, 2)");
+    expect(await readFile(file, "utf8")).toBe(src);
+  });
+
+  // spec: AC-TOOLS-15
+  test("a unique exact match wins over a prefix-strip match elsewhere", async () => {
+    const { file, ctx } = await setup("g.txt", "x\n1\tx\n");
+    const out = await edit(ctx, "g.txt", "1\tx", "y");
+    expect(out.meta?.fileChanges?.[0]?.match).toBe("exact");
+    expect(await readFile(file, "utf8")).toBe("x\ny\n");
   });
 
   // spec: AC-TOOLS-15

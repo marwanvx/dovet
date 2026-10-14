@@ -1,5 +1,4 @@
-// Edit's matching cascade (tools §3 step 6) on LF-normalized text: exact, line-number-prefix strip, indentation-tolerant.
-// Matching is literal search and line comparison, never a regex built from model text.
+// Edit's matching cascade (tools §3 step 6): exact, line-number-prefix strip, indentation-tolerant; literal search only, never a regex.
 
 export type MatchLevel = "exact" | "prefix-strip" | "indent";
 export type Applied = {
@@ -17,6 +16,7 @@ const INDENT_UNITS = [4, 2, 8];
 const PREFIX = /^\d+\t/;
 const MAX_CELLS = 4_000_000;
 const MAX_CANDIDATES = 500;
+const MAX_SCANNED_LINES = 5_000;
 
 export const SIMILARITY = 0.9;
 
@@ -183,6 +183,8 @@ export function closestMatch(text: string, oldText: string): Closest | undefined
     for (const i of byContent.get(l.trim()) ?? [])
       if (i - j >= 0 && i - j + old.length <= file.length) starts.add(i - j);
   });
+  if (starts.size === 0 && file.length <= MAX_SCANNED_LINES)
+    for (let i = 0; i + old.length <= file.length; i++) starts.add(i);
   const want = old.join("\n");
   let best: { start: number; ratio: number } | undefined;
   for (const start of [...starts].sort((a, b) => a - b).slice(0, MAX_CANDIDATES)) {
