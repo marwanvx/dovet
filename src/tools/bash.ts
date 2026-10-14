@@ -157,6 +157,37 @@ export function createBashTool(opts: {
     return `Files changed while this ran: ${shown.join(", ")}${more}`;
   }
 
+  /** `taskkill /T` loses MSYS descendants whose Windows parent already exited, so a killed command is swept through /proc. */
+  async function killMsysLeftovers(
+    ctx: ToolContext,
+    bashPath: AbsPath,
+    marker: string,
+    env: Record<string, string>,
+  ): Promise<void> {
+    const sweep = join(opts.tmpDir, "sh", `${crypto.randomUUID().slice(0, 8)}.sweep.sh`);
+    await writeFile(
+      sweep,
+      `for d in /proc/[0-9]*; do tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -qx ${quote(marker)} && kill -9 "\${d#/proc/}" 2>/dev/null; done\nexit 0\n`,
+      { mode: 0o600 },
+    );
+    try {
+      const { DOVET_RUN: _marker, ...clean } = env;
+      await collectOutput(
+        ctx.platform.spawn({
+          argv: [bashPath, sweep],
+          cwd: ctx.session.cwd,
+          env: clean,
+          stdin: "null",
+          signal: AbortSignal.timeout(10_000),
+          group: `${toolName.toLowerCase()}-sweep:${ctx.session.id}`,
+        }),
+        {},
+      );
+    } finally {
+      await rm(sweep, { force: true });
+    }
+  }
+
   async function missingCwd(ctx: ToolContext): Promise<ToolOutput | undefined> {
     try {
       await stat(ctx.session.cwd);
@@ -395,6 +426,9 @@ export function createBashTool(opts: {
       clearTimeout(timer);
       ctx.signal.removeEventListener("abort", onAbort);
       await ctx.platform.killTree(group);
+      if (ps === undefined && ctx.platform.os === "win32" && abort.signal.aborted) {
+        await killMsysLeftovers(ctx, shell.path, runMarker, env);
+      }
       await Promise.all([rm(script, { force: true }), rm(cwdFile, { force: true })]);
     }
   }
