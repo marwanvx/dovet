@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import type { Platform } from "../platform/index.ts";
 import type { AbsPath, DocumentPart, ImagePart, PermissionMode, Settings, TextPart } from "../schema/index.ts";
+import type { ReadResultsIndex } from "./read-results.ts";
 import type { ReadStateStore } from "./read-state.ts";
 
 export type SessionEffect =
@@ -54,6 +55,9 @@ export interface ToolContext {
   settings: Readonly<Settings>;
   signal: AbortSignal;
   readState: ReadStateStore;
+  readResults: ReadResultsIndex;
+  /** Tokens still free before the compaction threshold (allow_large, tools §1.4). */
+  contextFreeTokens: number;
   emit(e: ToolProgressEvent): void;
   platform: Platform;
 }
