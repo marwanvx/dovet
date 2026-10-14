@@ -45,7 +45,7 @@ export function compilePath(
   const negate = spec.startsWith("!");
   if (negate && behavior === "allow") return { warning: "! negation only works in deny and ask rules" };
   let s = negate ? spec.slice(1) : spec;
-  // `\\` before `[`, `]`, `!` or `#` is an escape (generated rules), elsewhere a separator; `*` and `?` cannot appear in Windows names
+  // A backslash before `[`, `]`, `!` or `#` is an escape (generated rules), elsewhere a separator; `*` and `?` cannot appear in Windows names
   if (c.os === "win32")
     s = s
       .replace(/\\(?![[\]!#])/g, "/")
