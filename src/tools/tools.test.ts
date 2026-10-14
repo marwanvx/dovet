@@ -291,7 +291,7 @@ describe("read state", () => {
     size: 3,
     partial: false,
     encoding: "utf8",
-    eol: "lf",
+    eol: "\n",
   };
 
   test("stores and returns entries by path, and forgets them", () => {

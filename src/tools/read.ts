@@ -3,8 +3,9 @@
 import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
+import { extname } from "node:path";
 import { z } from "zod";
-import { isErrno, PathRefused } from "../platform/index.ts";
+import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { DEDUP_PREFIX, sha256Hex } from "./read-results.ts";
 import { formatLine, type ScanOptions, type ShownLine, scanText } from "./read-scan.ts";
@@ -19,6 +20,14 @@ const ReadInput = z.strictObject({
 });
 type ReadInput = z.infer<typeof ReadInput>;
 
+const BINARY_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".pdf": "application/pdf",
+};
 const CHARS_PER_TOKEN = 3.5;
 const DEFAULT_MAX_TOKENS = 25_000;
 
@@ -51,6 +60,7 @@ function firstPage(lines: readonly ShownLine[], budgetChars: number): ShownLine[
 export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}): ToolDefinition<ReadInput> {
   async function run(input: ReadInput, ctx: ToolContext): Promise<ToolOutput> {
     if (input.pages?.includes(",")) return fail("Read one page or range per call.");
+    const byName = BINARY_BY_EXTENSION[extname(input.file_path).toLowerCase()];
     let path: AbsPath;
     try {
       path = ctx.platform.canonicalize(input.file_path, ctx.session.cwd);
@@ -69,6 +79,7 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
     if (checked.isDirectory()) return fail(`${path} is a directory. List it with Glob or ls.`);
     if (!checked.isFile())
       return fail(`${path} is not a regular file (${kindOf(checked)}); reading it could block or never end.`);
+    if (byName !== undefined) return fail(`Binary file (${checked.size} bytes, ${byName}). Not readable as text.`);
     await opts.afterCheck?.();
 
     let handle: Awaited<ReturnType<typeof open>>;
@@ -174,10 +185,13 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
     mutates: "none",
     normalize: { aliases: { path: "file_path", filePath: "file_path" } },
     pathFields: ["file_path"],
+    limitsOwnOutput: true,
     describeAction(input, ctx) {
       let paths: AbsPath[] = [];
       try {
-        paths = [ctx.platform.canonicalize(input.file_path, ctx.session.cwd)];
+        const canonical = ctx.platform.canonicalize(input.file_path, ctx.session.cwd);
+        const requested = lexicalPath(input.file_path, ctx.session.cwd, ctx.platform.os);
+        paths = requested === canonical ? [canonical] : [requested as AbsPath, canonical];
       } catch (e) {
         // run() refuses the same path, so nothing is read when the policy sees no path.
         if (!(e instanceof PathRefused)) throw e;

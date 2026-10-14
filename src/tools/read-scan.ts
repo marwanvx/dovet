@@ -6,7 +6,8 @@ export const MAX_SCAN_BYTES = 50 * 1024 * 1024;
 const CHUNK = 64 * 1024;
 const MAX_LINE = 2_000;
 
-export type Encoding = "utf-8" | "utf-8-bom" | "utf-16le" | "utf-16be" | "invalid";
+export type Encoding = "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "invalid";
+export type Eol = "\n" | "\r\n" | "mixed";
 export type ShownLine = { n: number; text: string; hidden: number };
 
 export type ScanOptions = {
@@ -21,7 +22,7 @@ export type Scan =
   | {
       binary: false;
       encoding: Encoding;
-      eol: "lf" | "crlf";
+      eol: Eol;
       sha256: string;
       total: number;
       totalChars: number;
@@ -66,11 +67,12 @@ export async function scanText(fh: FileHandle, opts: ScanOptions): Promise<Scan>
   const hasher = new Bun.CryptoHasher("sha256");
   const chunk = new Uint8Array(CHUNK);
   let bytes = 0;
-  let encoding: Encoding = "utf-8";
+  let encoding: Encoding = "utf8";
   let lenient = new TextDecoder("utf-8");
   let strict: TextDecoder | undefined = new TextDecoder("utf-8", { fatal: true });
   let invalid = false;
-  let eol: "lf" | "crlf" | undefined;
+  let crlfLines = 0;
+  let lfLines = 0;
   let carry = "";
   let n = 0;
   let totalChars = 0;
@@ -99,7 +101,8 @@ export async function scanText(fh: FileHandle, opts: ScanOptions): Promise<Scan>
     carry = parts.pop() ?? "";
     for (const part of parts) {
       const crlf = part.endsWith("\r");
-      eol ??= crlf ? "crlf" : "lf";
+      if (crlf) crlfLines += 1;
+      else lfLines += 1;
       onLine(crlf ? part.slice(0, -1) : part);
     }
   };
@@ -111,14 +114,14 @@ export async function scanText(fh: FileHandle, opts: ScanOptions): Promise<Scan>
     if (first) {
       const [a, b, c] = view;
       if (a === 0xef && b === 0xbb && c === 0xbf) {
-        encoding = "utf-8-bom";
+        encoding = "utf8-bom";
         view = view.subarray(3);
       } else if ((a === 0xff && b === 0xfe) || (a === 0xfe && b === 0xff)) {
-        encoding = a === 0xff ? "utf-16le" : "utf-16be";
-        lenient = new TextDecoder(encoding);
+        encoding = a === 0xff ? "utf16le" : "utf16be";
+        lenient = new TextDecoder(encoding === "utf16le" ? "utf-16le" : "utf-16be");
         strict = undefined;
         view = view.subarray(2);
-      } else if (view.subarray(0, 8192).includes(0)) {
+      } else if (detectType(view) !== "application/octet-stream" || view.subarray(0, 8192).includes(0)) {
         return { binary: true, detected: detectType(view) };
       }
     }
@@ -145,11 +148,11 @@ export async function scanText(fh: FileHandle, opts: ScanOptions): Promise<Scan>
       invalid = true;
     }
   }
-  if (carry !== "") onLine(carry);
+  if (carry !== "") onLine(carry.endsWith("\r") ? carry.slice(0, -1) : carry);
   return {
     binary: false,
     encoding: invalid ? "invalid" : encoding,
-    eol: eol ?? "lf",
+    eol: crlfLines === 0 ? "\n" : lfLines === 0 ? "\r\n" : "mixed",
     sha256: hasher.digest("hex"),
     total: n,
     totalChars,

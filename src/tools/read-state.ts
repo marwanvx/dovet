@@ -6,8 +6,8 @@ export type ReadStateEntry = {
   mtimeMs: number;
   size: number;
   partial: boolean;
-  encoding: string;
-  eol: string;
+  encoding: "utf8" | "utf8-bom" | "utf16le" | "utf16be" | "invalid";
+  eol: "\n" | "\r\n" | "mixed";
 };
 
 export interface ReadStateStore {

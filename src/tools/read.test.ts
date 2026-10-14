@@ -144,12 +144,12 @@ describe("Read: text views", () => {
     const ctx = context(cwd);
     expect(text(await read(ctx, { file_path: "u16.txt" }))).toBe("1\théllo\n2\twörld");
     expect(ctx.readState.get(join(cwd, "u16.txt"))).toMatchObject({
-      encoding: "utf-16le",
-      eol: "crlf",
+      encoding: "utf16le",
+      eol: "\r\n",
       partial: false,
     });
     expect(text(await read(ctx, { file_path: "u8.txt" }))).toBe("1\tplain");
-    expect(ctx.readState.get(join(cwd, "u8.txt"))?.encoding).toBe("utf-8-bom");
+    expect(ctx.readState.get(join(cwd, "u8.txt"))?.encoding).toBe("utf8-bom");
   });
 
   // spec: AC-TOOLS-01
@@ -171,6 +171,28 @@ describe("Read: text views", () => {
     expect(text(await read(ctx, { file_path: "bin.dat" }))).toBe(
       "Binary file (8 bytes, image/png). Not readable as text.",
     );
+  });
+
+  // spec: AC-TOOLS-01
+  test("images and PDFs are described as binary even without a NUL byte; a symlink reports both paths to the policy", async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, "doc.pdf"), "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n");
+    await writeFile(join(cwd, "noext"), "%PDF-1.4\nplain text only\n");
+    await writeFile(join(cwd, "real.txt"), "x\n");
+    await symlink(join(cwd, "real.txt"), join(cwd, "ln"));
+    const ctx = context(cwd);
+    expect(text(await read(ctx, { file_path: "doc.pdf" }))).toStartWith("Binary file (");
+    expect(text(await read(ctx, { file_path: "noext" }))).toContain("application/pdf");
+    const action = createReadTool().describeAction({ file_path: "ln" }, ctx);
+    expect(action.kind === "read" ? action.paths : []).toEqual([join(cwd, "ln"), join(cwd, "real.txt")]);
+  });
+
+  test("mixed line endings are reported as mixed", async () => {
+    const cwd = await workspace();
+    await writeFile(join(cwd, "m.txt"), "a\r\nb\nc\r");
+    const ctx = context(cwd);
+    expect(text(await read(ctx, { file_path: "m.txt" }))).toBe("1\ta\n2\tb\n3\tc");
+    expect(ctx.readState.get(join(cwd, "m.txt"))?.eol).toBe("mixed");
   });
 
   // spec: AC-PERM-26
@@ -287,7 +309,7 @@ describe("Read: file types and races", () => {
     const ctx = context(cwd);
     await read(ctx, { file_path: process.platform === "win32" ? "real.txt" : "alias.txt" });
     const entry = ctx.readState.get(join(cwd, "real.txt"));
-    expect(entry).toMatchObject({ size: 8, partial: false, encoding: "utf-8", eol: "lf" });
+    expect(entry).toMatchObject({ size: 8, partial: false, encoding: "utf8", eol: "\n" });
     expect(entry?.sha256).toBe(new Bun.CryptoHasher("sha256").update("one\ntwo\n").digest("hex"));
   });
 });
