@@ -287,6 +287,7 @@ describe("Edit: looser levels", () => {
     expect(await readFile(file, "utf8")).toBe("const a = 10;\nconst b = 20;\nconst c = 3;\n");
   });
 
+  // spec: AC-TOOLS-15
   test("a file that really contains numbered lines matches exactly, not via L1", async () => {
     const { ctx } = await setup("tsv.txt", "1\tone\n2\ttwo\n");
     const out = await edit(ctx, "tsv.txt", "1\tone", "1\tuno");
