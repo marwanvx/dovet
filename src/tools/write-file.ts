@@ -37,6 +37,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
     throw e;
   });
   const notes: string[] = [];
+  let mode: number | undefined = undefined;
 
   async function viaTemp(mode: number | undefined, onlyIfAbsent: boolean): Promise<"done" | "exists" | "busy"> {
     const temp = join(dir, `.${basename(path)}.dovet-${randomBytes(6).toString("hex")}.tmp`);
@@ -86,13 +87,17 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
     }
   }
 
-  async function inPlace(): Promise<void> {
+  async function inPlace(modeArg?: number): Promise<void> {
     if (!sameIdentity(dirBefore, await stat(dir, { bigint: true }))) throw new DirectoryChanged(dir);
     const handle = await open(path, constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0));
     try {
       await write(handle, data);
       await handle.truncate(data.length);
       await handle.sync();
+      if (modeArg !== undefined) {
+        // re-apply the original mode (including special bits) after the in-place write to ensure they survive
+        await handle.chmod(modeArg);
+      }
     } finally {
       await handle.close();
     }
@@ -120,7 +125,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
       replaced = made === "done";
       if (!replaced) reason = "its mount";
     } else {
-      const mode = Number(existing.mode & 0o7777n);
+      mode = Number(existing.mode & 0o7777n);
       const owner = userInfo().uid;
       const foreign = owner !== -1 && Number(existing.uid) !== owner;
       if (existing.nlink > 1n && opts.keepHardLink) reason = "the hard link";
@@ -145,7 +150,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
     }
     if (!replaced) {
       try {
-        await inPlace();
+        await inPlace(mode);
       } catch (e) {
         if (opts.os === "win32" && isErrno(e, ...LOCKED))
           return { ok: false, message: `${path} is locked by another program (${messageOf(e)}).` };
@@ -158,7 +163,7 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
       );
     }
     if (await verified()) return { ok: true, notes };
-    await inPlace();
+    await inPlace(mode);
     if (await verified()) return { ok: true, notes: [...notes, "A first write came out short; the retry succeeded."] };
     return {
       ok: false,
