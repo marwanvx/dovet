@@ -326,6 +326,15 @@ describe("Bash on every OS", () => {
     expect(out.status).toBe("timeout");
     const pid = await pidOf(join(r.cwd, "gc.pid"));
     for (let i = 0; i < 30 && alive(pid); i++) await Bun.sleep(100);
+    if (alive(pid) && process.platform === "win32") {
+      const info = Bun.spawnSync([
+        "powershell",
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 300`,
+      ]);
+      console.log("DIAG", info.stdout.toString());
+    }
     expect(alive(pid), `pid file held ${await readFile(join(r.cwd, "gc.pid"), "utf8")}`).toBe(false);
   }, 30_000);
 
