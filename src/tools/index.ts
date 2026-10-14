@@ -1,6 +1,7 @@
 // Public surface of the `tools` module (docs/specs/architecture.md "Modules"): Built-in tools, tool registry, output limiting and offloading, read-state tracking.
 // Other modules import only from this file.
 
+export { createBashTool } from "./bash.ts";
 export { createEditTool, editTool } from "./edit.ts";
 export { createGlobTool, globTool } from "./glob.ts";
 export { createGrepTool, grepTool } from "./grep.ts";
@@ -15,6 +16,14 @@ export {
 export { createReadState, type ReadStateEntry, type ReadStateStore } from "./read-state.ts";
 export { createToolRegistry, type PreparedCall, type ToolRegistry, toolCallData } from "./registry.ts";
 export { strictSubsetViolations, toolInputSchema } from "./schema.ts";
+export {
+  commandEnv,
+  parseEnvFile,
+  type ShellSnapshot,
+  type SnapshotResult,
+  scopedSettingsEnv,
+  startShellSnapshot,
+} from "./shell-env.ts";
 export type {
   ActionDescriptor,
   Effects,
