@@ -301,3 +301,8 @@ Next: M1-16.
 Done (PR #67, merged, CI green on three OSes): `src/tools/edit.ts` and `edit-match.ts`: relaxed staleness (exact unique match only, with the note), the L0–L2 cascade, unchanged lines keep original bytes, closest-match error diffs, encoding refusal, CRLF/UTF-16 preserved, `meta.fileChanges[].match`. AC-TOOLS-03/04/14/15/16 pass. Two fresh reviews; nothing above minor remains. I wrote the tests after the code this time; the reviewer's mutation runs showed the gaps (fall-through, stale L2, one-line typo) and they are fixed and tested.
 Learned: Q35 holds my decisions. `decode`/`encode`/`dominantEol` now live in `src/tools/codec.ts`. Not built: the `quirks.doubleEscapedEdits` unescape (needs model quirks in `ToolContext`; M1-25 adds it and its test). An unread file is refused until M1-23 adds the silent read. Spec-change PRs still to do: Q20–Q22, Q25, Q27–Q30, Q33–Q35.
 Next: M1-17.
+
+## 2026-10-14 — Fix: red main (flaky process-tree test)
+Done (PR #69, merged, CI green on three OSes): `main` was red on Linux because `isAlive` in `test/platform/process-tree/process-tree.test.ts` threw ESRCH when the process vanished between `kill(pid, 0)` and the `/proc/<pid>/stat` read. It now treats ESRCH/ENOENT on that read as dead. Test-only change; no product code touched.
+Learned: Per build loop step 2 this was the whole session; M1-17 was not started.
+Next: M1-17.
