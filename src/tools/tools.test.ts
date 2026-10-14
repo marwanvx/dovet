@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { ToolCallData } from "../schema/index.ts";
 import {
+  builtinTools,
   createReadState,
   createToolRegistry,
   limitOutput,
@@ -148,6 +149,34 @@ describe("validation errors", () => {
   });
 });
 
+describe("drop and rewrite", () => {
+  const Fetch = tool(
+    "Fetch",
+    z.strictObject({ url: z.string(), mode: z.string().optional() }),
+    { url: "u" },
+    {
+      drop: ["prompt"],
+      rewrite: (i) => ("-l" in i ? { url: i.url, mode: "files" } : i),
+    },
+  );
+  const reg = createToolRegistry([Fetch]);
+
+  test("dropped fields vanish and rewrite runs last", () => {
+    const dropped = reg.prepare("Fetch", { url: "u", prompt: "summarize" });
+    expect(dropped.ok && dropped.input).toEqual({ url: "u" });
+    const rewritten = reg.prepare("Fetch", { url: "u", "-l": true });
+    expect(rewritten.ok && rewritten.input).toEqual({ url: "u", mode: "files" });
+  });
+});
+
+describe("offload ids", () => {
+  test("an id that could leave the directory is refused", async () => {
+    await expect(limitOutput("x".repeat(40_000), { dir: join(tmpdir(), "dovet-x"), id: "../../x" })).rejects.toThrow(
+      "Invalid offload id",
+    );
+  });
+});
+
 describe("tool names", () => {
   test("match case-insensitively when unambiguous", () => {
     const r = registry.prepare("bash", { command: "ls" });
@@ -169,6 +198,13 @@ describe("tool names", () => {
 });
 
 describe("strict subset", () => {
+  test("every built-in tool schema passes and every errorExample parses", () => {
+    for (const t of builtinTools) {
+      expect(strictSubsetViolations(toolInputSchema(t))).toEqual([]);
+      expect(t.input.safeParse(t.errorExample).success).toBe(true);
+    }
+  });
+
   test("toolInputSchema moves limits into descriptions and passes the check", () => {
     for (const t of registry.tools) expect(strictSubsetViolations(toolInputSchema(t))).toEqual([]);
     const schema = toolInputSchema(Read) as { properties: Record<string, { description?: string }> };
@@ -222,6 +258,8 @@ describe("output limiting", () => {
     const saved = await readFile(r.offloadPath as string, "utf8");
     expect(saved.split("\n").every((l) => l.length <= 2000)).toBe(true);
     expect(saved.split("\n").length).toBeGreaterThan(500);
+    expect(r.offloadPath).toEndWith(".json");
+    expect(saved).toContain('\n  "n": [\n');
     expect(saved.replace(/\s/g, "").replace(/\\?"/g, "")).toContain("ab".repeat(1000));
   });
 
@@ -263,8 +301,11 @@ describe("read state", () => {
 
   test("is case-insensitive on Windows and macOS, not on Linux", () => {
     const win = createReadState("win32");
-    win.set("C:\\Work\\A.ts", entry);
-    expect(win.get("c:\\work\\a.ts")).toEqual(entry);
+    win.set("c:\\work\\a.ts", entry);
+    expect(win.get("C:\\Work\\A.ts")).toEqual(entry);
+    const mac = createReadState("darwin");
+    mac.set("/work/a.ts", entry);
+    expect(mac.get("/Work/A.ts")).toEqual(entry);
     const linux = createReadState("linux");
     linux.set("/Work/A.ts", entry);
     expect(linux.get("/work/a.ts")).toBeUndefined();

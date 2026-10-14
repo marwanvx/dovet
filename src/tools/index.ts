@@ -15,3 +15,8 @@ export type {
   ToolOutput,
   ToolProgressEvent,
 } from "./types.ts";
+
+import type { ToolDefinition } from "./types.ts";
+
+/** Every built-in tool; each tool task appends here so the schema tests cover it. */
+export const builtinTools: readonly ToolDefinition<unknown>[] = [];
