@@ -1358,3 +1358,9 @@ How the CI timings were found: the first benchmark printed only totals, hit the 
 ## SPIKE-44 AI SDK fidelity inside Dovet (M1-08, 2026-10-13)
 
 Tested on `@ai-sdk/openai-compatible` 3.0.68 with `ai` 7.0.138 against sessions recorded live on NVIDIA's free endpoint (`z-ai/glm-5.3-flash`). Result: the round trip SDK messages → stored parts → SDK messages is lossless on every recorded response; the adapter's replayed requests equal the direct-SDK requests byte for byte, in tests and in a compiled binary; requests within an epoch extend each other when reasoning is replayed `always`. Dropping reasoning at user turns (`in-tool-loop`) breaks that, so it is kept for vendors that require it (QUESTIONS Q27). Only one package was tested (owner decision, QUESTIONS Q26); `src/ai/contract.test.ts` is the suite every later package must pass.
+
+## SPIKE-24 shell environment snapshot (M1-18, 2026-10-14)
+
+- Result: `bash -l -i -c 'env -0'` with `DOVET_SNAPSHOT=1`, stdin `/dev/null`, spawned detached (no controlling terminal, so `-i` has no job control and background children stay in the group), works on Linux. A profile that backgrounds `sleep 300` and then sleeps 30 s is cut at the timeout and `killTree` removes the whole group.
+- Stdout can carry rc-file banners ahead of the first variable; the parser drops them. stderr noise (`no job control`) is discarded.
+- Not verified here: zsh and powerlevel10k instant prompt, conda init, macOS, Git Bash on Windows (the snapshot omits `PATH` there by design).
