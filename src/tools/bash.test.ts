@@ -331,7 +331,7 @@ describe("Bash on every OS", () => {
         "powershell",
         "-NoProfile",
         "-Command",
-        `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 300`,
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'sleep|bash|taskkill' -or $_.ProcessId -eq ${pid} } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 300`,
       ]);
       console.log("DIAG", info.stdout.toString());
     }
