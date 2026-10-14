@@ -19,6 +19,13 @@ function gitArgs(args: string[]): string[] {
   return [];
 }
 
+/** `/usr/bin/Git.exe` → `git`. */
+export const program = (name: string | undefined): string =>
+  (name ?? "")
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.exe$/i, "")
+    .toLowerCase();
+
 const positional = (args: string[]): string[] => args.filter((a) => !a.startsWith("-"));
 const curlUpload = (args: string[]): boolean =>
   args.some(
@@ -39,9 +46,16 @@ const ghApiWrites = (args: string[]): boolean =>
 const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;
 
 function oneRemote(argv: string[]): Remote | undefined {
-  const [name = "", ...rest] = argv;
-  const [a = "", b = ""] = name === "git" ? gitArgs(rest) : rest;
+  const name = program(argv[0]);
+  const rest = argv.slice(1);
+  const plain = name === "git" ? gitArgs(rest) : positional(rest);
+  const [a = ""] = plain;
+  const w = (...seq: string[]): boolean => plain.slice(0, 4).some((_, i) => seq.every((x, j) => plain[i + j] === x));
   const is = (kind: Remote["kind"], label = argv.join(" ")): Remote => ({ kind, label });
+  const verbOf = (verbs: string[], tool: string): Remote | undefined => {
+    const hit = verbs.find((v) => w(v));
+    return hit === undefined ? undefined : is("deploy", `${tool} ${hit}`);
+  };
   switch (name) {
     case "git":
       if (a === "push") return is("push", "git push");
@@ -50,47 +64,50 @@ function oneRemote(argv: string[]): Remote | undefined {
     case "pnpm":
     case "yarn":
     case "bun":
-      return a === "publish" ? is("publish", `${name} publish`) : undefined;
+      return w("publish") ? is("publish", `${name} publish`) : undefined;
     case "cargo":
-      return a === "publish" ? is("publish", "cargo publish") : undefined;
+      return w("publish") ? is("publish", "cargo publish") : undefined;
     case "twine":
-      return a === "upload" ? is("publish", "twine upload") : undefined;
+      return w("upload") ? is("publish", "twine upload") : undefined;
     case "gem":
-      return a === "push" ? is("publish", "gem push") : undefined;
+      return w("push") ? is("publish", "gem push") : undefined;
     case "dotnet":
-      return a === "nuget" && b === "push" ? is("publish", "dotnet nuget push") : undefined;
+      return w("nuget", "push") ? is("publish", "dotnet nuget push") : undefined;
     case "mvn":
-      return a === "deploy" ? is("deploy", "mvn deploy") : undefined;
+      return w("deploy") ? is("deploy", "mvn deploy") : undefined;
     case "docker":
     case "podman":
-      return a === "push" ? is("publish", `${name} push`) : undefined;
+      return w("push") ? is("publish", `${name} push`) : undefined;
     case "gh": {
-      const [g, h] = positional(rest);
-      const hit =
-        (g === "pr" && ["create", "merge", "comment", "review"].includes(h ?? "")) ||
-        (g === "issue" && ["create", "comment"].includes(h ?? "")) ||
-        (g === "release" && h === "create") ||
-        (g === "repo" && ["create", "delete"].includes(h ?? "")) ||
-        (g === "gist" && h === "create") ||
-        (g === "api" && ghApiWrites(rest)) ||
-        (g === "workflow" && h === "run");
-      return hit ? is("upload", `gh ${g} ${g === "api" ? "(non-GET)" : h}`) : undefined;
+      const pairs: Array<[string, string[]]> = [
+        ["pr", ["create", "merge", "comment", "review"]],
+        ["issue", ["create", "comment"]],
+        ["release", ["create"]],
+        ["repo", ["create", "delete"]],
+        ["gist", ["create"]],
+        ["workflow", ["run"]],
+      ];
+      for (const [g, hs] of pairs) {
+        const h = hs.find((x) => w(g, x));
+        if (h !== undefined) return is("upload", `gh ${g} ${h}`);
+      }
+      return plain.slice(0, 3).includes("api") && ghApiWrites(rest) ? is("upload", "gh api (non-GET)") : undefined;
     }
     case "vercel":
     case "netlify":
     case "fly":
-      return a === "deploy" ? is("deploy", `${name} deploy`) : undefined;
+      return w("deploy") ? is("deploy", `${name} deploy`) : undefined;
     case "wrangler":
-      return a === "deploy" || a === "publish" ? is("deploy", `wrangler ${a}`) : undefined;
+      return w("deploy") || w("publish") ? is("deploy", `wrangler ${a}`) : undefined;
     case "terraform":
     case "tofu":
-      return a === "apply" || a === "destroy" ? is("deploy", `${name} ${a}`) : undefined;
+      return w("apply") || w("destroy") ? is("deploy", `${name} ${w("apply") ? "apply" : "destroy"}`) : undefined;
     case "pulumi":
-      return a === "up" || a === "destroy" ? is("deploy", `pulumi ${a}`) : undefined;
+      return w("up") || w("destroy") ? is("deploy", `pulumi ${w("up") ? "up" : "destroy"}`) : undefined;
     case "kubectl":
-      return ["apply", "delete", "patch"].includes(a) ? is("deploy", `kubectl ${a}`) : undefined;
+      return verbOf(["apply", "delete", "patch"], "kubectl");
     case "helm":
-      return ["install", "upgrade", "uninstall"].includes(a) ? is("deploy", `helm ${a}`) : undefined;
+      return verbOf(["install", "upgrade", "uninstall"], "helm");
     case "curl":
       return curlUpload(rest) ? is("upload", "curl upload") : undefined;
     case "wget":
@@ -117,16 +134,16 @@ export function remoteAction(argv: string[]): Remote | undefined {
 /** A force-push (`--force*`, `-f`, `+refspec`) of one of the `branches`, as the full command text; else undefined. */
 export function forcePushToDefault(argv: string[], branches: readonly string[]): string | undefined {
   for (const v of strippedArgvs(argv)) {
-    if (v[0] !== "git") continue;
+    if (program(v[0]) !== "git") continue;
     const args = gitArgs(v.slice(1));
     if (args[0] !== "push") continue;
     const rest = args.slice(1);
     const [, ...refs] = positional(rest);
-    const forced = rest.some((a) => /^--force/.test(a) || /^-[a-zA-Z]*f/.test(a));
-    const hits = refs.some((r) => {
-      const plus = r.startsWith("+");
+    const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
+    const hits = (refs.length === 0 ? [""] : refs).some((r) => {
       const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
-      return (forced || plus) && branches.includes(dst);
+      // No named branch, or HEAD, may be the default branch: fail closed.
+      return (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || branches.includes(dst));
     });
     if (hits) return v.join(" ");
   }
@@ -137,7 +154,7 @@ const KILLERS = new Set(["kill", "taskkill", "stop-process", "pkill", "killall"]
 
 /** Process control aimed at Dovet: `deny` for its own pid or parent, `ask` for a pattern that could match it. */
 export function selfControl(env: Env, argv: string[]): { behavior: "deny" | "ask"; reason: string } | undefined {
-  const name = argv[0]?.toLowerCase() ?? "";
+  const name = program(argv[0]);
   if (!KILLERS.has(name)) return undefined;
   const args = argv.slice(1);
   if (name === "pkill" || name === "killall" || (name === "stop-process" && args.some((a) => /^-name$/i.test(a)))) {

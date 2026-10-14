@@ -8,13 +8,14 @@ import {
   type RuleMatch,
   type RuleSet,
   type Subcommand,
+  strippedArgvs,
 } from "../rules/index.ts";
 import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
-import { forcePushToDefault, remoteAction, selfControl } from "./remote.ts";
-import { FS_COMMANDS, NETWORK_PATH, shellTargets, type Target, unresolvedTarget } from "./targets.ts";
+import { forcePushToDefault, program, remoteAction, selfControl } from "./remote.ts";
+import { FS_COMMANDS, NETWORK_PATH, sedEscapes, shellTargets, type Target, unresolvedTarget } from "./targets.ts";
 
 export type Action =
   | { kind: "read" | "edit"; paths: string[] }
@@ -105,12 +106,13 @@ function expandHome(env: Env, raw: string): string {
   return raw.startsWith("~/") || raw.startsWith("~\\") ? lexicalPath(raw.slice(2), env.home, env.os) : raw;
 }
 
-function pathLifted(st: State, access: "read" | "edit", path: string): boolean {
+function pathLifted(st: State, access: "read" | "edit", path: string, exact = false): boolean {
   const call: RuleCall = { tool: access === "read" ? "Read" : "Edit", cwd: st.env.cwd, paths: [{ access, path }] };
-  return evaluateRules(st.rules, call)?.behavior === "allow";
+  const m = evaluateRules(st.rules, call);
+  return m?.behavior === "allow" && (!exact || (!TOOL_WIDE.test(m.rule) && !/[*?[{]/.test(m.rule)));
 }
 
-function pathFindings(st: State, t: Target, file: boolean): Finding[] {
+function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false): Finding[] {
   const { env } = st;
   if (t.access === "edit" && env.planFile !== undefined && t.path === env.planFile) return [];
   const forms = resolveForms(env, expandHome(env, t.path), t.cwd);
@@ -120,6 +122,7 @@ function pathFindings(st: State, t: Target, file: boolean): Finding[] {
   const out: Finding[] = [];
   const both = [forms.requested, forms.canonical];
   const lifted = pathLifted(st, t.access, abs);
+  const sensitiveLifted = pathLifted(st, t.access, abs, true);
   const protectedHit =
     t.access === "edit" ? both.map((p) => protectedPath(p, env)).find((p) => p !== undefined) : undefined;
   if (protectedHit !== undefined)
@@ -127,9 +130,13 @@ function pathFindings(st: State, t: Target, file: boolean): Finding[] {
   const sensitive = both.map((p) => sensitivePath(p, env)).find((p) => p !== undefined);
   if (sensitive !== undefined)
     out.push(
-      finding("sensitive", `sensitive file: ${t.path} (${sensitive})`, "ask", { path: abs, liftable: true, lifted }),
+      finding("sensitive", `sensitive file: ${t.path} (${sensitive})`, "ask", {
+        path: abs,
+        liftable: true,
+        lifted: sensitiveLifted,
+      }),
     );
-  if (!insideWorkingDirs(env, forms)) {
+  if (!insideWorkingDirs(env, forms) && !(sandboxedRead && t.access === "read")) {
     if (file && t.access === "read" && st.blockReadsOutsideWorkingDirectories === true)
       out.push(
         finding("outside", `outside working directory: ${t.path} (reads there are blocked)`, "deny", { path: abs }),
@@ -149,6 +156,14 @@ function pathFindings(st: State, t: Target, file: boolean): Finding[] {
   return out;
 }
 
+/** An allow rule that names the command: no wildcard, or at least two fixed words before it (`git push*`, not `git *`). */
+function namesCommand(rule: string): boolean {
+  if (TOOL_WIDE.test(rule)) return false;
+  const text = rule.slice(rule.indexOf("(") + 1, rule.lastIndexOf(")"));
+  const star = text.indexOf("*");
+  return star < 0 || text.slice(0, star).trim().split(/\s+/).length >= 2;
+}
+
 function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean): boolean {
   const m = evaluateRules(st.rules, {
     tool,
@@ -156,50 +171,55 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean)
     commands: [{ ...sub, readOnly: false }],
     checkable: true,
   });
-  return m?.behavior === "allow" && !TOOL_WIDE.test(m.rule) && !(exact && m.rule.includes("*"));
+  return m?.behavior === "allow" && namesCommand(m.rule) && !(exact && m.rule.includes("*"));
 }
 
 function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shell" }>): Finding[] {
   const { env } = st;
   const out: Finding[] = [];
   const branches = ["main", "master", ...(st.defaultBranch === undefined ? [] : [st.defaultBranch])];
+  const sandboxedRead = st.sandboxAutoAllow === true && a.sandboxed;
   for (const sub0 of a.analysis.commands ?? []) {
-    const sub = unwrapCmd(sub0);
-    const system = systemRemoval(env, sub);
-    if (system !== undefined) out.push(finding("system-removal", system, "deny"));
-    const critical = criticalRemoval(env, sub);
-    if (critical !== undefined)
-      out.push(
-        finding("critical", `critical-path removal: ${critical}`, "ask", {
-          ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
-        }),
-      );
-    const self = selfControl(env, sub.argv);
-    if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
-    const words = [...sub.argv.slice(1), ...(sub.redirects ?? []).map((r) => r.target)];
+    const unwrapped = unwrapCmd(sub0);
+    const viaCmd = unwrapped !== sub0;
+    for (const v of strippedArgvs(unwrapped.argv)) {
+      const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
+      const system = systemRemoval(env, sub, viaCmd);
+      if (system !== undefined) out.push(finding("system-removal", system, "deny"));
+      const critical = criticalRemoval(env, sub);
+      if (critical !== undefined)
+        out.push(
+          finding("critical", `critical-path removal: ${critical}`, "ask", {
+            ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
+          }),
+        );
+      const self = selfControl(env, sub.argv);
+      if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
+      for (const t of shellTargets(sub, env.cwd)) {
+        out.push(...pathFindings(st, t, false, sandboxedRead));
+        if (t.access === "edit" && unresolvedTarget(t.path))
+          out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
+      }
+    }
+    const words = [...sub0.argv.slice(1), ...(sub0.redirects ?? []).map((r) => r.target)];
     const net = words.find((w) => NETWORK_PATH.test(w));
     if (net !== undefined) out.push(finding("network-path", `network path: ${net}`, "ask"));
-    const tainted = st.tainted === true;
+    const sub = sub0;
     const remote = remoteAction(sub.argv);
     if (remote !== undefined)
       out.push(
         finding(
           "remote",
           `remote action: ${remote.label}`,
-          tainted ? "deny" : "ask",
-          tainted ? {} : { liftable: true, lifted: explicitAllow(st, tool, sub, false) },
+          st.tainted === true ? "deny" : "ask",
+          st.tainted === true ? {} : { liftable: true, lifted: explicitAllow(st, tool, sub, false) },
         ),
       );
     const force = forcePushToDefault(sub.argv, branches);
     if (force !== undefined && !explicitAllow(st, tool, sub, true))
       out.push(finding("force-push", `force-push to the default branch: ${force}`, "deny"));
-    for (const t of shellTargets(sub, env.cwd)) {
-      out.push(...pathFindings(st, t, false));
-      if (t.access === "edit" && unresolvedTarget(t.path))
-        out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
-    }
   }
-  for (const o of a.analysis.operands) out.push(...pathFindings(st, { ...o, cwd: env.cwd }, false));
+  for (const o of a.analysis.operands) out.push(...pathFindings(st, { ...o, cwd: env.cwd }, false, sandboxedRead));
   return out;
 }
 
@@ -250,6 +270,12 @@ const readOnlyAfterRedirects = (s: Subcommand): boolean =>
   ).ok &&
     (s.redirects ?? []).length > 0);
 
+function fsCommand(s: Subcommand): boolean {
+  const { argv } = unwrapCmd(s);
+  const name = program(argv[0]);
+  return FS_COMMANDS.has(name) && !(name === "sed" && sedEscapes(argv.slice(1)));
+}
+
 function shellDefault(
   st: State,
   a: Extract<Action, { kind: "shell" }>,
@@ -276,10 +302,7 @@ function shellDefault(
   if (
     st.mode === "acceptEdits" &&
     understood &&
-    subs.every(
-      (s) =>
-        s.readOnly === true || FS_COMMANDS.has(unwrapCmd(s).argv[0]?.toLowerCase() ?? "") || readOnlyAfterRedirects(s),
-    )
+    subs.every((s) => s.readOnly === true || fsCommand(s) || readOnlyAfterRedirects(s))
   )
     return done("allow", "file edits inside the working directories", "the acceptEdits mode");
   return done("ask", why, "the Manual mode default");
@@ -298,7 +321,12 @@ export function decide(req: Request, st: State): Decision {
   if (match?.behavior === "deny") return out("deny", `denied by ${match.rule}`, `rule ${match.rule}`, { rule: match });
   const hard = findings.find((f) => f.outcome === "deny" && !f.lifted);
   if (hard !== undefined) return out("deny", hard.detail, hard.by);
-  if (a.kind === "edit" && st.env.planFile !== undefined && a.paths.every((p) => p === st.env.planFile))
+  if (
+    a.kind === "edit" &&
+    st.env.planFile !== undefined &&
+    a.paths.length > 0 &&
+    a.paths.every((p) => p === st.env.planFile)
+  )
     return out("allow", "the plan file", "plan mode (§2)");
   if (a.kind === "edit" && st.mode === "plan")
     return out("deny", "plan mode: nothing changes until the plan is approved", "the plan mode default");
@@ -335,4 +363,10 @@ export function decide(req: Request, st: State): Decision {
         ? out("allow", "bypassPermissions mode", "the bypassPermissions mode")
         : out("ask", `new network host: ${a.host}`, "the network rule (§7.4)");
   }
+}
+
+/** What leaving plan mode offers: the mode active before plan first, never a lower one (§2). */
+export function planExitChoices(before: PermissionMode): PermissionMode[] {
+  const order: PermissionMode[] = ["default", "acceptEdits"];
+  return [...new Set<PermissionMode>([before === "plan" ? "default" : before, ...order])];
 }

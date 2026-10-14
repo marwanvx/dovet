@@ -10,7 +10,7 @@ import { analyzeShell } from "../shell-parse/analyze.ts";
 import { expandGlob, isDirectory } from "../shell-parse/glob.ts";
 import { loadShellParsers, type ShellLanguage, type ShellParsers } from "../shell-parse/load.ts";
 import { criticalRemoval } from "./critical.ts";
-import { type Decision, decide, type Env, exampleDecider, type State } from "./index.ts";
+import { type Decision, decide, type Env, exampleDecider, planExitChoices, type State } from "./index.ts";
 import { protectedPath, sensitivePath } from "./paths.ts";
 
 let parsers: ShellParsers;
@@ -525,7 +525,7 @@ describe("remote actions", () => {
       decide: decider,
     });
     expect(bad).toHaveLength(1);
-    expect(bad[0]?.message).toContain("git push");
+    expect(bad[0]?.message).toContain("remote action: git push");
     expect(bad[0]?.message).toContain("remote-action check (§4.8)");
   });
 });
@@ -640,5 +640,121 @@ describe("bypass corpus through the full decision", () => {
       }
     }
     expect(approved).toEqual([]);
+  });
+});
+
+describe("review findings", () => {
+  const bypass = state("bypassPermissions");
+  // spec: AC-PERM-07
+  test("prefixes and full paths do not hide a critical removal, a kill of Dovet or a protected write", () => {
+    for (const c of [
+      "/bin/rm -rf /",
+      "sudo rm -rf /",
+      "env rm -rf /",
+      "command rm -rf /",
+      "timeout 5 rm -rf /",
+      "nice rm -rf /",
+    ])
+      expect(sh(c, bypass).behavior, c).toBe("ask");
+    expect(sh("/bin/kill 4242", bypass).behavior).toBe("deny");
+    expect(sh("sudo rm -rf /", state("default", { allow: ["Bash(sudo *)"] })).behavior).toBe("ask");
+    expect(sh("sudo touch .git/config", state("acceptEdits")).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("sed scripts that run or write, and cp -t into protected or outside paths, are not auto-approved", () => {
+    const st = state("acceptEdits");
+    for (const c of [
+      'sed "1e id" a.ts',
+      'sed -n "w /tmp/zz" a.ts',
+      "sed -i -f s.sed a.ts",
+      "cp -t .git/hooks a.ts",
+      "cp --target-directory=/etc a.ts",
+    ])
+      expect(sh(c, st).behavior, c).toBe("ask");
+    expect(sh("cp -t .git/hooks a.ts", state("default", { allow: ["Bash(cp *)"] })).behavior).toBe("ask");
+    expect(sh("sed -i s/a/b/ a.ts", st).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-29
+  test("options before the subcommand and a full path do not hide a remote action", () => {
+    for (const c of [
+      "kubectl -n prod apply -f x.yaml",
+      "gh -R o/r pr create",
+      "npm --registry https://r publish",
+      "pnpm -r publish",
+      "terraform -chdir=infra apply",
+      "/usr/bin/git push",
+    ])
+      expect(sh(c, state("default", {}, { sandboxAutoAllow: true }), { sandboxed: true }).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-29
+  test("only a rule that names the command lifts a remote action; Bash(git *) does not", () => {
+    const st = (allow: string) => state("default", { allow: [allow] }, { sandboxAutoAllow: true });
+    for (const rule of ["Bash", "Bash(*)", "Bash(git *)", "Bash(g*)"])
+      expect(sh("git push origin main", st(rule), { sandboxed: true }).behavior, rule).toBe("ask");
+    expect(sh("git push origin main", st("Bash(git push*)"), { sandboxed: true }).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-07
+  test("a broad Read or Edit allow does not lift a sensitive file; only its exact path does", () => {
+    expect(file("read", join(root, ".env"), state("default", { allow: ["Read(**)"] })).behavior).toBe("ask");
+    expect(file("edit", join(root, ".env"), state("acceptEdits", { allow: ["Edit(**)"] })).behavior).toBe("ask");
+    expect(sh("cat .env", state("default", { allow: ["Read(**)"] })).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-29
+  test("a force-push with no branch named, or HEAD, counts as the default branch", () => {
+    for (const c of ["git push --force", "git push -f origin", "git push -f origin HEAD"])
+      expect(sh(c, bypass).behavior, c).toBe("deny");
+    expect(sh("git push --force origin feature", bypass).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-07
+  test("$HOME with more expansion after it is critical", () => {
+    for (const c of ["rm -rf $HOME$X", "rm -rf ${HOME%/}"]) expect(sh(c, bypass).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("cmd /c rd and del on system paths are denied; macOS /private paths and unresolved write targets are caught", () => {
+    const win = state(
+      "default",
+      {},
+      { env: env({ os: "win32", cwd: "C:\\p", workingDirs: ["C:\\p"], home: "C:\\Users\\u", canonicalize: (p) => p }) },
+    );
+    const sub1 = { argv: ["cmd", "/c", "rd /s C:\\Windows"], cwd: "C:\\p" };
+    expect(
+      decide(
+        {
+          tool: "Bash",
+          action: {
+            kind: "shell",
+            analysis: { commands: [sub1], understood: true, literalNames: true, reasons: [], operands: [] },
+            sandboxed: false,
+          },
+        },
+        win,
+      ).behavior,
+    ).toBe("deny");
+    const mac = env({ os: "darwin", canonicalize: (p) => p });
+    for (const t of ["/private/etc", "/private/var", "/private/tmp", "/private/home"])
+      expect(criticalRemoval(mac, sub(["rm", "-rf", t])), t).toBeDefined();
+    expect(sh("rm *.o", state("acceptEdits")).behavior).toBe("ask");
+    expect(sh("rmdir /usr", state("default", { allow: ["Bash(rmdir *)"] })).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-17
+  test("leaving plan mode offers the mode from before plan first, never a lower one", () => {
+    expect(planExitChoices("bypassPermissions")[0]).toBe("bypassPermissions");
+    expect(planExitChoices("acceptEdits")[0]).toBe("acceptEdits");
+    expect(planExitChoices("plan")[0]).toBe("default");
+  });
+
+  // spec: AC-PERM-07
+  test("a sandboxed read outside the working directories is free, but a sensitive one still asks", () => {
+    const st = state("default", {}, { sandboxAutoAllow: true });
+    expect(sh("cat ../x", st, { sandboxed: true }).behavior).toBe("allow");
+    expect(sh("cat ~/.ssh/id_rsa", st, { sandboxed: true }).behavior).toBe("ask");
   });
 });

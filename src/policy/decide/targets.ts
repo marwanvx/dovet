@@ -45,11 +45,17 @@ export function shellTargets(sub: Subcommand, fallbackCwd: string): Target[] {
   }
   const name = (sub.argv[0] ?? "").toLowerCase();
   const args = sub.argv.slice(1);
-  const positional = args.filter((a) => !isFlag(a));
+  let positional = args.filter((a) => !isFlag(a));
   const edit = (paths: string[]): void => {
     for (const path of paths) out.push({ access: "edit", path, cwd });
   };
-  if (EVERY_ARG.has(name)) edit(positional);
+  const dir = ["cp", "mv", "ln", "install"].includes(name) ? targetDirectory(args) : undefined;
+  if (dir !== undefined) {
+    edit([dir]);
+    positional = positional.filter((p) => p !== dir);
+    if (name === "cp") for (const path of positional) out.push({ access: "read", path, cwd });
+    else edit(positional);
+  } else if (EVERY_ARG.has(name)) edit(positional);
   else if (AFTER_FIRST.has(name)) edit(positional.slice(1));
   else if (name === "cp") {
     for (const path of positional.slice(0, -1)) out.push({ access: "read", path, cwd });
@@ -64,6 +70,26 @@ export function shellTargets(sub: Subcommand, fallbackCwd: string): Target[] {
     edit(at >= 0 ? [args[at + 1] ?? ""] : positional.slice(0, 1));
   }
   return out;
+}
+
+function targetDirectory(args: string[]): string | undefined {
+  for (const [i, a] of args.entries()) {
+    if (a === "-t" || a === "--target-directory") return args[i + 1];
+    const attached = /^(?:--target-directory=|-t)(.+)$/.exec(a);
+    if (attached !== null) return attached[1];
+  }
+  return undefined;
+}
+
+/** A `sed` script that can run a command or write a file by itself (`e`, `w`, `W`, `s///e`, `s///w`) or comes from a file. */
+export function sedEscapes(args: string[]): boolean {
+  if (args.some((a) => /^(-[a-zA-Z]*f|--file)/.test(a))) return true;
+  const scripts = args.some((a) => /^(-[a-zA-Z]*e|--expression)/.test(a))
+    ? args
+        .filter((_, i) => /^(-[a-zA-Z]*e|--expression)/.test(args[i - 1] ?? ""))
+        .concat(args.filter((a) => /^--expression=/.test(a)))
+    : args.filter((a) => !isFlag(a)).slice(0, 1);
+  return scripts.some((s) => /(^|[\s;{}\d$,!])[ewW](\s|$)|\/[gpiImM0-9]*[ew][gpiImM0-9]*($|[;\s}])/.test(s));
 }
 
 export const unresolvedTarget = (path: string): boolean => /[*?[{$`~]/.test(path);

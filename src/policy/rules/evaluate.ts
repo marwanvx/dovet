@@ -193,6 +193,7 @@ export type ExampleDecide = (
   tool: string,
   value: string,
   cwd: string,
+  mode?: string,
 ) => { behavior: Behavior; by: string } | undefined;
 
 /** Checks `permissions.examples` against the rules; a mismatch names the rule that actually decides. */
@@ -204,10 +205,10 @@ export function checkExamples(
   const cwd = opts.cwd ?? "/";
   const issues: RuleIssue[] = [];
   for (const example of examples) {
-    const tool = Object.keys(example).find((k) => k !== "expect");
+    const tool = Object.keys(example).find((k) => k !== "expect" && k !== "mode");
     const value = tool === undefined ? undefined : example[tool];
     if (tool === undefined || value === undefined) continue;
-    const decided = opts.decide?.(tool, value, cwd);
+    const decided = opts.decide?.(tool, value, cwd, example.mode);
     if (decided !== undefined) {
       if (decided.behavior !== example.expect)
         issues.push({

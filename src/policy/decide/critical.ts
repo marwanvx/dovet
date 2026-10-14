@@ -17,7 +17,7 @@ const targets = (sub: Subcommand): string[] => {
     .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^\/[a-z]$/i.test(a)));
 };
 
-/** `cmd /c rd /s C:\x` as the command it runs. */
+/** `cmd /c rd /s C:\x` as the command it runs (the same sub when it is not a `cmd` wrapper). */
 export function unwrapCmd(sub: Subcommand): Subcommand {
   const [name = "", flag = "", ...rest] = sub.argv;
   if (!/^cmd(\.exe)?$/i.test(name) || !/^\/[ck]$/i.test(flag)) return sub;
@@ -46,6 +46,7 @@ function listCritical(env: Env, p: string, glob: boolean): boolean {
 /** Why one removal target is critical, else undefined. */
 function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean): string | undefined {
   let t = raw.replace(/["']/g, "");
+  const orig = t;
   if (/^\\+$/.test(t)) return "a backslash-only target";
   if (/^[\\/]{2}[^\\/]+[\\/][A-Za-z]\$/.test(t)) return "an administrative share";
   const subst = t.search(/\$\(|`/);
@@ -67,7 +68,8 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
         ? "a shell variable followed by a top-level directory"
         : undefined;
   } else if (t === "~" || t.startsWith("~/")) t = env.home + t.slice(1);
-  if (t.includes("$")) return undefined;
+  if (t.includes("$"))
+    return /^\$\{?HOME/.test(orig) ? "the home directory with an expansion the check can't resolve" : undefined;
   if (t.startsWith("/cygdrive/")) t = t.slice(9);
   const glob = /[*?[{]/.test(t);
   let base = t;
@@ -98,8 +100,9 @@ export function criticalRemoval(env: Env, sub: Subcommand): string | undefined {
 }
 
 /** PowerShell `Remove-Item` of a system path or a bare wildcard: denied in every mode (§4.4). */
-export function systemRemoval(env: Env, sub: Subcommand): string | undefined {
-  if (!["remove-item", "rd", "rmdir", "del", "erase"].includes(sub.argv[0]?.toLowerCase() ?? "")) return undefined;
+export function systemRemoval(env: Env, sub: Subcommand, viaCmd: boolean): string | undefined {
+  const name = sub.argv[0]?.toLowerCase() ?? "";
+  if (!(name === "remove-item" || (viaCmd && ["rd", "rmdir", "del", "erase"].includes(name)))) return undefined;
   for (const t of targets(sub)) {
     const bare = t.replace(/["']/g, "");
     if (bare === "*" || bare === "/*" || bare === "\\*") return `${t}: a bare wildcard`;
