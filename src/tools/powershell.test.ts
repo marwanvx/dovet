@@ -117,7 +117,7 @@ describe.skipIf(process.platform === "win32")("PowerShell with a stand-in execut
     });
     const out = await ps(r, { command: "Write-Output 'héllo'" }, { edition: "pwsh" });
     const [bom, path] = text(out).split("\n");
-    expect(bom?.trim()).toBe("ef bb bf");
+    expect(bom?.trim().split(/\s+/).join(" ")).toBe("ef bb bf");
     expect(path).toMatch(/\/ps\/[0-9a-f]{8}\.ps1$/);
   });
 
@@ -132,6 +132,9 @@ describe.skipIf(process.platform === "win32")("PowerShell with a stand-in execut
 
 const REFUSE_FILE = `case " $* " in *" -File "*) echo "File a.ps1 cannot be loaded because running scripts is disabled on this system."; exit 1;; esac
 echo "via command"`;
+
+const exit3 = process.platform === "win32" ? "cmd /c exit 3" : "sh -c 'exit 3'";
+const exit2 = process.platform === "win32" ? "cmd /c exit 2" : "sh -c 'exit 2'";
 
 const editions: Array<[string, Edition]> = [];
 if (Bun.which("pwsh") !== null) editions.push(["pwsh", "pwsh"]);
@@ -156,12 +159,12 @@ describe.each(editions)("real %s", (_name, edition) => {
   // spec: AC-TOOLS-28
   test("a native exit code is returned; a failing cmdlet returns 1; a later success wins", async () => {
     const r = await rig();
-    const native = await ps(r, { command: "cmd /c exit 3" }, { edition });
+    const native = await ps(r, { command: exit3 }, { edition });
     expect(native.status).toBe("error");
     expect(native.meta?.exitCode).toBe(3);
     const cmdlet = await ps(r, { command: "Get-Item -LiteralPath ./does-not-exist" }, { edition });
     expect(cmdlet.meta?.exitCode).toBe(1);
-    const mixed = await ps(r, { command: "cmd /c exit 3; Get-Location" }, { edition });
+    const mixed = await ps(r, { command: `${exit3}; Get-Location` }, { edition });
     expect(mixed.meta?.exitCode).toBe(0);
     expect((await ps(r, { command: "Write-Output ok" }, { edition })).meta?.exitCode).toBe(0);
   });
@@ -180,7 +183,7 @@ describe.each(editions)("real %s", (_name, edition) => {
   // spec: AC-TOOLS-28
   test("-Command mode runs the same commands and spawns no -EncodedCommand", async () => {
     const r = await rig();
-    const out = await ps(r, { command: `Write-Output 'héllo'; cmd /c exit 2` }, { edition, viaCommand: true });
+    const out = await ps(r, { command: `Write-Output 'héllo'; ${exit2}` }, { edition, viaCommand: true });
     expect(text(out)).toContain("héllo");
     expect(out.meta?.exitCode).toBe(2);
     expect(r.argvs.flat()).toContain("-Command");
