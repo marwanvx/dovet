@@ -1,0 +1,335 @@
+// Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
+import type { Node } from "web-tree-sitter";
+import { isSafeEnv, type Redirect, type Subcommand } from "../rules/index.ts";
+import type { Context } from "./context.ts";
+import { classify, type Word } from "./read-only.ts";
+
+export type State = { cwd: string; stack: string[]; loops: Map<string, string[]>; depth: number };
+
+export type Walk = {
+  ctx: Context;
+  /** Parses and walks a script from `sh -c`; false when it could not be parsed. */
+  script(text: string, st: State): boolean;
+};
+
+const MAX_DEPTH = 8;
+const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
+const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
+
+const fresh = (st: State): State => ({ ...st, stack: [...st.stack], loops: new Map(st.loops), depth: st.depth + 1 });
+
+function hasUnescaped(raw: string, chars: string): boolean {
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw.charAt(i);
+    if (c === "\\") i++;
+    else if (chars.includes(c)) return true;
+  }
+  return false;
+}
+
+const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(.)/gs, "$1");
+const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
+const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
+
+export function walkBash(root: Node, walk: Walk, st: State): void {
+  const { ctx } = walk;
+
+  function loopWord(n: Node, st: State): Word | undefined {
+    const ref = n.type === "string" ? n.namedChildren : [n];
+    const only = ref.length === 1 ? ref[0] : undefined;
+    if (only?.type !== "simple_expansion" || (n.type === "string" && n.text !== `"${only.text}"`)) return undefined;
+    const values = st.loops.get(only.text.slice(1));
+    if (values === undefined) return undefined;
+    // A value that could be an option, split into words or expanded again is not a plain file name.
+    if (!values.every((v) => /^[^\s*?[{~$`\\'"-][^\s*?[{$`\\'"]*$/.test(v))) return opaque(n);
+    return { text: n.text, literal: true, glob: false, values };
+  }
+
+  function inner(n: Node, st: State): void {
+    for (const c of n.namedChildren) statement(c, fresh(st), true);
+  }
+
+  function word(n: Node, st: State): Word {
+    switch (n.type) {
+      case "word": {
+        const braces = hasUnescaped(n.text, "{");
+        if (braces) ctx.fail("brace expansion");
+        return { text: unbackslash(n.text), literal: !braces, glob: hasUnescaped(n.text, "*?[") };
+      }
+      case "number":
+        return { text: n.text, literal: true, glob: false };
+      case "raw_string":
+        return { text: n.text.slice(1, -1), literal: true, glob: false };
+      case "string": {
+        const loop = loopWord(n, st);
+        if (loop) return loop;
+        let literal = true;
+        for (const p of n.namedChildren) {
+          if (p.type === "string_content") continue;
+          literal = false;
+          if (p.type === "command_substitution") inner(p, st);
+          else {
+            ctx.fail(`${p.type} in a quoted word`);
+            inner(p, st);
+          }
+        }
+        return literal ? { text: unescapeQuoted(n.text.slice(1, -1)), literal, glob: false } : opaque(n);
+      }
+      case "concatenation": {
+        const parts = n.namedChildren.map((p) => word(p, st));
+        const literal = parts.every((p) => p.literal && p.values === undefined);
+        return {
+          text: literal ? parts.map((p) => p.text).join("") : n.text,
+          literal,
+          glob: parts.some((p) => p.glob),
+        };
+      }
+      case "command_substitution":
+        inner(n, st);
+        return opaque(n);
+      case "process_substitution":
+        ctx.fail("process substitution");
+        inner(n, st);
+        return opaque(n);
+      case "simple_expansion": {
+        const loop = loopWord(n, st);
+        if (loop) return loop;
+        ctx.fail(`variable ${n.text}`);
+        return opaque(n);
+      }
+      default:
+        ctx.fail(`${n.type} in a word`);
+        inner(n, st);
+        return opaque(n);
+    }
+  }
+
+  function assignment(n: Node, st: State): { text: string; ok: boolean } {
+    const name = n.childForFieldName("name")?.text ?? "";
+    const valueNode = n.childForFieldName("value");
+    const value = valueNode ? word(valueNode, st) : { text: "", literal: true, glob: false };
+    return { text: `${name}=${value.text}`, ok: isSafeEnv(name) && value.literal && !value.glob };
+  }
+
+  /** Records a redirect on `sub`; false when it makes the command more than a read of a path inside the working directories. */
+  function redirect(n: Node, sub: Subcommand, st: State): boolean {
+    if (n.type === "herestring_redirect") {
+      for (const c of n.namedChildren) word(c, st);
+      return true;
+    }
+    if (n.type === "heredoc_redirect") {
+      const quoted = /['"\\]/.test(n.namedChildren.find((c) => c.type === "heredoc_start")?.text ?? "");
+      for (const c of n.namedChildren) {
+        if (c.type === "heredoc_body") {
+          if (!quoted) {
+            for (const p of c.namedChildren) {
+              if (p.type === "heredoc_content" || p.type === "simple_expansion") continue;
+              ctx.fail("here-document with expansions");
+              statement(p, fresh(st), true);
+            }
+            // tree-sitter leaves backticks in an unquoted body as plain text.
+            for (const m of c.text.matchAll(/`([^`]*)`/g)) {
+              ctx.fail("here-document with command substitution");
+              walk.script(m[1] ?? "", fresh(st));
+            }
+          }
+        } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
+      }
+      return true;
+    }
+    const op = n.children.find((c) => !c.isNamed && /^(&>>?|>>?|>\||<|>&|<&|<>)$/.test(c.type))?.type ?? ">";
+    const dest = n.childForFieldName("destination");
+    if (dest === null) {
+      ctx.fail("redirect without a target");
+      return false;
+    }
+    if (op.endsWith("&") && (dest.type === "number" || dest.text === "-")) return true;
+    const target = word(dest, st);
+    if (!target.literal || target.glob || target.values) {
+      ctx.fail("redirect target is not a literal path");
+      return false;
+    }
+    if (target.text === "/dev/null") return true;
+    if (target.text.startsWith("~")) ctx.fail("redirect to a ~ path");
+    const abs = ctx.toAbsolute(target.text, st.cwd);
+    const entry: Redirect = { op, target: abs };
+    sub.redirects = [...(sub.redirects ?? []), entry];
+    return op.startsWith("<") ? ctx.inside(abs) && !/^(\\\\|\/\/)[^\\/]/.test(target.text) : false;
+  }
+
+  function changeDirectory(name: string, args: Word[], st: State, cond: boolean): boolean {
+    let target: string | undefined;
+    if (name === "popd" && args.length === 0) target = st.stack.pop();
+    else if (args.length === 0 && name === "cd") target = ctx.opts.home;
+    else if (
+      args.length === 1 &&
+      args[0]?.literal &&
+      !args[0].glob &&
+      !/^-/.test(args[0].text) &&
+      ctx.tildeOk(args[0].text)
+    ) {
+      target = ctx.toAbsolute(args[0].text, st.cwd);
+      if (name === "pushd") st.stack.push(st.cwd);
+    }
+    if (target === undefined) {
+      ctx.fail(`${name} without a literal target`);
+      return false;
+    }
+    if (cond) ctx.fail(`${name} inside a condition or loop`);
+    if (!ctx.opts.isDirectory(target)) {
+      ctx.fail(`${name} target is not a directory`);
+      return false;
+    }
+    st.cwd = target;
+    return ctx.inside(target);
+  }
+
+  function command(n: Node, st: State, cond: boolean, preset: Node[]): void {
+    const sub: Subcommand = { argv: [] };
+    const args: Word[] = [];
+    let name: Word | undefined;
+    let prefixed = false;
+    let redirectsOk = true;
+    for (const c of [...n.namedChildren, ...preset]) {
+      if (c.type === "comment") continue;
+      if (c.type === "variable_assignment") {
+        const a = assignment(c, st);
+        if (!a.ok) ctx.fail(`assignment ${a.text.split("=")[0]}`);
+        sub.argv.push(a.text);
+        prefixed = true;
+      } else if (c.type === "command_name") name = word(c.firstNamedChild ?? c, st);
+      else if (REDIRECTS.has(c.type)) redirectsOk = redirect(c, sub, st) && redirectsOk;
+      else args.push(word(c, st));
+    }
+    ctx.commands.push(sub);
+    if (name === undefined) return;
+    if (!name.literal || name.glob || name.values) {
+      ctx.state.literalNames = false;
+      ctx.fail("command name is not literal");
+    }
+    sub.argv.push(name.text, ...args.map((a) => a.text));
+    if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
+    if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
+    if (SHELLS.has(name.text)) shellScript(args, st);
+    if (name.text === "cd" || name.text === "pushd" || name.text === "popd") {
+      const stayed = changeDirectory(name.text, args, st, cond);
+      sub.readOnly = stayed && name.text === "cd" && redirectsOk && !prefixed;
+      return;
+    }
+    if (prefixed) return;
+    if (name.text === "tee") {
+      const targets = args.filter((a) => !(a.literal && a.text.startsWith("-")));
+      if (targets.some((t) => !t.literal || t.glob || t.text.startsWith("~"))) ctx.fail("tee target needs approval");
+      ctx.checkPaths(
+        targets.filter((t) => t.literal && !t.glob),
+        st.cwd,
+        "edit",
+      );
+      return;
+    }
+    const result = classify(name.text, args);
+    if (!result.ok) {
+      if (/glob/.test(result.reason)) ctx.fail(result.reason);
+      return;
+    }
+    if (result.paths.length === 0 && CWD_DEFAULT.has(name.text))
+      result.paths.push({ text: ".", literal: true, glob: false });
+    const awayGit = name.text === "git" && st.cwd !== ctx.opts.cwd && !ctx.opts.workingDirs.some((d) => d === st.cwd);
+    sub.readOnly = ctx.checkPaths(result.paths, st.cwd, "read") && redirectsOk && !awayGit;
+  }
+
+  function shellScript(args: Word[], st: State): void {
+    ctx.fail("sh -c runs a nested script");
+    const at = args.findIndex((a) => a.text === "-c");
+    const script = at < 0 ? undefined : args[at + 1];
+    if (script === undefined) return;
+    if (!script.literal) {
+      ctx.state.literalNames = false;
+      return;
+    }
+    if (st.depth >= MAX_DEPTH || !walk.script(script.text, fresh(st))) ctx.fail("nested script not parsed");
+  }
+
+  function forLoop(n: Node, st: State): void {
+    const variable = n.childForFieldName("variable")?.text;
+    const values: string[] = [];
+    for (const w of n.childrenForFieldName("value").map((c) => word(c, st))) {
+      if (!w.literal) ctx.fail("for loop over a computed list");
+      else if (w.glob) values.push(...ctx.opts.glob(w.text, st.cwd, ctx.deadline.at));
+      else values.push(w.text);
+    }
+    const body = fresh(st);
+    if (variable !== undefined) body.loops.set(variable, values.length > 0 ? values : [""]);
+    const loop = n.childForFieldName("body");
+    if (loop) statement(loop, body, true);
+  }
+
+  function statement(n: Node, st: State, cond: boolean): void {
+    if (n.type === "comment") return;
+    if (n.children.some((c) => c.type === "&")) ctx.fail("background job");
+    switch (n.type) {
+      case "program":
+      case "do_group":
+      case "else_clause":
+      case "elif_clause":
+      case "if_statement":
+      case "while_statement": {
+        const nested = cond || n.type !== "program";
+        for (const c of n.namedChildren) statement(c, st, nested);
+        return;
+      }
+      case "list": {
+        let rhs = cond;
+        for (const c of n.children) {
+          if (!c.isNamed) rhs = true;
+          else statement(c, st, rhs);
+        }
+        return;
+      }
+      case "pipeline":
+        for (const c of n.namedChildren) statement(c, fresh(st), cond);
+        return;
+      case "negated_command":
+        for (const c of n.namedChildren) statement(c, st, cond);
+        return;
+      case "command":
+        command(n, st, cond, []);
+        return;
+      case "redirected_statement": {
+        const body = n.childForFieldName("body");
+        const before = ctx.commands.length;
+        if (body) statement(body, st, cond);
+        // `a && b > f` parses with the redirect on the whole list, but it applies to `b` only.
+        const made = ctx.commands.slice(before);
+        const targets = body?.type === "list" || body?.type === "pipeline" ? made.slice(-1) : made;
+        const [first, ...others] = targets;
+        if (first === undefined) {
+          ctx.fail("redirect without a command");
+          return;
+        }
+        for (const r of n.childrenForFieldName("redirect")) {
+          if (redirect(r, first, st)) continue;
+          for (const t of targets) t.readOnly = false;
+        }
+        for (const t of others) t.redirects = first.redirects ?? [];
+        return;
+      }
+      case "variable_assignment": {
+        const a = assignment(n, st);
+        if (!a.ok) ctx.fail(`assignment ${a.text.split("=")[0]}`);
+        ctx.commands.push({ argv: [a.text], readOnly: a.ok });
+        return;
+      }
+      case "for_statement":
+        forLoop(n, st);
+        return;
+      default:
+        ctx.fail(`unsupported syntax ${n.type}`);
+        for (const c of n.namedChildren) if (c.childCount > 0) statement(c, fresh(st), true);
+    }
+  }
+
+  statement(root, st, false);
+}

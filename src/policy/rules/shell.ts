@@ -1,6 +1,11 @@
 // Shell rule text: a stopgap command splitter and wrapper stripping (permissions §3.2) until M1-22 supplies parsed commands.
 export type Redirect = { op: string; target: string };
-export type Subcommand = { argv: string[]; redirects?: Redirect[] };
+export type Subcommand = {
+  argv: string[];
+  redirects?: Redirect[];
+  /** Set by the analyzer (permissions §4.6): the command only reads, so it needs no allow rule of its own. */
+  readOnly?: boolean;
+};
 
 const REDIRECT = /^(?:&>>?|>>|>\||>&?|<&?)/;
 const SEPARATORS = ["&&", "||", "|&", ";", "|", "&", "\n"];
@@ -8,7 +13,7 @@ const SEPARATORS = ["&&", "||", "|&", ";", "|", "&", "\n"];
 /** Splits a command into simple commands, or undefined when it holds anything this reader can't take apart exactly. */
 export function splitCommand(command: string): Subcommand[] | undefined {
   const out: Subcommand[] = [];
-  let cur: Required<Subcommand> = { argv: [], redirects: [] };
+  let cur: Required<Omit<Subcommand, "readOnly">> = { argv: [], redirects: [] };
   let word: string | undefined;
   let pending: string | undefined;
   const endWord = (): void => {
@@ -122,7 +127,7 @@ const WRAPPERS = new Map<string, Wrapper>([
   ["setsid", { safe: false, valued: [], positional: 0 }],
   ["flock", { safe: false, valued: ["-w", "-E", "--timeout", "--conflict-exit-code"], positional: 1 }],
 ]);
-const SAFE_ENV = new Set([
+export const SAFE_ENV = new Set([
   "NODE_ENV",
   "CI",
   "LANG",
@@ -135,7 +140,9 @@ const SAFE_ENV = new Set([
   "PYTHONUNBUFFERED",
   "GOOS",
   "GOARCH",
+  "DEBUG",
 ]);
+export const isSafeEnv = (name: string): boolean => SAFE_ENV.has(name) || name.startsWith("LC_");
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
 
 /** The command with one wrapper or leading assignment removed. `deep` (deny and ask rules) also strips exec wrappers and any assignment. */
@@ -143,7 +150,7 @@ function stripOne(argv: string[], deep: boolean): string[] | undefined {
   let i = 0;
   while (i < argv.length) {
     const name = ASSIGNMENT.exec(argv[i] ?? "")?.[1];
-    if (name === undefined || !(deep || SAFE_ENV.has(name))) break;
+    if (name === undefined || !(deep || isSafeEnv(name))) break;
     i++;
   }
   if (i > 0) return i < argv.length ? argv.slice(i) : undefined;
@@ -187,3 +194,85 @@ export function shellPattern(pattern: string, ignoreCase = false): RegExp {
     ignoreCase ? "is" : "s",
   );
 }
+
+const EXEC_WRAPPERS = new Set(["watch", "setsid", "ionice", "flock"]);
+const FIND_ACTIONS = /^-(exec|execdir|ok|okdir|delete|fprint\w*|fls|files0-from)$/;
+const DAEMON_FLAGS = /^(-H|-r$|--host|--context|--url|--connection|--identity|--remote)/;
+const FORCE_FLAGS = /^(--force|--no-verify|--amend)/;
+
+/** Commands only an exact-match rule may approve (permissions §3.2 "Never auto-approvable by prefix rules"). */
+export function needsExactRule(argv: string[]): boolean {
+  const [name = "", ...rest] = argv;
+  if (EXEC_WRAPPERS.has(name)) return true;
+  if (name === "find") return rest.some((a) => FIND_ACTIONS.test(a));
+  if (name === "docker" || name === "podman") return rest.some((a) => DAEMON_FLAGS.test(a));
+  if (name === "git" || name === "gh")
+    return rest.some(
+      (a) =>
+        FORCE_FLAGS.test(a) ||
+        (/^-[a-zA-Z]*f/.test(a) && rest.includes("push")) ||
+        (/^\+/.test(a) && rest.includes("push")),
+    );
+  return false;
+}
+
+const CMDLET_ALIASES: Record<string, string> = {
+  ls: "Get-ChildItem",
+  dir: "Get-ChildItem",
+  gci: "Get-ChildItem",
+  cat: "Get-Content",
+  gc: "Get-Content",
+  type: "Get-Content",
+  pwd: "Get-Location",
+  gl: "Get-Location",
+  sls: "Select-String",
+  gi: "Get-Item",
+  measure: "Measure-Object",
+  cd: "Set-Location",
+  chdir: "Set-Location",
+  sl: "Set-Location",
+  pushd: "Push-Location",
+  popd: "Pop-Location",
+  rm: "Remove-Item",
+  del: "Remove-Item",
+  ri: "Remove-Item",
+  rmdir: "Remove-Item",
+  rd: "Remove-Item",
+  erase: "Remove-Item",
+  cp: "Copy-Item",
+  copy: "Copy-Item",
+  cpi: "Copy-Item",
+  mv: "Move-Item",
+  move: "Move-Item",
+  mi: "Move-Item",
+  curl: "Invoke-WebRequest",
+  wget: "Invoke-WebRequest",
+  iwr: "Invoke-WebRequest",
+  iex: "Invoke-Expression",
+  echo: "Write-Output",
+  sc: "Set-Content",
+  ac: "Add-Content",
+  ni: "New-Item",
+  si: "Set-Item",
+  ren: "Rename-Item",
+  rni: "Rename-Item",
+  rv: "Remove-Variable",
+  saps: "Start-Process",
+  start: "Start-Process",
+  irm: "Invoke-RestMethod",
+  icm: "Invoke-Command",
+  kill: "Stop-Process",
+  spps: "Stop-Process",
+  ii: "Invoke-Item",
+  tee: "Tee-Object",
+  sp: "Set-ItemProperty",
+  rp: "Remove-ItemProperty",
+  clc: "Clear-Content",
+  ipmo: "Import-Module",
+  sv: "Set-Variable",
+  set: "Set-Variable",
+  sajb: "Start-Job",
+};
+
+/** The cmdlet an alias stands for (`rm` → `Remove-Item`); other names come back unchanged. */
+export const canonicalCmdlet = (name: string): string => CMDLET_ALIASES[name.toLowerCase()] ?? name;
