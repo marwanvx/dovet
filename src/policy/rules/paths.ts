@@ -31,7 +31,7 @@ function bracketsBalanced(pattern: string): boolean {
   return true;
 }
 
-const escapeLiteral = (s: string): string => s.replace(/[\\[\]*?!#]/g, "\\$&");
+export const escapeLiteral = (s: string): string => s.replace(/[\\[\]*?!#]/g, "\\$&");
 const GLOB = /[*?[\\]/;
 const SINGLE_DIR = /^[^/]+\/(?:\*\*)?$/;
 
@@ -45,8 +45,11 @@ export function compilePath(
   const negate = spec.startsWith("!");
   if (negate && behavior === "allow") return { warning: "! negation only works in deny and ask rules" };
   let s = negate ? spec.slice(1) : spec;
+  // A backslash before `[`, `]`, `!` or `#` is an escape (generated rules), elsewhere a separator; `*` and `?` cannot appear in Windows names
   if (c.os === "win32")
-    s = s.replaceAll("\\", "/").replace(/^\/{0,2}([A-Za-z]):(?=\/|$)/, (_, d: string) => `//${d.toLowerCase()}`);
+    s = s
+      .replace(/\\(?![[\]!#])/g, "/")
+      .replace(/^\/{0,2}([A-Za-z]):(?=\/|$)/, (_, d: string) => `//${d.toLowerCase()}`);
   let abs: string | undefined;
   if (s.startsWith("//")) abs = s.slice(1);
   else if (s.startsWith("~/") || s === "~") abs = toPosix(c.home, c.os).replace(/\/$/, "") + s.slice(1);
