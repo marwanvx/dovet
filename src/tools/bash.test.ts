@@ -66,7 +66,8 @@ const alive = (pid: number): boolean => {
   }
 };
 
-describe("Bash", () => {
+// Git Bash execution on Windows is exercised with the shell selection in M1-20.
+describe.skipIf(process.platform === "win32")("Bash", () => {
   // spec: AC-TOOLS-06
   test("finds nvm's node through the snapshot; cwd carries over, exports and an outside cwd do not", async () => {
     const r = await rig();
@@ -171,6 +172,54 @@ describe("Bash", () => {
     expect(await readdir(join(r.tmp, "sh"))).toEqual([]);
   });
 
+  // spec: AC-TOOLS-25
+  test("a daemon the rc starts is killed even when the snapshot finishes in time", async () => {
+    const r = await rig();
+    const pidFile = join(r.home, "daemon.pid");
+    await writeFile(join(r.home, ".bash_profile"), `export FROM_RC=1\nsleep 300 &\necho $! > ${pidFile}\n`);
+    const snapshot = snapshotOf(r);
+    expect((await snapshot.ready()).env?.FROM_RC).toBe("1");
+    expect(alive(Number((await readFile(pidFile, "utf8")).trim()))).toBe(false);
+  });
+
+  // spec: AC-TOOLS-25
+  test("volatile shell variables are not captured", async () => {
+    const r = await rig();
+    await writeFile(join(r.home, ".bash_profile"), "export PS1=x ZSH_FOO=1 P9K_BAR=1 KEEP=1 OLDPWD=/x\n");
+    const env = (await snapshotOf(r).ready()).env ?? {};
+    expect(env.KEEP).toBe("1");
+    for (const name of ["PS1", "ZSH_FOO", "P9K_BAR", "OLDPWD", "PWD", "SHLVL"]) expect(name in env).toBe(false);
+  });
+
+  // spec: AC-TOOLS-25
+  test("a shell that cannot be started falls back to the inherited environment with one note", async () => {
+    const r = await rig();
+    const tool = createBashTool({
+      tmpDir: r.tmp,
+      snapshot: startShellSnapshot({
+        platform: r.ctx.platform,
+        userShell: "/nonexistent/zsh" as AbsPath,
+        cwd: r.cwd as AbsPath,
+        env: r.ctx.env,
+        sessionDir: join(r.tmp, "session"),
+        group: "snapshot:s",
+      }),
+    });
+    const first = text(await bash(r, { command: "echo ran" }, tool));
+    expect(first).toContain("ran");
+    expect(first).toContain("could not be run");
+    expect(text(await bash(r, { command: "echo ran" }, tool))).toBe("ran");
+  });
+
+  test("a command killed by a signal and a missing envFile are reported plainly", async () => {
+    const r = await rig({}, { shell: { envFile: "missing.env" } });
+    const missing = await bash(r, { command: "true" });
+    expect(missing.status).toBe("error");
+    expect(text(missing)).toContain("shell.envFile (missing.env) can't be read");
+    const killed = await bash(await rig(), { command: "kill -9 $$" });
+    expect(text(killed)).toContain("Killed by a signal");
+  });
+
   test("a failing command reports its exit code and a timeout kills it", async () => {
     const r = await rig();
     const failed = await bash(r, { command: "echo oops; exit 3" });
@@ -182,7 +231,7 @@ describe("Bash", () => {
   });
 });
 
-describe("settings env", () => {
+describe.skipIf(process.platform === "win32")("settings env", () => {
   // spec: AC-CLI-12
   test("user env reaches the command, never Dovet's own process; a launch value wins and is listed", async () => {
     const r = await rig({ FROM_LAUNCH: "launch" }, { env: { FROM_USER: "user", FROM_LAUNCH: "settings" } });
@@ -212,7 +261,9 @@ describe("settings env", () => {
 
   test("shell.envFile is applied after the snapshot", async () => {
     const r = await rig({}, { shell: { envFile: "vars.env" } });
+    await writeFile(join(r.home, ".bash_profile"), "export A=fromrc\n");
     await writeFile(join(r.cwd, "vars.env"), "# c\nexport A=1\nB='two words'\n");
-    expect(text(await bash(r, { command: 'echo "$A|$B"' }))).toBe("1|two words");
+    const tool = createBashTool({ tmpDir: r.tmp, snapshot: snapshotOf(r) });
+    expect(text(await bash(r, { command: 'echo "$A|$B"' }, tool))).toBe("1|two words");
   });
 });

@@ -58,15 +58,22 @@ export function startShellSnapshot(deps: {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), timeoutMs);
     try {
-      const child = platform.spawn({
-        argv: [userShell, "-l", "-i", "-c", "env -0"],
-        cwd: deps.cwd,
-        env: { ...defined(env), DOVET_SNAPSHOT: "1" },
-        stdin: "null",
-        signal: abort.signal,
-        group: deps.group,
-      });
-      const out = await collectOutput(child);
+      let out: Awaited<ReturnType<typeof collectOutput>>;
+      try {
+        out = await collectOutput(
+          platform.spawn({
+            argv: [userShell, "-l", "-i", "-c", "env -0"],
+            cwd: deps.cwd,
+            env: { ...defined(env), DOVET_SNAPSHOT: "1" },
+            stdin: "null",
+            signal: abort.signal,
+            group: deps.group,
+          }),
+        );
+      } catch (e) {
+        const reason = e instanceof Error ? e.message : String(e);
+        return { env: null, note: `Shell setup (${rc}) could not be run (${reason}); using Dovet's own environment.` };
+      }
       if (abort.signal.aborted) {
         return {
           env: null,

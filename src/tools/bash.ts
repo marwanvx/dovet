@@ -21,6 +21,14 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const FAILURE_EXCERPT = 10_000;
 
+async function raceAbort<T>(work: Promise<T> | undefined, signal: AbortSignal): Promise<T | undefined> {
+  if (work === undefined) return undefined;
+  const aborted = new Promise<undefined>((resolve) =>
+    signal.addEventListener("abort", () => resolve(undefined), { once: true }),
+  );
+  return Promise.race([work, aborted]);
+}
+
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
 export function createBashTool(opts: {
@@ -57,18 +65,35 @@ export function createBashTool(opts: {
   async function run(input: BashInput, ctx: ToolContext): Promise<ToolOutput> {
     const started = Date.now();
     const shell = await findShell(ctx);
-    const snapshot = (await opts.snapshot?.ready()) ?? { env: null };
+    const snapshot = (await raceAbort(opts.snapshot?.ready(), ctx.signal)) ?? { env: null };
+    if (ctx.signal.aborted)
+      return { status: "interrupted", content: [{ kind: "text", text: "Interrupted by the user" }] };
     const notes: string[] = [];
     if (shell.warning) notes.push(shell.warning);
     if (snapshot.note !== undefined && !noteShown) {
       noteShown = true;
       notes.push(snapshot.note);
     }
+    let envFile: Record<string, string>;
+    try {
+      envFile = await readEnvFile(ctx);
+    } catch (e) {
+      if (!isErrno(e, "ENOENT", "EACCES", "EISDIR")) throw e;
+      return {
+        status: "error",
+        content: [
+          {
+            kind: "text",
+            text: `shell.envFile (${ctx.settings.shell?.envFile}) can't be read: ${e instanceof Error ? e.message : String(e)}`,
+          },
+        ],
+      };
+    }
     const { env } = commandEnv({
       os: ctx.platform.os,
       launch: ctx.env,
       snapshot: snapshot.env,
-      envFile: await readEnvFile(ctx),
+      envFile,
       settingsEnv: ctx.settings.env as Record<string, string> | undefined,
       passEnv: ctx.settings.shell?.passEnv,
     });
@@ -80,7 +105,7 @@ export function createBashTool(opts: {
     await mkdir(dir, { recursive: true, mode: 0o700 });
     await writeFile(
       script,
-      `set +H\ntrap ${quote(`pwd -P > ${quote(cwdFile)}`)} EXIT\ncd -- ${quote(ctx.session.cwd)} || exit 1\n${input.command}\n`,
+      `set +H\ntrap ${quote(`${ctx.platform.os === "win32" ? "pwd -W" : "pwd -P"} > ${quote(cwdFile)}`)} EXIT\ncd -- ${quote(ctx.session.cwd)} || exit 1\n${input.command}\n`,
       { mode: 0o600 },
     );
 
@@ -122,7 +147,13 @@ export function createBashTool(opts: {
         };
       if (ctx.signal.aborted) return { status: "interrupted", content: body(`Interrupted by the user\n${text}`), meta };
       if (out.code !== 0) {
-        return { status: "error", content: body(`Exit code ${out.code}\n${headAndTail(text, FAILURE_EXCERPT)}`), meta };
+        return {
+          status: "error",
+          content: body(
+            `${out.code === null ? "Killed by a signal" : `Exit code ${out.code}`}\n${headAndTail(text, FAILURE_EXCERPT)}`,
+          ),
+          meta,
+        };
       }
       return { status: "ok", content: body(text === "" ? "(no output)" : text), meta };
     } finally {
@@ -141,6 +172,7 @@ export function createBashTool(opts: {
     let final: string;
     try {
       final = (await readFile(cwdFile, "utf8")).replace(/\r?\n$/, "");
+      if (ctx.platform.os === "win32") final = final.replaceAll("/", "\\");
     } catch (e) {
       if (isErrno(e, "ENOENT")) return [];
       throw e;
