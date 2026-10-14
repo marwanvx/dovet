@@ -293,6 +293,6 @@ Learned:
 Next: M1-15.
 
 ## 2026-10-14 — M1-15 Write and the shared write strategy
-Done: `src/tools/write.ts` and `write-file.ts` (+ `eol.ts`, `change-guard.ts`, shared `test-context.ts`): Write with the read requirement, strict staleness, placeholder guard, encoding and EOL rules, temp+rename / in-place / hard-link-replace strategies, Windows retries, post-write verification, symlink and read-only refusals. AC-TOOLS-05/21/22/23/24/31/36/38 pass (the Windows read-only attribute case is only proven by Windows CI). Two fresh reviews; nothing above minor remains.
+Done (PR #65, merged, CI green on three OSes): `src/tools/write.ts` and `write-file.ts` (+ `eol.ts`, `change-guard.ts`, shared `test-context.ts`): Write with the read requirement, strict staleness, placeholder guard, encoding and EOL rules, temp+rename / in-place / hard-link-replace strategies, Windows retries, post-write verification, symlink and read-only refusals. AC-TOOLS-05/21/22/23/24/31/36/38 pass (the Windows read-only attribute case is only proven by Windows CI). Two fresh reviews; nothing above minor remains.
 Learned: Q34 holds my decisions. An unread existing file is refused until M1-23 does the silent read; M1-23 and M1-25 Build lines now list what Q34 hands them (`keepHardLink`, `ToolContext.recordWrite`, `meta.fileChanges`). `Write.md` lost its "unless it could be read without asking" clause until then. Spec-change PRs still to do: Q20–Q22, Q25, Q27–Q30, Q33, Q34.
 Next: M1-16.
