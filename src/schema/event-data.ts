@@ -1,6 +1,7 @@
 // `data` of the events whose first writer exists (event-log "Event types (v0.1)", QUESTIONS Q22).
 import { z } from "zod";
 import { InstructionReason } from "./parts.ts";
+import { JsonValue } from "./primitives.ts";
 
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 
@@ -41,6 +42,14 @@ export const InstructionsLoadedData = z.object({
 
 export const UserMessageData = z.object({ text: z.string() });
 
+/** `raw` is what the model sent, `input` what validation saw after normalization (tools §0). */
+export const ToolCallData = z.object({
+  callId: z.string().min(1),
+  name: z.string().min(1),
+  raw: JsonValue,
+  input: JsonValue,
+});
+
 export const ToolResultData = z.object({
   callId: z.string().min(1),
   status: z.enum(["ok", "error", "denied", "interrupted", "timeout"]),
@@ -66,6 +75,7 @@ export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;
 export type UserMessageData = z.infer<typeof UserMessageData>;
+export type ToolCallData = z.infer<typeof ToolCallData>;
 export type ToolResultData = z.infer<typeof ToolResultData>;
 export type TurnEndData = z.infer<typeof TurnEndData>;
 export type PrefixFingerprint = z.infer<typeof PrefixFingerprint>;
