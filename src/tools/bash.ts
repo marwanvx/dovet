@@ -23,10 +23,16 @@ const FAILURE_EXCERPT = 10_000;
 
 async function raceAbort<T>(work: Promise<T> | undefined, signal: AbortSignal): Promise<T | undefined> {
   if (work === undefined) return undefined;
-  const aborted = new Promise<undefined>((resolve) =>
-    signal.addEventListener("abort", () => resolve(undefined), { once: true }),
-  );
-  return Promise.race([work, aborted]);
+  let stop: () => void = () => {};
+  const aborted = new Promise<undefined>((resolve) => {
+    stop = () => resolve(undefined);
+    signal.addEventListener("abort", stop, { once: true });
+  });
+  try {
+    return await Promise.race([work, aborted]);
+  } finally {
+    signal.removeEventListener("abort", stop);
+  }
 }
 
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
