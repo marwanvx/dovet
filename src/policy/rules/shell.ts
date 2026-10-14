@@ -197,7 +197,7 @@ export function shellPattern(pattern: string, ignoreCase = false): RegExp {
 
 const EXEC_WRAPPERS = new Set(["watch", "setsid", "ionice", "flock"]);
 const FIND_ACTIONS = /^-(exec|execdir|ok|okdir|delete|fprint\w*|fls|files0-from)$/;
-const DAEMON_FLAGS = /^(-H|--host|--context|--url|--connection|--identity|--remote)(=|$)/;
+const DAEMON_FLAGS = /^(-H|-r$|--host|--context|--url|--connection|--identity|--remote)/;
 const FORCE_FLAGS = /^(--force|--no-verify|--amend)/;
 
 /** Commands only an exact-match rule may approve (permissions §3.2 "Never auto-approvable by prefix rules"). */
@@ -207,6 +207,48 @@ export function needsExactRule(argv: string[]): boolean {
   if (name === "find") return rest.some((a) => FIND_ACTIONS.test(a));
   if (name === "docker" || name === "podman") return rest.some((a) => DAEMON_FLAGS.test(a));
   if (name === "git" || name === "gh")
-    return rest.some((a) => FORCE_FLAGS.test(a) || (a === "-f" && rest.includes("push")));
+    return rest.some((a) => FORCE_FLAGS.test(a) || (/^-[a-zA-Z]*f/.test(a) && rest.includes("push")));
   return false;
 }
+
+const CMDLET_ALIASES: Record<string, string> = {
+  ls: "Get-ChildItem",
+  dir: "Get-ChildItem",
+  gci: "Get-ChildItem",
+  cat: "Get-Content",
+  gc: "Get-Content",
+  type: "Get-Content",
+  pwd: "Get-Location",
+  gl: "Get-Location",
+  sls: "Select-String",
+  gi: "Get-Item",
+  measure: "Measure-Object",
+  cd: "Set-Location",
+  chdir: "Set-Location",
+  sl: "Set-Location",
+  pushd: "Push-Location",
+  popd: "Pop-Location",
+  rm: "Remove-Item",
+  del: "Remove-Item",
+  ri: "Remove-Item",
+  rmdir: "Remove-Item",
+  rd: "Remove-Item",
+  erase: "Remove-Item",
+  cp: "Copy-Item",
+  copy: "Copy-Item",
+  cpi: "Copy-Item",
+  mv: "Move-Item",
+  move: "Move-Item",
+  mi: "Move-Item",
+  curl: "Invoke-WebRequest",
+  wget: "Invoke-WebRequest",
+  iwr: "Invoke-WebRequest",
+  iex: "Invoke-Expression",
+  echo: "Write-Output",
+  sc: "Set-Content",
+  ac: "Add-Content",
+  ni: "New-Item",
+};
+
+/** The cmdlet an alias stands for (`rm` → `Remove-Item`); other names come back unchanged. */
+export const canonicalCmdlet = (name: string): string => CMDLET_ALIASES[name.toLowerCase()] ?? name;

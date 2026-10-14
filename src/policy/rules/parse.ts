@@ -1,7 +1,7 @@
 // Rule text to compiled rules (permissions §3.1 "Robust rule loading").
 import { parseTree } from "jsonc-parser";
 import { compilePath, type PathContext, type PathMatcher } from "./paths.ts";
-import { normalizeShellPattern, shellPattern } from "./shell.ts";
+import { canonicalCmdlet, normalizeShellPattern, shellPattern } from "./shell.ts";
 
 export type Behavior = "deny" | "ask" | "allow";
 export type RuleText = { text: string; line?: number };
@@ -129,7 +129,8 @@ export function compileRule(
     ) {
       skip("a * before the subcommand lets the rule match more than it seems to");
     }
-    return keep({ kind: "shell", re: shellPattern(text, tool === "PowerShell"), text });
+    const pattern = tool === "PowerShell" ? text.replace(/^[^\s*]+/, canonicalCmdlet) : text;
+    return keep({ kind: "shell", re: shellPattern(pattern, tool === "PowerShell"), text: pattern });
   }
   if (tool === "WebFetch" && spec.startsWith("domain:")) {
     const domain = spec.slice(7).trim().toLowerCase().replace(/\.$/, "");

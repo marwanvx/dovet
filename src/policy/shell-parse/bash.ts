@@ -1,4 +1,5 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
+import { statSync } from "node:fs";
 import type { Node } from "web-tree-sitter";
 import { isSafeEnv, type Redirect, type Subcommand } from "../rules/index.ts";
 import type { Context } from "./context.ts";
@@ -13,10 +14,18 @@ export type Walk = {
 };
 
 const MAX_DEPTH = 8;
+const CWD_DEFAULT = new Set(["ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
-const BODIES = new Set(["program", "do_group", "else_clause", "elif_clause", "if_statement", "while_statement"]);
+
+const isDirectory = (path: string): boolean => {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+};
 
 const fresh = (st: State): State => ({ ...st, stack: [...st.stack], loops: new Map(st.loops), depth: st.depth + 1 });
 
@@ -41,7 +50,10 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     const only = ref.length === 1 ? ref[0] : undefined;
     if (only?.type !== "simple_expansion" || (n.type === "string" && n.text !== `"${only.text}"`)) return undefined;
     const values = st.loops.get(only.text.slice(1));
-    return values === undefined ? undefined : { text: n.text, literal: true, glob: false, values };
+    if (values === undefined) return undefined;
+    // A value that could be an option, split into words or expanded again is not a plain file name.
+    if (!values.every((v) => /^[^\s*?[{~$`\\'"-][^\s*?[{$`\\'"]*$/.test(v))) return opaque(n);
+    return { text: n.text, literal: true, glob: false, values };
   }
 
   function inner(n: Node, st: State): void {
@@ -67,7 +79,10 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
           if (p.type === "string_content") continue;
           literal = false;
           if (p.type === "command_substitution") inner(p, st);
-          else ctx.fail(`${p.type} in a quoted word`);
+          else {
+            ctx.fail(`${p.type} in a quoted word`);
+            inner(p, st);
+          }
         }
         return literal ? { text: unescapeQuoted(n.text.slice(1, -1)), literal, glob: false } : opaque(n);
       }
@@ -95,6 +110,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       }
       default:
         ctx.fail(`${n.type} in a word`);
+        inner(n, st);
         return opaque(n);
     }
   }
@@ -116,8 +132,13 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       const quoted = /['"\\]/.test(n.namedChildren.find((c) => c.type === "heredoc_start")?.text ?? "");
       for (const c of n.namedChildren) {
         if (c.type === "heredoc_body") {
-          if (!quoted && c.namedChildren.some((p) => p.type !== "heredoc_content" && p.type !== "simple_expansion"))
-            ctx.fail("here-document with expansions");
+          if (!quoted) {
+            for (const p of c.namedChildren) {
+              if (p.type === "heredoc_content" || p.type === "simple_expansion") continue;
+              ctx.fail("here-document with expansions");
+              statement(p, fresh(st), true);
+            }
+          }
         } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
       }
       return true;
@@ -146,7 +167,13 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     let target: string | undefined;
     if (name === "popd" && args.length === 0) target = st.stack.pop();
     else if (args.length === 0 && name === "cd") target = ctx.opts.home;
-    else if (args.length === 1 && args[0]?.literal && !args[0].glob && !/^-/.test(args[0].text)) {
+    else if (
+      args.length === 1 &&
+      args[0]?.literal &&
+      !args[0].glob &&
+      !/^-/.test(args[0].text) &&
+      ctx.tildeOk(args[0].text)
+    ) {
       target = ctx.toAbsolute(args[0].text, st.cwd);
       if (name === "pushd") st.stack.push(st.cwd);
     }
@@ -155,6 +182,10 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return false;
     }
     if (cond) ctx.fail(`${name} inside a condition or loop`);
+    if (!isDirectory(target)) {
+      ctx.fail(`${name} target is not a directory`);
+      return false;
+    }
     st.cwd = target;
     return ctx.inside(target);
   }
@@ -178,7 +209,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     }
     ctx.commands.push(sub);
     if (name === undefined) return;
-    if (!name.literal || name.glob) {
+    if (!name.literal || name.glob || name.values) {
       ctx.state.literalNames = false;
       ctx.fail("command name is not literal");
     }
@@ -186,11 +217,12 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
     if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
     if (SHELLS.has(name.text)) shellScript(args, st);
-    if (prefixed) return;
     if (name.text === "cd" || name.text === "pushd" || name.text === "popd") {
-      sub.readOnly = changeDirectory(name.text, args, st, cond) && name.text === "cd" && redirectsOk;
+      const stayed = changeDirectory(name.text, args, st, cond);
+      sub.readOnly = stayed && name.text === "cd" && redirectsOk && !prefixed;
       return;
     }
+    if (prefixed) return;
     if (name.text === "tee") {
       const targets = args.filter((a) => !(a.literal && a.text.startsWith("-")));
       if (targets.some((t) => !t.literal || t.glob || t.text.startsWith("~"))) ctx.fail("tee target needs approval");
@@ -202,7 +234,12 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return;
     }
     const result = classify(name.text, args);
-    if (!result.ok) return;
+    if (!result.ok) {
+      if (/glob/.test(result.reason)) ctx.fail(result.reason);
+      return;
+    }
+    if (result.paths.length === 0 && CWD_DEFAULT.has(name.text))
+      result.paths.push({ text: ".", literal: true, glob: false });
     const awayGit = name.text === "git" && st.cwd !== ctx.opts.cwd && !ctx.opts.workingDirs.some((d) => d === st.cwd);
     sub.readOnly = ctx.checkPaths(result.paths, st.cwd, "read") && redirectsOk && !awayGit;
   }
@@ -250,7 +287,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       case "list": {
         let rhs = cond;
         for (const c of n.children) {
-          if (!c.isNamed) rhs = rhs || c.type === "||";
+          if (!c.isNamed) rhs = true;
           else statement(c, st, rhs);
         }
         return;
@@ -294,7 +331,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         return;
       default:
         ctx.fail(`unsupported syntax ${n.type}`);
-        for (const c of n.namedChildren) if (c.childCount > 0 && !BODIES.has(c.type)) statement(c, fresh(st), true);
+        for (const c of n.namedChildren) if (c.childCount > 0) statement(c, fresh(st), true);
     }
   }
 

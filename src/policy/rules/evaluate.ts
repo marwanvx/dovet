@@ -105,8 +105,9 @@ function subHit(rule: Rule, sub: Subcommand): boolean {
   const m = rule.matcher;
   if (m.kind !== "shell") return false;
   const variants = shellVariants(sub.argv, rule.behavior !== "allow");
-  const exactOnly = rule.behavior === "allow" && m.text.includes("*");
-  return variants.some((t) => m.re.test(t) && !(exactOnly && needsExactRule(t.split(" "))));
+  const exactOnly =
+    rule.behavior === "allow" && m.text.includes("*") && variants.some((t) => needsExactRule(t.split(" ")));
+  return !exactOnly && variants.some((t) => m.re.test(t));
 }
 
 function otherHit(rule: Rule, call: RuleCall): boolean {

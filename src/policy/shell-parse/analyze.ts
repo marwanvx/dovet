@@ -1,7 +1,7 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
 import { type State, walkBash } from "./bash.ts";
-import { type Analysis, type AnalyzeOptions, type Context, createContext, MAX_COMMAND_CHARS } from "./context.ts";
+import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
 import { walkPowerShell } from "./powershell.ts";
 
@@ -28,6 +28,7 @@ export function analyzeShell(
 ): Analysis {
   const ctx = createContext(opts);
   const deadline = performance.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS);
+  ctx.deadline.at = deadline;
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
   const run = (text: string, st: State): boolean => {
     const left = deadline - performance.now();
@@ -35,7 +36,7 @@ export function analyzeShell(
     return (
       parsers.withTree("bash", text, left, (root) => {
         if (root.hasError) ctx.fail("parse error");
-        walkBash(root, walkHooks(ctx, run), st);
+        walkBash(root, { ctx, script: run }, st);
         return true;
       }) ?? false
     );
@@ -60,6 +61,7 @@ export function analyzeShell(
   } catch (e) {
     return unparsed(`analysis failed: ${e instanceof Error ? e.message : String(e)}`);
   }
+  if (parsed && performance.now() > deadline) parsed = false;
   if (!parsed) return unparsed(`parsing took longer than ${opts.budgetMs ?? DEFAULT_BUDGET_MS} ms or failed`);
   return {
     commands: ctx.commands,
@@ -69,8 +71,6 @@ export function analyzeShell(
     operands: ctx.operands,
   };
 }
-
-const walkHooks = (ctx: Context, script: (text: string, st: State) => boolean) => ({ ctx, script });
 
 /** Exit status 1 means "no match" or "differs" for these (tools §6.6, with the Bash list); the last command decides. */
 export function powershellExitOneIsBenign(commands: Analysis["commands"]): boolean {

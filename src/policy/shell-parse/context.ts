@@ -37,6 +37,7 @@ export function createContext(opts: AnalyzeOptions) {
   const operands: Operand[] = [];
   const reasons: string[] = [];
   const state = { literalNames: true };
+  const deadline = { at: Number.POSITIVE_INFINITY };
   const fail = (reason: string): void => {
     if (!reasons.includes(reason)) reasons.push(reason);
   };
@@ -44,6 +45,8 @@ export function createContext(opts: AnalyzeOptions) {
     if (opts.home !== undefined && (path === "~" || path.startsWith("~/"))) return resolve(opts.home, path.slice(2));
     return resolve(cwd, path);
   };
+  const tildeOk = (path: string): boolean =>
+    !path.startsWith("~") || (opts.home !== undefined && (path === "~" || path.startsWith("~/")));
   const inside = (abs: string): boolean =>
     opts.workingDirs.some((dir) => {
       const rel = relative(dir, abs);
@@ -53,6 +56,15 @@ export function createContext(opts: AnalyzeOptions) {
   const checkPaths = (words: Word[], cwd: string, access: Operand["access"]): boolean => {
     let ok = true;
     for (const w of words) {
+      if (performance.now() > deadline.at) {
+        fail("analysis budget exceeded");
+        return false;
+      }
+      if (!tildeOk(w.text)) {
+        fail(`unresolvable ${w.text}`);
+        ok = false;
+        continue;
+      }
       if (/^(\\\\|\/\/)[^\\/]/.test(w.text)) {
         fail("UNC path");
         ok = false;
@@ -60,6 +72,13 @@ export function createContext(opts: AnalyzeOptions) {
       }
       let names = w.values ?? [w.text];
       if (w.glob) {
+        const base = w.text.split("/").findIndex((p) => /[*?[{]/.test(p));
+        const root = toAbsolute(w.text.split("/").slice(0, Math.max(base, 0)).join("/") || ".", cwd);
+        if (!inside(root)) {
+          operands.push({ access, path: root });
+          ok = false;
+          continue;
+        }
         const matches = opts.glob(w.text, cwd);
         if (matches.length > MAX_GLOB_MATCHES) {
           fail(`glob ${w.text} matches more than ${MAX_GLOB_MATCHES} files`);
@@ -76,5 +95,5 @@ export function createContext(opts: AnalyzeOptions) {
     }
     return ok;
   };
-  return { opts, commands, operands, reasons, state, fail, toAbsolute, inside, checkPaths };
+  return { opts, commands, operands, reasons, state, deadline, fail, toAbsolute, tildeOk, inside, checkPaths };
 }

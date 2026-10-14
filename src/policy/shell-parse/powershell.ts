@@ -1,47 +1,8 @@
 // Walks a PowerShell syntax tree: pipelines of plain commands only, with aliases canonicalized (permissions §3.2, §4.0).
 import type { Node } from "web-tree-sitter";
-import type { Redirect, Subcommand } from "../rules/index.ts";
+import { canonicalCmdlet, type Redirect, type Subcommand } from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import type { Word } from "./read-only.ts";
-
-const ALIASES: Record<string, string> = {
-  ls: "Get-ChildItem",
-  dir: "Get-ChildItem",
-  gci: "Get-ChildItem",
-  cat: "Get-Content",
-  gc: "Get-Content",
-  type: "Get-Content",
-  pwd: "Get-Location",
-  gl: "Get-Location",
-  sls: "Select-String",
-  gi: "Get-Item",
-  measure: "Measure-Object",
-  cd: "Set-Location",
-  chdir: "Set-Location",
-  sl: "Set-Location",
-  pushd: "Push-Location",
-  popd: "Pop-Location",
-  rm: "Remove-Item",
-  del: "Remove-Item",
-  ri: "Remove-Item",
-  rmdir: "Remove-Item",
-  rd: "Remove-Item",
-  erase: "Remove-Item",
-  cp: "Copy-Item",
-  copy: "Copy-Item",
-  cpi: "Copy-Item",
-  mv: "Move-Item",
-  move: "Move-Item",
-  mi: "Move-Item",
-  curl: "Invoke-WebRequest",
-  wget: "Invoke-WebRequest",
-  iwr: "Invoke-WebRequest",
-  iex: "Invoke-Expression",
-  echo: "Write-Output",
-  sc: "Set-Content",
-  ac: "Add-Content",
-  ni: "New-Item",
-};
 
 type Cmdlet = {
   switches?: string[];
@@ -126,7 +87,7 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
     const sub: Subcommand = { argv: [] };
     const nameNode = n.childForFieldName("command_name");
     const raw = nameNode?.text ?? "";
-    const canonical = ALIASES[raw.toLowerCase()] ?? raw;
+    const canonical = canonicalCmdlet(raw);
     if (nameNode === null || !/^[A-Za-z][\w.-]*$/.test(raw)) {
       ctx.state.literalNames = false;
       ctx.fail("command name is not literal");
@@ -175,6 +136,10 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
       return;
     }
     const paths = classify(lower, parsed);
+    if (paths?.some((w) => /^[A-Za-z]\w+:/.test(w.text))) {
+      ctx.fail("provider path");
+      return;
+    }
     if (paths !== undefined) sub.readOnly = ctx.checkPaths(paths, st.cwd, "read") && redirectsOk;
   }
 

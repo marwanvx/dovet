@@ -145,7 +145,7 @@ describe("redirects and tee", () => {
 
   // spec: AC-PERM-08
   test("/dev/null, fd forms and here-docs are not checked", () => {
-    const a = analyze("ls > /dev/null 2>&1; cat <<EOF\nhi\nEOF\ncat <<< word");
+    const a = analyze("echo > /dev/null 2>&1; cat <<EOF\nhi\nEOF\ncat <<< word");
     expect(a.understood).toBe(true);
     expect(a.commands?.flatMap((c) => c.redirects ?? [])).toEqual([]);
     expect(a.operands).toEqual([]);
@@ -230,6 +230,70 @@ describe("file operands, globs and the simulated cwd", () => {
   });
 });
 
+describe("shapes that are not understood", () => {
+  // spec: AC-PERM-20
+  test.each([
+    ["a computed command name", "$cmd args"],
+    ["process substitution", "cat <(ls)"],
+    ["a quoted variable", 'echo "$HOME"'],
+    ["an unquoted here-document with an expansion", "cat <<EOF\n${x:-1}\nEOF"],
+    ["a nested deny target", "echo ${x:-$(rm -rf y)}"],
+    ["a UNC path", "cat //server/share/x"],
+    ["a cd inside a condition", "false || cd src"],
+    ["a cd to a missing directory", "cd nonexistent; ls"],
+    ["a glob in a pattern position", "rg foo*"],
+  ])("%s", (_name, command) => {
+    expect(analyze(command).understood).toBe(false);
+  });
+
+  // spec: AC-PERM-20
+  test("deny rules see commands nested in rejected constructs", () => {
+    for (const command of [
+      "echo ${x:-$(rm -rf y)}",
+      "cat <<EOF\n$(rm -rf y)\nEOF",
+      "for ((i=0;i<1;i++)); do rm -rf x; done",
+    ])
+      expect(decide(command, { deny: ["Bash(rm *)"] })).toBe("deny:Bash(rm *)");
+  });
+
+  // spec: AC-PERM-20
+  test("a loop variable can't smuggle in options, word splitting or a command name", () => {
+    expect(allReadOnly(analyze("for a in -delete; do find . $a; done"))).toBe(false);
+    expect(allReadOnly(analyze("for f in 'a.ts ../x'; do cat $f; done"))).toBe(false);
+    expect(analyze("for f in rm; do $f -rf x; done").literalNames).toBe(false);
+  });
+
+  // spec: AC-PERM-20
+  test("~user, ~+ and a missing home never resolve inside the project", () => {
+    expect(allReadOnly(analyze("cat ~root/x"))).toBe(false);
+    expect(allReadOnly(analyze("cat ~+/x"))).toBe(false);
+    const noHome = analyzeShell(parsers, "bash", "cat ~/x", { cwd: root, workingDirs: [root], glob: expandGlob });
+    expect(allReadOnly(noHome)).toBe(false);
+  });
+
+  // spec: AC-PERM-04
+  test("exact-rule-only shapes stay exact behind a stripped wrapper", () => {
+    expect(decide("timeout 5 find . -delete", { allow: ["Bash(timeout *)"] })).toBeUndefined();
+    expect(decide("git push -fu origin main", { allow: ["Bash(git push *)"] })).toBeUndefined();
+    expect(decide("docker -Htcp://x ps", { allow: ["Bash(docker *)"] })).toBeUndefined();
+  });
+
+  // spec: AC-PERM-03
+  test("a PowerShell rule written with an alias matches the cmdlet", () => {
+    expect(decide("Remove-Item build", { deny: ["PowerShell(rm *)"] }, "powershell")).toBe("deny:PowerShell(rm *)");
+    expect(decide("rm build", { deny: ["PowerShell(Remove-Item *)"] }, "powershell")).toBe(
+      "deny:PowerShell(Remove-Item *)",
+    );
+  });
+
+  // spec: AC-PERM-22
+  test("a glob outside the working directories is not expanded", () => {
+    const t = performance.now();
+    expect(allReadOnly(analyze("cat /usr/**/zzzz"))).toBe(false);
+    expect(performance.now() - t).toBeLessThan(150);
+  });
+});
+
 describe("fail-closed analysis", () => {
   // spec: AC-PERM-22
   test("a parse that outlasts the budget is cancelled and gives no commands", () => {
@@ -303,6 +367,8 @@ describe("PowerShell", () => {
   test("cd moves the simulated cwd", () => {
     expect(allReadOnly(analyze("cd ..; gc ..\\secret", "powershell"))).toBe(false);
     expect(allReadOnly(analyze("cd src; gc x.ts", "powershell"))).toBe(true);
+    expect(allReadOnly(analyze("cd src; gc ..\\a.ts", "powershell"))).toBe(true);
+    expect(allReadOnly(analyze("Get-Content env:PATH", "powershell"))).toBe(false);
   });
 
   test("benign exit 1 follows the last command", () => {
@@ -315,6 +381,7 @@ describe("PowerShell", () => {
 });
 
 type Entry = {
+  m123?: boolean;
   language: ShellLanguage;
   command: string;
   source: string;
@@ -339,7 +406,8 @@ describe("bypass corpus", () => {
       const a = analyze(e.command, e.language);
       const tool = e.language === "bash" ? "Bash" : "PowerShell";
       const match = evaluateRules(rulesFor({ allow: e.allow ?? [], deny: e.deny ?? [] }), call(a, tool));
-      const byRule = match?.behavior === "allow";
+      // m123: only M1-23's critical-path, sensitive-file or outside-directory checks can stop a prefix allow rule.
+      const byRule = match?.behavior === "allow" && e.m123 !== true;
       const byReadOnly = allReadOnly(a) && match?.behavior !== "deny";
       if (byRule || byReadOnly) approved.push(e.command);
     }

@@ -180,7 +180,7 @@ const SPECS: Record<string, Spec> = {
     args: "paths",
   },
   echo: { raw: true, args: "words" },
-  printf: { raw: true, args: "words" },
+  printf: { args: "words" },
   pwd: { flags: "LP", args: "none" },
   head: {
     flags: "qvz",
@@ -528,6 +528,7 @@ function classifyFind(args: Word[]): Classified {
   for (; i < args.length; i++) {
     const w = args[i] as Word;
     if (w.text.startsWith("-") || w.text === "!" || w.text === "(") break;
+    if (!w.literal) return { ok: false, reason: "find path is not literal" };
     paths.push(w);
   }
   for (; i < args.length; i++) {
@@ -565,7 +566,7 @@ const TEST_FILE_OPS = new Set([
 ]);
 
 /** An awk program that can run commands or write files is not read-only. */
-const AWK_UNSAFE = /system\s*\(|getline|>|\||ENVIRON|\bprintf?\b[^;}]*\)\s*>/;
+const AWK_UNSAFE = /@|system\s*\(|getline|>|\||ENVIRON|\bprintf?\b[^;}]*\)\s*>/;
 
 /** Does the command only read? `args` are the words after the command name. */
 export function classify(name: string, args: Word[]): Classified {
