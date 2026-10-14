@@ -204,6 +204,19 @@ export function createBashTool(opts: {
     if (ctx.signal.aborted) onAbort();
     const group = `bash:${ctx.session.id}:${id}`;
     try {
+      if (abort.signal.aborted) {
+        return {
+          status: ctx.signal.aborted ? "interrupted" : "timeout",
+          content: [
+            {
+              kind: "text",
+              text: ctx.signal.aborted
+                ? "Interrupted by the user"
+                : `Command timed out after ${Math.round(timeoutMs / 1000)}s`,
+            },
+          ],
+        };
+      }
       const child = ctx.platform.spawn({
         argv: [shell.path, script],
         cwd: ctx.session.cwd,
