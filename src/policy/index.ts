@@ -5,3 +5,17 @@ export type { SandboxOs, SandboxStartOptions, SrtHelperFile } from "./sandbox/in
 export { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor, startSandbox } from "./sandbox/init.ts";
 export type { ParsedCommand, ShellLanguage, ShellParsers } from "./shell-parse/load.ts";
 export { loadShellParsers } from "./shell-parse/load.ts";
+export type {
+  Behavior,
+  Example,
+  Rule,
+  RuleCall,
+  RuleContext,
+  RuleIssue,
+  RuleMatch,
+  RuleSet,
+  RuleSource,
+  RuleText,
+  Subcommand,
+} from "./rules/index.ts";
+export { checkExamples, evaluateRules, loadRules, ruleTexts, splitCommand } from "./rules/index.ts";

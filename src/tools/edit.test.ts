@@ -44,6 +44,7 @@ describe("Edit: errors and preconditions", () => {
     expect(await readFile(join(cwd, "b.txt"), "utf8")).toBe("x\ny\n");
   });
 
+  // spec: AC-PERM-06
   test("a symlink and a read-only file are refused", async () => {
     const { cwd, file, ctx } = await setup("real.txt", "x\n");
     await symlink(file, join(cwd, "ln"));
