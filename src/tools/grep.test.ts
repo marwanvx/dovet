@@ -76,7 +76,7 @@ describe("Grep: modes and paging", () => {
 
   test("content mode groups matches by file with line numbers and marks context with '-'", async () => {
     const cwd = await workspace();
-    await files(cwd, { os("src/a.ts"): "one\ntwo\nneedle\nfour\nfive\nsix\nneedle\n", "b.ts": "needle\n" });
+    await files(cwd, { "src/a.ts": "one\ntwo\nneedle\nfour\nfive\nsix\nneedle\n", "b.ts": "needle\n" });
     const out = await grep(await searchContext(cwd), {
       pattern: "needle",
       output_mode: "content",
@@ -99,7 +99,7 @@ describe("Grep: modes and paging", () => {
 
   test("`-l` and `-c` flags and `file_path` are rewritten", async () => {
     const cwd = await workspace();
-    await files(cwd, { os("d/a.txt"): "x\nx\n" });
+    await files(cwd, { "d/a.txt": "x\nx\n" });
     const ctx = await searchContext(cwd);
     expect(text(await grep(ctx, { pattern: "x", "-c": true, file_path: "d" }))).toContain(os("d/a.txt:2"));
     expect(text(await grep(ctx, { pattern: "x", "-l": true, "-r": true }))).toBe(os("d/a.txt"));
@@ -131,10 +131,10 @@ describe("Grep: ignore files and sensitive files", () => {
     const cwd = await workspace();
     await files(cwd, {
       ".gitignore": "node_modules\n",
-      os("src/a.ts"): "needle\n",
-      os("node_modules/x/i.js"): "needle\n",
+      "src/a.ts": "needle\n",
+      "node_modules/x/i.js": "needle\n",
       "node_modules/x/.gitignore": "dist\n",
-      os("node_modules/x/dist/a.js"): "needle\n",
+      "node_modules/x/dist/a.js": "needle\n",
     });
     const ctx = await searchContext(cwd);
     expect(text(await grep(ctx, { pattern: "needle" }))).toBe(os("src/a.ts"));
