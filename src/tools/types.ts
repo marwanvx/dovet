@@ -69,6 +69,8 @@ export interface ToolContext {
   recordWrite(path: AbsPath, before: Uint8Array | null): Promise<void>;
   emit(e: ToolProgressEvent): void;
   platform: Platform;
+  /** The environment child processes inherit (ripgrep needs `HOME` to find the global git excludes). */
+  env: Readonly<Record<string, string | undefined>>;
 }
 
 /** Deterministic input rewrites applied before validation (tools §0). */
