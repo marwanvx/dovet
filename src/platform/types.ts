@@ -23,6 +23,8 @@ export interface Platform {
     group: string;
   }): ChildHandle;
   killTree(group: string): Promise<void>;
+  /** Stops what a finished command left running (its process group and DOVET_RUN-marked escapees) and names it. */
+  sweep(group: string, marker: string): Promise<Array<{ pid: number; name: string }>>;
   shells(): { bash?: AbsPath; powershell?: AbsPath; gitBash?: AbsPath };
   clipboard: { readImage(): Promise<Uint8Array | null>; writeText(t: string): Promise<void> };
   libexec(name: "rg" | "srt"): AbsPath;

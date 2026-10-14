@@ -2,6 +2,7 @@
 import type { z } from "zod";
 import type { Platform } from "../platform/index.ts";
 import type { AbsPath, DocumentPart, ImagePart, PermissionMode, Settings, TextPart } from "../schema/index.ts";
+import type { Snapshotter } from "../store/index.ts";
 import type { ReadResultsIndex } from "./read-results.ts";
 import type { ReadStateStore } from "./read-state.ts";
 
@@ -68,6 +69,8 @@ export interface ToolContext {
   /** Records a file's before-state for the checkpoint; a writing tool awaits it before it changes the file (null = new file). */
   recordWrite(path: AbsPath, before: Uint8Array | null): Promise<void>;
   emit(e: ToolProgressEvent): void;
+  /** Lets Bash list the files a command changed (checkpoints); absent until the session wires it (M1-25). */
+  snapshots?: Pick<Snapshotter, "root" | "snapshot" | "changes">;
   platform: Platform;
   /** The environment child processes inherit (ripgrep needs `HOME` to find the global git excludes). */
   env: Readonly<Record<string, string | undefined>>;

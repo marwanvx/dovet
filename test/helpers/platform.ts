@@ -11,6 +11,7 @@ export function fakePlatform(overrides: Partial<Platform> = {}): Platform {
       throw new Error("fakePlatform: spawn is not scripted");
     },
     killTree: () => Promise.resolve(),
+    sweep: () => Promise.resolve([]),
     shells: () => ({}),
     clipboard: { readImage: () => Promise.resolve(null), writeText: () => Promise.resolve() },
     libexec: (name) => `/libexec/${name}`,
