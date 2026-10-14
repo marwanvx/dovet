@@ -222,24 +222,26 @@ describe("symlinks", () => {
     writeFileSync(join(root, "outside", "f.txt"), "x");
     writeFileSync(join(root, "p", "docs", "real.txt"), "x");
     symlinkSync(join(root, "outside", "f.txt"), join(root, "p", "docs", "link.txt"));
-    const canonicalize = (p: string) => canonicalizePath(p, "/", "linux");
-    return { root, p: join(root, "p"), canonicalize };
+    const os = process.platform as Os;
+    const canonicalize = (p: string) => canonicalizePath(p, join(root, "p"), os);
+    return { root, p: join(root, "p"), canonicalize, os };
   }
 
   // spec: AC-PERM-06
   test("allow needs both the requested path and its target allowed", () => {
-    const { p, canonicalize } = fixture();
-    const r = load({ allow: ["Read(/docs/**)"] }, { canonicalize }, join(p, "s.json"), p);
+    const { p, canonicalize, os } = fixture();
+    const r = load({ allow: ["Read(/docs/**)"] }, { os, canonicalize }, join(p, "s.json"), p);
     expect(decide(r, read(join(p, "docs", "real.txt"), "read", p))).toBe("allow:Read(/docs/**)");
     expect(decide(r, read(join(p, "docs", "link.txt"), "read", p))).toBeUndefined();
   });
 
   // spec: AC-PERM-06
   test("deny needs either: the spelling or where the link lands", () => {
-    const { root, p, canonicalize } = fixture();
-    const byTarget = load({ deny: [`Read(/${join(root, "outside")}/**)`] }, { canonicalize }, join(p, "s.json"), p);
+    const { root, p, canonicalize, os } = fixture();
+    const outside = os === "win32" ? root.replaceAll("\\", "/") : `/${root}`;
+    const byTarget = load({ deny: [`Read(${outside}/outside/**)`] }, { os, canonicalize }, join(p, "s.json"), p);
     expect(decide(byTarget, read(join(p, "docs", "link.txt"), "read", p))).toContain("deny:");
-    const bySpelling = load({ deny: ["Read(/docs/link.txt)"] }, { canonicalize }, join(p, "s.json"), p);
+    const bySpelling = load({ deny: ["Read(/docs/link.txt)"] }, { os, canonicalize }, join(p, "s.json"), p);
     expect(decide(bySpelling, read(join(p, "docs", "link.txt"), "read", p))).toContain("deny:");
     expect(decide(bySpelling, read(join(p, "docs", "real.txt"), "read", p))).toBeUndefined();
   });
@@ -439,8 +441,9 @@ describe("edge cases", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "dovet-cwd-")));
     mkdirSync(join(root, "real"));
     symlinkSync(join(root, "real"), join(root, "link"));
-    const canonicalize = (p: string) => canonicalizePath(p, "/", "linux");
-    const r = load({ allow: ["Edit(vault/**)"] }, { canonicalize });
+    const os = process.platform as Os;
+    const canonicalize = (p: string) => canonicalizePath(p, root, os);
+    const r = load({ allow: ["Edit(vault/**)"] }, { os, canonicalize });
     expect(decide(r, read(join(root, "real", "vault", "a"), "edit", join(root, "link")))).toBe("allow:Edit(vault/**)");
   });
 
