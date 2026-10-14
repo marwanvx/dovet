@@ -57,7 +57,13 @@ function isAlive(pid: number): boolean {
   }
   if (process.platform !== "linux") return true;
   // A reaper-less container leaves orphans as zombies: gone for our purposes.
-  return !/^\d+ \(.*\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  try {
+    return !/^\d+ \(.*\) Z /.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ESRCH" || code === "ENOENT") return false;
+    throw e;
+  }
 }
 
 async function waitDead(pid: number): Promise<boolean> {
