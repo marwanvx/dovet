@@ -237,19 +237,18 @@ describe("Write: strategies", () => {
     await writeFile(file, oldText);
     const ctx = context(cwd);
     await readFull(ctx, "s.txt");
-    let done = false;
-    const seen = new Set<string>();
-    const poller = (async () => {
-      while (!done) {
-        const body = await readFile(file, "utf8");
-        seen.add(body === oldText ? "old" : body === newText ? "new" : `partial:${body.length}`);
-      }
-    })();
-    const out = await write(ctx, "s.txt", newText);
-    done = true;
-    await poller;
+    const seen: string[] = [];
+    const watch: WriteHooks = {
+      write: async (handle, data) => {
+        const half = Math.floor(data.length / 2);
+        await handle.write(data.subarray(0, half));
+        seen.push(await readFile(file, "utf8"));
+        await handle.write(data.subarray(half));
+      },
+    };
+    const out = await write(ctx, "s.txt", newText, watch);
     expect(out.status).toBe("ok");
-    expect([...seen].filter((s) => s.startsWith("partial"))).toEqual([]);
+    expect(seen).toEqual([oldText]);
     expect(await readFile(file, "utf8")).toBe(newText);
   });
 

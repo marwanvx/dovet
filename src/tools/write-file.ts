@@ -60,6 +60,14 @@ export async function writeBytes(path: AbsPath, data: Uint8Array, opts: WriteOpt
         } catch (e) {
           if (isErrno(e, "EEXIST")) return "exists";
           if (!isErrno(e, "EPERM", "ENOTSUP", "EOPNOTSUPP", "EMLINK")) throw e;
+          const appeared = await lstat(path).then(
+            () => true,
+            (err: unknown) => {
+              if (isErrno(err, "ENOENT")) return false;
+              throw err;
+            },
+          );
+          if (appeared) return "exists";
         }
       }
       return (await renameWithRetry(temp)) ? "done" : "busy";
