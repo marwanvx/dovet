@@ -94,7 +94,10 @@ describe("input normalization", () => {
     expect(same.ok).toBe(true);
     const different = registry.prepare("Read", { path: "/b", file_path: "/a" });
     expect(different.ok).toBe(false);
-    if (!different.ok) expect(different.message).toContain("`path` and `file_path`");
+    if (!different.ok) {
+      expect(different.message).toContain("`path` and `file_path`");
+      expect(different.message.endsWith('Example call: {"file_path":"/tmp/a.txt"}')).toBe(true);
+    }
   });
 
   // spec: AC-TOOLS-37
@@ -208,7 +211,7 @@ describe("strict subset", () => {
   test("toolInputSchema moves limits into descriptions and passes the check", () => {
     for (const t of registry.tools) expect(strictSubsetViolations(toolInputSchema(t))).toEqual([]);
     const schema = toolInputSchema(Read) as { properties: Record<string, { description?: string }> };
-    expect(schema.properties.offset?.description).toContain("at least 1");
+    expect(schema.properties.offset?.description).toBe("(at least 1)");
   });
 
   test("flags a missing additionalProperties:false, a limit keyword and a reference", () => {
@@ -270,6 +273,7 @@ describe("output limiting", () => {
     expect(saved.replaceAll("\n", "")).toBe(text.replaceAll("\n", ""));
     expect(saved.split("\n").every((l) => l.length <= 2000)).toBe(true);
     expect(saved).not.toContain("\uFFFD");
+    expect(r.text.split("\n[Output")[0]?.isWellFormed()).toBe(true);
   });
 
   test.skipIf(process.platform === "win32")("the offload directory and file are private", async () => {

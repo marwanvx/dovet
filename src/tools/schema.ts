@@ -9,8 +9,8 @@ const LIMITS: Record<string, (n: number) => string> = {
   maximum: (n) => `at most ${n}`,
   exclusiveMinimum: (n) => `greater than ${n}`,
   exclusiveMaximum: (n) => `less than ${n}`,
-  minLength: (n) => `at least ${n} characters`,
-  maxLength: (n) => `at most ${n} characters`,
+  minLength: (n) => `at least ${n} ${n === 1 ? "character" : "characters"}`,
+  maxLength: (n) => `at most ${n} ${n === 1 ? "character" : "characters"}`,
   minItems: (n) => `at least ${n} items`,
   maxItems: (n) => `at most ${n} items`,
 };
