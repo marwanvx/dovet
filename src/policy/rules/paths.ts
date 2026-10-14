@@ -31,7 +31,7 @@ function bracketsBalanced(pattern: string): boolean {
   return true;
 }
 
-const escapeLiteral = (s: string): string => s.replace(/[\\[\]*?!#]/g, "\\$&");
+export const escapeLiteral = (s: string): string => s.replace(/[\\[\]*?!#]/g, "\\$&");
 const GLOB = /[*?[\\]/;
 const SINGLE_DIR = /^[^/]+\/(?:\*\*)?$/;
 

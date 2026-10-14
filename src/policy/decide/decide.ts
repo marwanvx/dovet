@@ -14,7 +14,7 @@ import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
-import { forcePushToDefault, program, remoteAction, selfControl } from "./remote.ts";
+import { forcePushToDefault, program, type RemoteKind, remoteAction, selfControl } from "./remote.ts";
 import { FS_COMMANDS, NETWORK_PATH, sedEscapes, shellTargets, type Target, unresolvedTarget } from "./targets.ts";
 
 export type Action =
@@ -56,6 +56,8 @@ export type Finding = {
   by: string;
   outcome: "ask" | "deny";
   path?: string;
+  access?: "read" | "edit";
+  remote?: RemoteKind;
   /** An explicit allow rule for this path or command lifts the prompt. */
   liftable?: boolean;
   lifted?: boolean;
@@ -153,7 +155,7 @@ function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false
         ),
       );
   }
-  return out;
+  return out.map((f) => (f.path === undefined ? f : { ...f, access: t.access }));
 }
 
 /** An allow rule that names the command: no wildcard, or at least two fixed words before it (`git push*`, not `git *`). */
@@ -233,7 +235,9 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
           "remote",
           `remote action: ${remote.label}`,
           st.tainted === true ? "deny" : "ask",
-          st.tainted === true ? {} : { liftable: true, lifted: explicitAllow(st, tool, sub, false, remote.label) },
+          st.tainted === true
+            ? { remote: remote.kind }
+            : { remote: remote.kind, liftable: true, lifted: explicitAllow(st, tool, sub, false, remote.label) },
         ),
       );
     const force = all.map((v) => forcePushToDefault(v, branches)).find((f) => f !== undefined);
