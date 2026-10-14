@@ -440,8 +440,8 @@ describe("edge cases", () => {
     mkdirSync(join(root, "real"));
     symlinkSync(join(root, "real"), join(root, "link"));
     const canonicalize = (p: string) => canonicalizePath(p, "/", "linux");
-    const r = load({ deny: ["Read(vault/**)"] }, { canonicalize });
-    expect(decide(r, read(join(root, "real", "vault", "a"), "read", join(root, "link")))).toBe("deny:Read(vault/**)");
+    const r = load({ allow: ["Edit(vault/**)"] }, { canonicalize });
+    expect(decide(r, read(join(root, "real", "vault", "a"), "edit", join(root, "link")))).toBe("allow:Edit(vault/**)");
   });
 
   // spec: AC-PERM-15
