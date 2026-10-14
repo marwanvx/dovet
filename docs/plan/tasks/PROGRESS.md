@@ -281,3 +281,13 @@ Next: M1-13 Tool framework. M1-25 must write `model.request` with the fingerprin
 Done: `src/tools/` has `createToolRegistry` (`prepare(name, raw)`: case-insensitive names, input normalization, validation errors ending in the tool's example call, null-byte check), `toolCallData` (`tool.call` data with raw and normalized input), `limitOutput` (30,000-character limit, 2,000-character preview, pageable offload file), `createReadState`, and `toolInputSchema`/`strictSubsetViolations`. AC-TOOLS-37 passes; the offload half of AC-TOOLS-36 is tested (the paging half needs Read, so keep AC-TOOLS-36 for the Read task). PR: #60 (merged, CI green on three OSes). Two fresh reviews; nothing above minor remains.
 Learned: Q32 records my decisions. `toolInputSchema` moves zod limits into field descriptions, so adapters receive a schema already inside the strict subset. Every tool task must append its tool to `builtinTools` in `src/tools/index.ts`; the strict-subset and errorExample tests loop over it. The per-endpoint `omit`/`nullable` rendering is still the adapter's job. Spec-change PR still to do: tools §0 (Q32), plus Q20, Q21, Q22, Q25, Q27–Q31.
 Next: M1-14.
+
+## 2026-10-14 — M1-14 Read
+Done: `src/tools/read.ts` (+ `read-scan.ts`, `read-results.ts`, `hidden.ts`) reads text files: type checks, race-safe open (dev/inode), streaming bounded scan, UTF-8/UTF-16 BOMs, `invalid` flag, `<n>\t<text>` lines, PARTIAL views, `allow_large`, re-read dedup, hidden-character removal with taint. AC-TOOLS-17/18/19/32/34 pass; AC-TOOLS-01 and AC-PERM-26 pass for Read's part (Edit's refusal of invalid files and the UTF-16 write round-trip belong to Edit/Write; the macOS screenshot and AppContainer cases of AC-TOOLS-34 are not separately exercised). PR: #62 (merged, CI green on three OSes). Two fresh reviews; majors fixed (output-limit conflict, both paths to the policy, binary sniff by extension and magic, read-state values).
+Learned:
+- Q33 holds my decisions. For M1-25: pass `ToolContext.readResults` (`buildReadResultsIndex(events, epoch)`) and `contextFreeTokens`, and skip `limitOutput` for tools with `limitsOwnOutput` (Read). For M1-23: the policy gets the requested and the resolved path from `describeAction`.
+- Read-state `encoding`/`eol` use interfaces §3 values (`utf8`…, `\n|\r\n|mixed`).
+- Test temp dirs must be `realpathSync.native`'d (macOS `/var`, Windows 8.3 names).
+- Images and PDFs answer "Binary file" until M2. Dedup keys on the path as written plus range.
+- Spec-change PRs still to do: Q20, Q21, Q22, Q25, Q27, Q28, Q29, Q30, Q33.
+Next: M1-15.
