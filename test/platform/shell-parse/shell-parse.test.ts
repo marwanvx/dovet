@@ -6,6 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileDovet } from "../../../scripts/build.ts";
+import { isErrno } from "../../../src/platform/index.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 
@@ -66,8 +67,14 @@ beforeAll(async () => {
 }, 120_000);
 
 afterAll(() => {
-  // Windows may still hold the just-run executable open for a moment.
-  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  if (!dir) return;
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+  } catch (e) {
+    // Windows (often its virus scanner) can hold a just-run executable for longer than the retries; a leftover temp dir is harmless.
+    if (process.platform !== "win32" || !isErrno(e, "EBUSY", "EPERM")) throw e;
+    console.warn(`left ${dir} behind: ${String(e)}`);
+  }
 });
 
 describe("compiled binary parses shell commands with the embedded grammars", () => {
