@@ -28,6 +28,7 @@ export type Rule = {
   toolRe: RegExp | undefined;
   matcher: Matcher;
   file: string;
+  baseDir: string;
   line: number | undefined;
 };
 
@@ -89,7 +90,15 @@ export function compileRule(
   if (!glob && behavior !== "allow" && c.knownTools && !c.knownTools.has(tool) && !tool.startsWith("mcp__")) {
     issue("warning", `${behavior} rule ${raw}: unknown tool "${tool}" (a typo?)`);
   }
-  const base = { behavior, raw, tool, toolRe: glob ? wildcard(tool, ".*") : undefined, file: src.file, line };
+  const base = {
+    behavior,
+    raw,
+    tool,
+    toolRe: glob ? wildcard(tool, ".*") : undefined,
+    file: src.file,
+    baseDir: src.baseDir,
+    line,
+  };
   const keep = (matcher: Matcher): Rule => ({ ...base, matcher });
   const skip = (why: string): undefined => void issue("warning", `${behavior} rule ${raw}: ${why}`);
   if (spec === undefined) return keep({ kind: "tool" });
@@ -98,6 +107,7 @@ export function compileRule(
       `files are matched by ${tool === "Write" ? "Edit" : "Read"} rules, so use ${tool === "Write" ? "Edit" : "Read"}(...) instead`,
     );
   if (tool === "Read" || tool === "Edit") {
+    if (/^(file_path|path):/.test(spec)) return skip("a rule on the primary field is rejected; write the path itself");
     const { matcher, warning } = compilePath(spec, behavior, src.baseDir, c);
     if (warning !== undefined) skip(warning);
     return matcher && keep({ kind: "path", path: matcher, group: `${src.file}\0${behavior}\0${tool}` });

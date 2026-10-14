@@ -207,6 +207,7 @@ describe("path rules", () => {
     expect(run("Read(C:\\Windows\\**)", "c:\\windows\\system32\\a.dll")).toBe("deny:Read(C:\\Windows\\**)");
     expect(run("Read(c:\\Windows\\**)", "C:\\WINDOWS\\a")).toBe("deny:Read(c:\\Windows\\**)");
     expect(run("Read(//c/Users/a/.ssh/**)", "C:\\Users\\a\\.ssh\\id")).toBe("deny:Read(//c/Users/a/.ssh/**)");
+    expect(run("Read(C:\\**\\*.KEY)", "c:\\a\\b.key")).toBe("deny:Read(C:\\**\\*.KEY)");
     expect(run("Read(C:\\**)", "D:\\other")).toBeUndefined();
     expect(run("Read(C:\\**)", "C:\\anything\\at\\all")).toBe("deny:Read(C:\\**)");
     expect(run("Read(/keys/**)", "C:\\p\\keys\\a")).toBe("deny:Read(/keys/**)");
@@ -357,7 +358,7 @@ describe("robust loading", () => {
         baseDir: "/x",
         deny: [
           { text: "Bash(aws *)", line: 4 },
-          { text: "Bsh(x)", line: 5 },
+          { text: "Bsh", line: 5 },
         ],
       },
       {
@@ -373,7 +374,7 @@ describe("robust loading", () => {
     ];
     const r = loadRules(sources, ctx({ knownTools: new Set(["Bash", "WebFetch", "Read", "Edit"]) }));
     const msgs = r.issues.map((i) => i.message);
-    expect(msgs.some((m) => m.includes("Bsh"))).toBe(true);
+    expect(msgs.some((m) => m.includes("Bsh") && m.includes("unknown tool"))).toBe(true);
     const shadow = r.issues.find((i) => i.message.includes("Bash(aws s3 ls)"));
     expect(shadow?.file).toBe("/p/.dovet/settings.json");
     expect(shadow?.line).toBe(9);
@@ -398,5 +399,61 @@ describe("rule examples", () => {
     expect(issues[0]?.message).toContain("git status && git push origin main");
     expect(issues[0]?.message).toContain("Bash(git push *)");
     expect(issues[0]?.message).toContain("expected allow");
+  });
+});
+
+describe("edge cases", () => {
+  // spec: AC-PERM-05
+  test("the filesystem root is judged without error under a floating rule; an unresolvable path blocks an allow", () => {
+    const r = load({ deny: ["Read(.env)"], allow: ["Edit(/ok/**)"] });
+    expect(decide(r, read("/"))).toBeUndefined();
+    const w = loadRules(
+      [{ file: "s", baseDir: "C:\\p", allow: texts(["Edit(C:\\p\\ok\\**)"]) }],
+      ctx({ os: "win32", home: "C:\\h" }),
+    );
+    const call: RuleCall = {
+      tool: "Edit",
+      cwd: "C:\\p",
+      paths: [
+        { access: "edit", path: "C:\\p\\ok\\a" },
+        { access: "edit", path: "C:file" },
+      ],
+    };
+    expect(decide(w, call)).toBeUndefined();
+    expect(decide(w, { ...call, paths: call.paths?.slice(0, 1) ?? [] })).toContain("allow:");
+  });
+
+  // spec: AC-PERM-16
+  test("fd duplication is not a file, PowerShell rules ignore case, a rule-side trailing dot is stripped", () => {
+    const r = load({
+      allow: ["Bash(ls)"],
+      deny: ["Edit(/1)", "WebFetch(domain:example.com.)", "PowerShell(Get-Process *)"],
+    });
+    expect(decide(r, bash("ls 2>&1"))).toBe("allow:Bash(ls)");
+    expect(decide(r, { tool: "WebFetch", cwd: "/p", host: "example.com" })).toContain("deny:");
+    expect(decide(r, { tool: "PowerShell", cwd: "/p", commands: [{ argv: ["get-process", "x"] }] })).toContain("deny:");
+  });
+
+  // spec: AC-PERM-06
+  test("a symlinked working directory still matches relative rules by its target", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "dovet-cwd-")));
+    mkdirSync(join(root, "real"));
+    symlinkSync(join(root, "real"), join(root, "link"));
+    const canonicalize = (p: string) => canonicalizePath(p, "/", "linux");
+    const r = load({ deny: ["Read(vault/**)"] }, { canonicalize });
+    expect(decide(r, read(join(root, "real", "vault", "a"), "read", join(root, "link")))).toBe("deny:Read(vault/**)");
+  });
+
+  // spec: AC-PERM-15
+  test("a rule on a primary field is rejected, and equal /path rules from different bases do not shadow each other", () => {
+    expect(load({ deny: ["Read(file_path:/etc/**)"] }).issues.length).toBe(1);
+    const r = loadRules(
+      [
+        { file: "/u.json", baseDir: "/u", deny: texts(["Read(/keys/**)"]) },
+        { file: "/p.json", baseDir: "/p", allow: texts(["Read(/keys/**)"]) },
+      ],
+      ctx(),
+    );
+    expect(r.issues).toEqual([]);
   });
 });

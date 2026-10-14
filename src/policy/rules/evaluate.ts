@@ -49,7 +49,7 @@ export function loadRules(sources: RuleSource[], ctx: RuleContext): { rules: Rul
 const toolMatches = (rule: Rule, tool: string): boolean =>
   rule.toolRe !== undefined ? rule.toolRe.test(tool) : rule.tool === tool;
 
-type Resolved = { forms: Array<PathForms & { access: "read" | "edit" }>; cwds: string[] };
+type Resolved = { unresolved: boolean; forms: Array<PathForms & { access: "read" | "edit" }>; cwds: string[] };
 
 function resolve(call: RuleCall, ctx: RuleContext): Resolved {
   const paths = [...(call.paths ?? [])];
@@ -63,7 +63,11 @@ function resolve(call: RuleCall, ctx: RuleContext): Resolved {
     return f === undefined ? [] : [{ ...f, access: p.access }];
   });
   const cwd = pathForms(call.cwd, call.cwd, ctx);
-  return { forms, cwds: [...new Set(cwd === undefined ? [] : [cwd.requested, cwd.canonical])] };
+  return {
+    unresolved: forms.length < paths.length,
+    forms,
+    cwds: [...new Set(cwd === undefined ? [] : [cwd.requested, cwd.canonical])],
+  };
 }
 
 /** Does a path rule match the call's paths? Deny and ask need one path (either spelling); allow needs every path in both spellings. */
@@ -75,7 +79,9 @@ function pathHits(rule: Rule, r: Resolved, os: RuleContext["os"], strict: boolea
   const one = (p: string) => pathMatches(path, p, r.cwds, os);
   const hit = (f: Resolved["forms"][number]) => one(f.requested) || one(f.canonical);
   return strict
-    ? r.forms.length > 0 && r.forms.every((f) => applies(f.access) && one(f.requested) && one(f.canonical))
+    ? !r.unresolved &&
+        r.forms.length > 0 &&
+        r.forms.every((f) => applies(f.access) && one(f.requested) && one(f.canonical))
     : r.forms.some((f) => applies(f.access) && hit(f));
 }
 
@@ -151,7 +157,7 @@ function covers(b: Rule, a: Rule): boolean {
   if (b.matcher.kind === "shell" && a.matcher.kind === "shell") return b.matcher.re.test(a.matcher.text);
   if (b.matcher.kind === "domain" && a.matcher.kind === "domain")
     return b.matcher.text === "*" || b.matcher.text === a.matcher.text;
-  return b.raw === a.raw;
+  return b.raw === a.raw && (b.baseDir === a.baseDir || !/\(\/(?!\/)/.test(b.raw));
 }
 
 function unreachable(list: readonly Rule[]): RuleIssue[] {

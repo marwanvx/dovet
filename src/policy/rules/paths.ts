@@ -88,7 +88,7 @@ export function pathMatches(m: PathMatcher, path: string, cwds: string[], os: Os
   const roots = m.roots ?? (m.floating ? [...cwds, "/"] : cwds);
   return roots.some((root) => {
     const rel = under(path, root, os !== "linux");
-    return rel !== undefined && m.test(rel);
+    return rel !== undefined && rel !== "" && m.test(rel);
   });
 }
 

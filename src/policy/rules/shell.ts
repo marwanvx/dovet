@@ -14,7 +14,8 @@ export function splitCommand(command: string): Subcommand[] | undefined {
   const endWord = (): void => {
     if (word === undefined) return;
     if (pending !== undefined) {
-      if (!word.startsWith("&")) cur.redirects.push({ op: pending, target: word });
+      if (!(pending.endsWith("&") && /^(\d+|-)$/.test(word)) && !word.startsWith("&"))
+        cur.redirects.push({ op: pending, target: word });
       pending = undefined;
     } else cur.argv.push(word);
     word = undefined;
