@@ -1,12 +1,12 @@
 // Agent turn loop (agent-loop "Turn state machine", "Stop-reason handling", "Tool execution within a turn", "Loop and runaway protection").
 
-import type { ProviderRequest, StopReason } from "../ai/index.ts";
+import type { ProviderErrorInfo, ProviderRequest, StopReason } from "../ai/index.ts";
 import type { ShellChoice } from "../platform/index.ts";
 import type { Env, RuleContext, RuleSet, ShellParsers } from "../policy/index.ts";
 import { ruleSetFromSettings } from "../policy/index.ts";
 import type { EventEnvelope, PrefixFingerprint, StoredResponse } from "../schema/index.ts";
 import type { LoadedSettings } from "../store/index.ts";
-import { findProjectRoot } from "../store/index.ts";
+import { findProjectRoot, isHistoryRelated, REPAIR_HINT } from "../store/index.ts";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolRegistry } from "../tools/index.ts";
 import { buildReadResultsIndex, createBashTool, limitOutput } from "../tools/index.ts";
 import { cacheWarning, prefixFingerprint } from "./transcript/index.ts";
@@ -656,4 +656,13 @@ export function fileChangeEvents(results: readonly ExecutedResult[]): Array<{
   removed: number;
 }> {
   return results.flatMap((r) => r.output.meta?.fileChanges ?? []);
+}
+
+/**
+ * A history rejection unlocks the repair epoch: the turn driver appends it and headless exits 6
+ * with the hint (event-log "Resume"). Every other failure offers nothing.
+ */
+export function historyRepairOffer(error: ProviderErrorInfo): { offer: string; hint: string } | null {
+  if (!isHistoryRelated(error)) return null;
+  return { offer: "Repair: continue in a new epoch built from the normalized transcript", hint: REPAIR_HINT };
 }

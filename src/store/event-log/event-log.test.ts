@@ -99,6 +99,7 @@ describe("writer", () => {
     expect((await listSessions(loc))[0]).toEqual(sidecar);
   });
 
+  // spec: AC-LOG-01
   test("reopening after a crash mid-line repairs the log without rewriting it, and it stays writable", async () => {
     const loc = await location();
     const first = await open(loc);
