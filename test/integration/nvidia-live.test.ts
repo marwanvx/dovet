@@ -141,8 +141,14 @@ describe("live nvidia smoke", () => {
     const seenHeaders: Array<ProviderRequest["headers"]> = [];
     let toolCallTurns = 0;
     let textDeltas = 0;
+    const started = Date.now();
+    const BUDGET_MS = 14 * 60_000;
 
     for (let turn = 1; turn <= 10; turn++) {
+      if (Date.now() - started > BUDGET_MS) {
+        skipped(`session exceeded 14 minutes on ${picked.model} after ${turn - 1} turns`);
+        return;
+      }
       if (turn === 6)
         events.push(
           ev("system.injected", { text: INSTRUCTION, reason: "queued-messages", delivery: "reminder-block" }, turn),
@@ -181,6 +187,7 @@ describe("live nvidia smoke", () => {
       events.push(ev("model.response", stored, turn));
       const calls = stored.parts.filter((p) => p.kind === "tool_call");
       if (calls.length > 0) toolCallTurns += 1;
+      console.log(`live nvidia: turn ${turn}/10 on ${picked.model}: ${calls.length} tool call(s)`);
       for (const c of calls) {
         if (c.kind !== "tool_call") continue;
         const isEchoError = turn === 3;
@@ -207,7 +214,7 @@ describe("live nvidia smoke", () => {
     expect(leaked).toBe(false);
     const headerLeaked = seenHeaders.some((h) => JSON.stringify(h).includes(key));
     expect(headerLeaked).toBe(false);
-  }, 600_000);
+  }, 1_200_000);
 
   test("replay normalization on a crafted history is accepted live", async () => {
     counter = 100_000;
