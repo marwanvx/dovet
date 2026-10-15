@@ -43,10 +43,32 @@ function filesMatching(dir: string, pattern: RegExp): string[] {
     .map((f) => readFileSync(join(dir, f), "utf8").trim());
 }
 
+/**
+ * License text checked in under scripts/licenses/ for a bundled package version whose own directory ships no
+ * license file. Keyed by exact name@version so a version bump fails the release build until its license is reviewed.
+ */
+const LICENSE_OVERRIDES: Record<string, { file: string; source: string }> = {
+  "@ai-sdk/provider-utils@5.0.59": {
+    file: "ai-sdk-provider-utils-5.0.59-LICENSE",
+    source: "https://github.com/vercel/ai/blob/main/LICENSE (packages/provider-utils, Apache-2.0)",
+  },
+};
+
 function npmNotice(dir: string): Notice {
   const pkg = packageJson(dir);
   const licenses = filesMatching(dir, /^(licen[cs]e|copying|unlicense)([.-].*)?$/i);
-  if (licenses.length === 0) throw new Error(`${pkg.name} ${pkg.version} has no license file (${dir})`);
+  if (licenses.length === 0) {
+    const override = LICENSE_OVERRIDES[`${pkg.name}@${pkg.version}`];
+    if (override !== undefined) {
+      return {
+        title: `${pkg.name} ${pkg.version}`,
+        source: override.source,
+        license: pkg.license ?? "see text",
+        texts: [readFileSync(join(import.meta.dir, "licenses", override.file), "utf8").trim()],
+      };
+    }
+    throw new Error(`${pkg.name} ${pkg.version} has no license file (${dir})`);
+  }
   return {
     title: `${pkg.name} ${pkg.version}`,
     source: pkg.homepage ?? `https://www.npmjs.com/package/${pkg.name}`,

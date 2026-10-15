@@ -69,6 +69,17 @@ describe("releaseNotices", () => {
     ).rejects.toThrow("no-license 1.0.0 has no license file");
   });
 
+  // spec: AC-ARCH-05
+  test("a bundled package version with a checked-in override uses its text", async () => {
+    const text = await releaseNotices({
+      inputs: [join(NM, "@ai-sdk", "provider-utils", "dist", "index.js")],
+      target: linux,
+      ripgrepLicense: "x",
+    });
+    expect(text).toContain("@ai-sdk/provider-utils 5.0.59");
+    expect(text).toContain("Copyright 2023 Vercel, Inc.");
+  });
+
   test("a target without bundled ripgrep lists no ripgrep", async () => {
     const text = await releaseNotices({ inputs: [], target: muslArm, ripgrepLicense: null });
     expect(text).not.toContain("ripgrep");

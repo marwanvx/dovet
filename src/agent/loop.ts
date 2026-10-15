@@ -172,14 +172,18 @@ export class GuardTracker {
   lastRetryable: boolean | undefined = undefined;
   compactions = 0;
 
-  beforeRequest(body: string, budgetStops: boolean): { doomed: boolean } | { pause: GuardPause } {
+  beforeRequest(
+    body: string,
+    budgetStops: boolean,
+    maxRequests: number = MAX_REQUESTS_PER_TURN,
+  ): { doomed: boolean } | { pause: GuardPause } {
     if (isDoomedRepeat(this.lastBody, this.lastRetryable, body)) return { doomed: true };
     if (budgetStops) return { pause: { guard: "budget", message: "Budget stops the turn before the next request." } };
-    if (this.requests >= MAX_REQUESTS_PER_TURN)
+    if (this.requests >= maxRequests)
       return {
         pause: {
           guard: "max-requests",
-          message: `The agent has made ${MAX_REQUESTS_PER_TURN} requests this turn (cost $${this.cost.toFixed(2)}). Continue?`,
+          message: `The agent has made ${maxRequests} requests this turn (cost $${this.cost.toFixed(2)}). Continue?`,
         },
       };
     return { doomed: false };
@@ -197,13 +201,14 @@ export class GuardTracker {
   noteMalformedRound(allInvalid: boolean, lastError: string, allTruncated: boolean, model: string): GuardPause | null {
     if (!allInvalid) {
       this.malformedRounds = 0;
+      this.malformedAllTruncated = false;
       return null;
     }
     this.malformedRounds += 1;
     this.lastMalformedError = lastError;
-    this.malformedAllTruncated = allTruncated;
+    this.malformedAllTruncated = this.malformedRounds === 1 ? allTruncated : this.malformedAllTruncated && allTruncated;
     if (this.malformedRounds >= MALFORMED_LIMIT)
-      return { guard: "malformed", message: malformedPauseMessage(model, lastError, allTruncated) };
+      return { guard: "malformed", message: malformedPauseMessage(model, lastError, this.malformedAllTruncated) };
     return null;
   }
 
