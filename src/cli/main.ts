@@ -4,13 +4,15 @@ import { rm } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import pkg from "../../package.json";
 import { PROVIDER_AUTH } from "../ai/index.ts";
-import { type Os, resolveDirs } from "../platform/index.ts";
-import { findProjectRoot, loadSettings, openSession, repairEpochEvent, resumeSession } from "../store/index.ts";
+import { createPlatformCore, type Os, resolveDirs } from "../platform/index.ts";
+import type { AbsPath, Settings } from "../schema/index.ts";
+import { findProjectRoot, type LoadedSettings, loadSettings } from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
 import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from "./headless-output.ts";
+import { type HeadlessRunOutput, runHeadless as runHeadlessTurn } from "./headless-run.ts";
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
-import { ephemeralDataDir, makeUlid, resolveResumeTarget } from "./resume-target.ts";
+import { ephemeralDataDir, makeUlid } from "./resume-target.ts";
 import { ensureDataDir, filterInheritedEnv, loadTrustedFolders } from "./startup.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
@@ -70,6 +72,12 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   if (ignored.length > 0)
     console.error(`dovet: ignoring inherited ${ignored.sort().join(", ")} from a parent Dovet run.`);
   const env = clean as Record<string, string | undefined>;
+  const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+  if (parsed.effort !== undefined && !(EFFORTS as readonly string[]).includes(parsed.effort)) {
+    console.error(`dovet: --effort must be one of low, medium, high, xhigh, max (got "${parsed.effort}")`);
+    process.exitCode = 2;
+    return;
+  }
   let dirs: { config: string; data: string; cache: string };
   try {
     dirs = resolveDirs({ os: hostOs(), home: homedir(), env });
@@ -81,9 +89,16 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   const dataState = await ensureDataDir(dirs.data);
   if (dataState.notice !== undefined) console.error(`dovet: ${dataState.notice}`);
   // Ephemeral sessions keep no log: a temp data dir removed at exit (event-log "Resume").
-  if (parsed.noSessionPersistence) dirs.data = await ephemeralDataDir();
+  // An unwritable data dir also falls back to a temp dir, so the turn still runs but nothing is saved.
+  let ephemeral = parsed.noSessionPersistence;
+  if (!dataState.writable && !ephemeral) {
+    dirs.data = await ephemeralDataDir();
+    ephemeral = true;
+  } else if (parsed.noSessionPersistence) {
+    dirs.data = await ephemeralDataDir();
+  }
   const cleanupEphemeral = async (): Promise<void> => {
-    if (parsed.noSessionPersistence) await rm(dirs.data, { recursive: true, force: true });
+    if (ephemeral) await rm(dirs.data, { recursive: true, force: true });
   };
   const trusted = await loadTrustedFolders(dirs.data, Date.now());
   if (trusted.warning !== undefined) console.error(`dovet: ${trusted.warning}`);
@@ -93,19 +108,25 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   } catch {
     projectRoot = process.cwd();
   }
-  let settings: { provider?: string | undefined; model?: string | undefined };
+  let loaded: LoadedSettings;
   try {
-    const loaded = await loadSettings({ dirs, home: homedir(), projectRoot, env });
-    settings = {
-      ...(loaded.settings.provider !== undefined ? { provider: loaded.settings.provider } : {}),
-      ...(loaded.settings.model !== undefined ? { model: loaded.settings.model } : {}),
+    const flags: Settings = {
+      ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.effort !== undefined ? { effort: parsed.effort as Settings["effort"] } : {}),
+      ...(parsed.budget !== undefined ? { budget: { session: parsed.budget } } : {}),
     };
+    loaded = await loadSettings({ dirs, home: homedir(), projectRoot, env, flags });
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 2;
     await cleanupEphemeral();
     return;
   }
+  const settings = {
+    ...(loaded.settings.provider !== undefined ? { provider: loaded.settings.provider } : {}),
+    ...(loaded.settings.model !== undefined ? { model: loaded.settings.model } : {}),
+  };
   const stdin = await readPipedStdin();
   const combined = combineStdinAndPrompt({ promptArg: parsed.prompt, stdinText: stdin.text, piped: stdin.piped });
   if ("error" in combined) {
@@ -120,81 +141,85 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
     await cleanupEphemeral();
     return;
   }
-  // Resume reopens the log as a stream, applies crash recovery as new events and never rewrites (event-log "Resume").
-  let sessionId = `01K7HEADLESS${String(Date.now() % 100000).padStart(5, "0")}STUB0001`;
-  if (parsed.resume !== undefined || parsed.continued) {
-    const os = hostOs();
-    const target = await resolveResumeTarget({ data: dirs.data, projectRoot, os }, parsed.resume, parsed.continued);
-    if ("error" in target) {
-      console.error(`dovet: ${target.error}`);
-      process.exitCode = 2;
-      await cleanupEphemeral();
-      return;
-    }
-    const loc = { data: dirs.data, projectRoot, os, session: target.id };
-    const resumed = await resumeSession(loc);
-    for (const w of resumed.warnings) console.error(`dovet: ${w}`);
-    if (resumed.readOnly !== undefined) {
-      console.error(
-        `dovet: session ${target.id} is read-only (${resumed.readOnly}). Continue from the last valid point with a fork from turn ${resumed.forkTurn ?? "0"}; the original is left untouched.`,
-      );
-      process.exitCode = 1;
-      await cleanupEphemeral();
-      return;
-    }
-    const ulid = (): string => makeUlid(Date.now(), crypto.getRandomValues(new Uint8Array(16)));
-    const opened = await openSession({
-      ...loc,
+  if (parsed.offline) console.error("dovet: offline mode; only model requests leave the machine.");
+  const os = hostOs();
+  const core = createPlatformCore({
+    os,
+    arch: process.arch,
+    execPath: realpathSync(process.execPath),
+    env,
+    projectRoot: projectRoot as AbsPath,
+    kill: (pid, signal) => process.kill(pid, signal),
+  });
+  const platform = {
+    ...core,
+    shells: () => ({}),
+    clipboard: { readImage: () => Promise.resolve(null), writeText: () => Promise.resolve(undefined) },
+  };
+  const ulid = (() => {
+    let last = "";
+    return (): string => {
+      // Event ids must sort after the previous one (event-log "Writer rules"); two makeUlid calls in the same
+      // millisecond have independent random tails, so without this about half of them would sort backwards.
+      let now = Date.now();
+      let id = makeUlid(now, crypto.getRandomValues(new Uint8Array(16)));
+      while (id <= last) {
+        now += 1;
+        id = makeUlid(now, crypto.getRandomValues(new Uint8Array(16)));
+      }
+      last = id;
+      return id;
+    };
+  })();
+  let out: HeadlessRunOutput;
+  try {
+    out = await runHeadlessTurn({
+      dirs,
+      projectRoot,
+      cwd: process.cwd(),
+      os,
+      settings: loaded,
+      env,
+      args: parsed,
+      prompt: combined.prompt,
       clock: { now: () => Date.now() },
       ids: { ulid },
       pid: process.pid,
       host: hostname(),
-      secrets: [],
+      platform,
     });
-    if (opened.mode === "read-only") {
-      console.error(`dovet: session ${target.id} is read-only (${opened.reason})`);
-      process.exitCode = 1;
-      await cleanupEphemeral();
-      return;
-    }
-    if (parsed.repair) {
-      const ev = repairEpochEvent(resumed.state);
-      opened.writer.append({ type: "epoch.start", epoch: ev.epoch, turn: null, data: ev.data });
-      console.error(
-        `dovet: repair epoch ${ev.epoch} started (reasoning dropped, one cache miss). Nothing in the log was edited.`,
-      );
-    } else {
-      for (const r of resumed.repairs) {
-        opened.writer.append({ type: r.type, epoch: r.epoch, turn: r.turn, data: r.data });
-      }
-      if (resumed.repairs.length > 0) console.error("dovet: crash recovery applied as new events.");
-    }
-    await opened.writer.close();
-    sessionId = target.id;
+  } catch (err) {
+    console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+    await cleanupEphemeral();
+    return;
   }
-  // M1-28 runs the startup and output plumbing; the full agent turn arrives with M1-31 (see QUESTIONS Q49).
-  // Echoing the prompt exercises stdin, --offline and the output schemas end to end.
-  if (parsed.offline) console.error("dovet: offline mode; only model requests leave the machine.");
-  const result = combined.prompt;
+  for (const w of out.warnings) console.error(`dovet: ${w}`);
+  if (out.exit.kind !== "ok") {
+    console.error(`dovet: ${out.result}`);
+    await cleanupEphemeral();
+    process.exitCode = exitCodeFor(out.exit);
+    return;
+  }
   if (parsed.output === "json") {
     process.stdout.write(
       formatJson({
-        result,
-        stopReason: "end_turn",
-        incomplete: false,
-        sessionId,
-        receipt: {},
-        usage: {},
-        cost: 0,
+        result: out.result,
+        stopReason: out.stopReason,
+        incomplete: out.incomplete,
+        sessionId: out.sessionId,
+        receipt: out.receipt,
+        usage: out.usage,
+        cost: out.cost,
       }),
     );
   } else if (parsed.output === "stream-json") {
-    process.stdout.write(formatStreamJson([{ type: "text", text: result }]));
+    process.stdout.write(formatStreamJson([{ type: "text", text: out.result }]));
   } else {
-    process.stdout.write(`${result}\n`);
+    process.stdout.write(`${out.result}\n`);
   }
   await cleanupEphemeral();
-  process.exitCode = exitCodeFor({ kind: "ok" });
+  process.exitCode = exitCodeFor(out.exit);
 }
 
 const args = process.argv.slice(2);

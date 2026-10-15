@@ -538,6 +538,21 @@ describe("guards", () => {
   });
 
   // spec: AC-LOOP-14
+  test("a mixed streak names the model, not the output limit", () => {
+    const g = new GuardTracker();
+    expect(g.noteMalformedRound(true, "INVALID_JSON", false, "m")).toBeNull();
+    expect(g.noteMalformedRound(true, "cut off", true, "m")).toBeNull();
+    const pause = g.noteMalformedRound(true, "cut off", true, "m");
+    expect(pause?.guard).toBe("malformed");
+    expect(pause?.message).toContain("/model");
+    expect(pause?.message).not.toContain("output limit");
+    const h = new GuardTracker();
+    expect(h.noteMalformedRound(true, "cut off", true, "m")).toBeNull();
+    expect(h.noteMalformedRound(true, "cut off", true, "m")).toBeNull();
+    expect(h.noteMalformedRound(true, "cut off", true, "m")?.message).toContain("output limit");
+  });
+
+  // spec: AC-LOOP-14
   test("a byte-identical request after a non-retryable error is never sent", () => {
     expect(isDoomedRepeat("abc", false, "abc")).toBe(true);
     expect(isDoomedRepeat("abc", true, "abc")).toBe(false);
