@@ -26,6 +26,8 @@ export type LoadInput = {
   migrations?: readonly Migration[];
   /** Asked once per file that needs a rewrite; without it (or on false) the mapping applies in memory with a warning. */
   confirmMigration?: (pending: PendingMigration) => Promise<boolean>;
+  // ASSUMPTION (QUESTIONS Q45): false skips the repo-supplied project files; the local file stays trusted. Full trust filtering is M2-05.
+  projectTrusted?: boolean;
 };
 
 export type LoadedSettings = {
@@ -137,11 +139,12 @@ async function loadClaudeFile(source: SettingsSource, path: string, shown: strin
 
 /** Reads every level of the precedence chain (cli-config "Config files and precedence") and merges them, lowest first. */
 export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
+  const trusted = input.projectTrusted ?? true;
   const dovet = join(input.projectRoot, ".dovet");
   const claude = join(input.projectRoot, ".claude");
   const own: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [] };
   await loadDovetFile(input, "user", join(input.dirs.config, "settings.json"), own);
-  await loadDovetFile(input, "project", join(dovet, "settings.json"), own);
+  if (trusted) await loadDovetFile(input, "project", join(dovet, "settings.json"), own);
   await loadDovetFile(input, "local", join(dovet, "settings.local.json"), own);
 
   const env = envSettings(input.env);
@@ -161,7 +164,7 @@ export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
       theirs,
     );
   }
-  if (projectCompat) {
+  if (projectCompat && trusted) {
     await loadClaudeFile("claude-project", join(claude, "settings.json"), ".claude/settings.json", theirs);
     await loadClaudeFile("claude-local", join(claude, "settings.local.json"), ".claude/settings.local.json", theirs);
   }

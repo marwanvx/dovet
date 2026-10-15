@@ -6,6 +6,7 @@ export {
   InstructionsLoadedData,
   ModelRequestData,
   PrefixFingerprint,
+  SettingsChangeData,
   SystemInjectedData,
   ToolCallData,
   ToolResultData,

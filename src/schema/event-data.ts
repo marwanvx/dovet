@@ -71,6 +71,14 @@ export const ModelRequestData = z.object({
   fingerprint: PrefixFingerprint,
 });
 
+// First writer is live settings reload (cli-config "Live settings reload", event-log "Event types (v0.1)").
+export const SettingsChangeData = z.object({
+  key: z.string().min(1),
+  old: JsonValue.optional(),
+  new: JsonValue.optional(),
+  source: z.string().min(1),
+});
+
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;
@@ -80,3 +88,4 @@ export type ToolResultData = z.infer<typeof ToolResultData>;
 export type TurnEndData = z.infer<typeof TurnEndData>;
 export type PrefixFingerprint = z.infer<typeof PrefixFingerprint>;
 export type ModelRequestData = z.infer<typeof ModelRequestData>;
+export type SettingsChangeData = z.infer<typeof SettingsChangeData>;
