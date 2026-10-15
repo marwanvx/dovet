@@ -5,8 +5,9 @@ import { z } from "zod";
 import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { lineDelta, placeholderViolation } from "./change-guard.ts";
-import { decode, dominantEol, encode, sha256Of } from "./codec.ts";
+import { decode, dominantEol, encode, sha256Of, sniffEncoding } from "./codec.ts";
 import { newFileEol } from "./eol.ts";
+import { canReadWithoutPrompt, fileEffects } from "./policy.ts";
 import type { Encoding } from "./read-scan.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
 import { type WriteHooks, writeBytes } from "./write-file.ts";
@@ -49,7 +50,23 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
     if (st === undefined) {
       eol = await newFileEol(path);
     } else {
-      const known = ctx.readState.get(path);
+      let known = ctx.readState.get(path);
+      const spellings = requested === path ? [path] : [requested, path];
+      if (known === undefined && !path.endsWith(".ipynb") && canReadWithoutPrompt(ctx, spellings)) {
+        const silent = await readFile(path);
+        const silentEncoding = sniffEncoding(silent);
+        const silentText = decode(silent, silentEncoding);
+        const silentStat = await stat(path);
+        ctx.readState.set(path, {
+          sha256: sha256Of(silent),
+          mtimeMs: silentStat.mtimeMs,
+          size: silentStat.size,
+          partial: false,
+          encoding: silentEncoding,
+          eol: silentText.includes("\r\n") && /(^|[^\r])\n/.test(silentText) ? "mixed" : dominantEol(silentText, "\n"),
+        });
+        known = ctx.readState.get(path);
+      }
       if (known === undefined || known.partial)
         return fail(`You must Read ${path} in full before overwriting it. Use Edit for a partial change.`);
       try {
@@ -81,7 +98,11 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
     const bytes = encode(eol === "\r\n" ? body.replace(/\n/g, "\r\n") : body, encoding);
     await mkdir(dirname(path), { recursive: true });
     await ctx.recordWrite(path, before);
-    const res = await writeBytes(path, bytes, { os: ctx.platform.os, hooks: opts.hooks });
+    const res = await writeBytes(path, bytes, {
+      os: ctx.platform.os,
+      hooks: opts.hooks,
+      ...(ctx.keepHardLink === true ? { keepHardLink: true } : {}),
+    });
     if (!res.ok) return fail(res.appeared ? `${res.message} Read ${path} in full, then write again.` : res.message);
 
     const after = await stat(path);
@@ -123,11 +144,7 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
       } catch (e) {
         if (!(e instanceof PathRefused)) throw e;
       }
-      return {
-        kind: "edit",
-        paths,
-        effects: { writes: "unknown", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
-      };
+      return { kind: "edit", paths, effects: fileEffects(ctx, "edit", paths) };
     },
     run,
   };

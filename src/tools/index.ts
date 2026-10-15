@@ -6,6 +6,7 @@ export { createEditTool, editTool } from "./edit.ts";
 export { createGlobTool, globTool } from "./glob.ts";
 export { createGrepTool, grepTool } from "./grep.ts";
 export { limitOutput, type OffloadTarget, OUTPUT_LIMIT } from "./output.ts";
+export { canReadWithoutPrompt, fileEffects, shellEffects } from "./policy.ts";
 export { createReadTool, readTool } from "./read.ts";
 export {
   buildReadResultsIndex,
@@ -33,6 +34,7 @@ export type {
   ToolContext,
   ToolDefinition,
   ToolOutput,
+  ToolPolicyState,
   ToolProgressEvent,
 } from "./types.ts";
 export { createWriteTool, writeTool } from "./write.ts";

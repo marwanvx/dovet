@@ -3,6 +3,7 @@ import { access, constants, stat } from "node:fs/promises";
 import { z } from "zod";
 import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
+import { fileEffects } from "./policy.ts";
 import {
   baseArgs,
   DEFAULT_LIMITS,
@@ -160,11 +161,7 @@ export function createGlobTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
       } catch (e) {
         if (!(e instanceof PathRefused)) throw e;
       }
-      return {
-        kind: "read",
-        paths,
-        effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
-      };
+      return { kind: "read", paths, effects: fileEffects(ctx, "read", paths) };
     },
     run,
   };
