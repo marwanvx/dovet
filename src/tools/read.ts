@@ -7,6 +7,7 @@ import { extname } from "node:path";
 import { z } from "zod";
 import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
+import { fileEffects } from "./policy.ts";
 import { DEDUP_PREFIX, sha256Hex } from "./read-results.ts";
 import { formatLine, type ScanOptions, type ShownLine, scanText } from "./read-scan.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
@@ -196,11 +197,7 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
         // run() refuses the same path, so nothing is read when the policy sees no path.
         if (!(e instanceof PathRefused)) throw e;
       }
-      return {
-        kind: "read",
-        paths,
-        effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
-      };
+      return { kind: "read", paths, effects: fileEffects(ctx, "read", paths) };
     },
     run,
   };

@@ -1,10 +1,13 @@
 // Tool contracts (interfaces §4). Services a tool needs (snapshots, sandbox, interact, model) are added by the first tool that uses them.
 import type { z } from "zod";
 import type { Platform } from "../platform/index.ts";
+import type { Effects, Env, RuleSet, ShellParsers } from "../policy/index.ts";
 import type { AbsPath, DocumentPart, ImagePart, PermissionMode, Settings, TextPart } from "../schema/index.ts";
 import type { Snapshotter } from "../store/index.ts";
 import type { ReadResultsIndex } from "./read-results.ts";
 import type { ReadStateStore } from "./read-state.ts";
+
+export type { Effects } from "../policy/index.ts";
 
 export type SessionEffect =
   | { kind: "set-mode"; mode: PermissionMode }
@@ -28,14 +31,6 @@ export type ToolOutput = {
       match?: "exact" | "prefix-strip" | "indent";
     }>;
   };
-};
-
-export type Effects = {
-  writes: "workspace" | "outside" | "protected" | "none" | "unknown";
-  network: "none" | "allowed-hosts" | { newHosts: string[] } | "unknown";
-  sensitiveReads: AbsPath[];
-  remote: Array<"push" | "publish" | "upload" | "deploy" | "destructive-mcp">;
-  sandboxed: boolean;
 };
 
 export type ActionDescriptor = { effects: Effects } & (
@@ -74,7 +69,25 @@ export interface ToolContext {
   platform: Platform;
   /** The environment child processes inherit (ripgrep needs `HOME` to find the global git excludes). */
   env: Readonly<Record<string, string | undefined>>;
+  /** Policy state for `describeAction` and the silent read; absent in unit tests without policy (M1-23c). */
+  policy?: ToolPolicyState;
+  /** The hard-linked keep-link approval (tools §2.7); set by the loop after the `hard-linked` prompt. */
+  keepHardLink?: boolean;
 }
+
+/** What `describeAction` needs to run the decision and `effectsOf` (M1-23c; wired by M1-25). */
+export type ToolPolicyState = {
+  rules: RuleSet;
+  mode: PermissionMode;
+  env: Env;
+  parsers?: ShellParsers;
+  /** Whether a shell command would run inside the sandbox. */
+  sandboxed?: boolean;
+  tainted?: boolean;
+  sandboxAutoAllow?: boolean;
+  defaultBranch?: string;
+  blockReadsOutsideWorkingDirectories?: boolean;
+};
 
 /** Deterministic input rewrites applied before validation (tools §0). */
 export type InputNormalization = {

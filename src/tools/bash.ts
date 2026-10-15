@@ -7,6 +7,7 @@ import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 import { sha256Of, sniffEncoding } from "./codec.ts";
 import { OUTPUT_LIMIT } from "./output.ts";
+import { shellEffects } from "./policy.ts";
 import { type Edition, isPolicyRefusal, powershellArgv, powershellScript } from "./powershell-script.ts";
 import { MAX_SCAN_BYTES } from "./read-scan.ts";
 import {
@@ -474,14 +475,17 @@ export function createBashTool(opts: {
     errorExample: { command: "ls -la", description: "List files in the current directory", timeout: 120_000 },
     parallelSafe: false,
     mutates: "system",
-    describeAction(input) {
+    describeAction(input, ctx) {
+      const unsandboxedRetry = input.dangerouslyDisableSandbox === true;
+      const shell = ps === undefined ? "bash" : "powershell";
+      const sandboxed = ctx.policy?.sandboxed === true && !unsandboxedRetry;
       return {
         kind: "shell",
-        shell: ps === undefined ? "bash" : "powershell",
+        shell,
         command: input.command,
-        sandboxed: false,
-        unsandboxedRetry: input.dangerouslyDisableSandbox === true,
-        effects: { writes: "unknown", network: "unknown", sensitiveReads: [], remote: [], sandboxed: false },
+        sandboxed,
+        unsandboxedRetry,
+        effects: shellEffects(ctx, shell, input.command, unsandboxedRetry),
       };
     },
     run,

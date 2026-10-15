@@ -6,6 +6,7 @@ import type { AbsPath } from "../schema/index.ts";
 import { lineDelta, placeholderViolation } from "./change-guard.ts";
 import { decode, dominantEol, encode, sha256Of, sniffEncoding } from "./codec.ts";
 import { applyEdit, applyExact, closestMatch } from "./edit-match.ts";
+import { canReadWithoutPrompt, fileEffects } from "./policy.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
 import { type WriteHooks, writeBytes } from "./write-file.ts";
 
@@ -67,7 +68,20 @@ export function createEditTool(opts: { hooks?: WriteHooks | undefined } = {}): T
         `${path} isn't valid UTF-8 (looks like ${guess}). Edit it with a shell command that preserves the encoding, or ask the user about converting it.`,
       );
     }
-    const known = ctx.readState.get(path);
+    let known = ctx.readState.get(path);
+    const spellings = requested === path ? [path] : [requested, path];
+    if ((known === undefined || known.partial) && !path.endsWith(".ipynb") && canReadWithoutPrompt(ctx, spellings)) {
+      const silentStat = await stat(path);
+      ctx.readState.set(path, {
+        sha256: sha256Of(before),
+        mtimeMs: silentStat.mtimeMs,
+        size: silentStat.size,
+        partial: false,
+        encoding,
+        eol: dominantEol(decode(before, encoding), "\n"),
+      });
+      known = ctx.readState.get(path);
+    }
     if (known === undefined || known.partial) return fail(`You must Read ${path} in full before editing it.`);
     try {
       await access(path, constants.W_OK);
@@ -108,7 +122,11 @@ export function createEditTool(opts: { hooks?: WriteHooks | undefined } = {}): T
     const body = eol === "\r\n" ? outcome.text.replace(/\n/g, "\r\n") : outcome.text;
     const bytes = encode(body, encoding);
     await ctx.recordWrite(path, before);
-    const res = await writeBytes(path, bytes, { os: ctx.platform.os, hooks: opts.hooks });
+    const res = await writeBytes(path, bytes, {
+      os: ctx.platform.os,
+      hooks: opts.hooks,
+      ...(ctx.keepHardLink === true ? { keepHardLink: true } : {}),
+    });
     if (!res.ok) return fail(res.message);
 
     const after = await stat(path);
@@ -169,11 +187,7 @@ export function createEditTool(opts: { hooks?: WriteHooks | undefined } = {}): T
       } catch (e) {
         if (!(e instanceof PathRefused)) throw e;
       }
-      return {
-        kind: "edit",
-        paths,
-        effects: { writes: "unknown", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
-      };
+      return { kind: "edit", paths, effects: fileEffects(ctx, "edit", paths) };
     },
     run,
   };
