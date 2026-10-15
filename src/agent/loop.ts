@@ -31,9 +31,9 @@ export function requestCapFor(provider: string): number {
   return REQUEST_CAPS[provider] ?? REQUEST_CAP_BYTES;
 }
 
-export function shouldDiscardEarly(stop: StopReason, truncatedToolCall: boolean): boolean {
+export function shouldDiscardEarly(stop: StopReason, hasToolCalls: boolean): boolean {
   if (stop === "refusal") return true;
-  if (stop === "max_tokens" && truncatedToolCall) return true;
+  if (stop === "max_tokens" && hasToolCalls) return true;
   return false;
 }
 
@@ -254,6 +254,7 @@ export class GuardTracker {
     this.malformedRounds = 0;
     this.identicalCount = 0;
     this.noProgress = 0;
+    this.compactions = 0;
   }
 }
 
@@ -289,6 +290,7 @@ export type ExecuteToolsDeps = {
   offloadDir: string;
   capBytes?: number;
   headless?: boolean;
+  /** Caller omits these when the response ends in refusal, max_tokens with tool calls, or interrupt (see shouldDiscardEarly). */
   earlyResults?: ReadonlyMap<string, ToolOutput>;
   signal?: AbortSignal;
 };

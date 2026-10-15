@@ -295,7 +295,7 @@ describe("batching and ordering", () => {
   });
 
   // spec: AC-LOOP-03
-  test("nine parallel-safe calls split at eight", () => {
+  test("ten parallel-safe calls split at eight", () => {
     const calls = Array.from({ length: 10 }, () => ({ parallelSafe: true }));
     expect(partitionCalls(calls)).toEqual([
       [0, 1, 2, 3, 4, 5, 6, 7],
@@ -608,6 +608,8 @@ describe("request size, early tools, model.request and cache", () => {
     expect(text !== undefined && text.kind === "text" ? text.text : "").toBe("early");
     expect(shouldDiscardEarly("refusal", false)).toBe(true);
     expect(shouldDiscardEarly("max_tokens", true)).toBe(true);
+    expect(shouldDiscardEarly("max_tokens", false)).toBe(false);
+    expect(shouldDiscardEarly("tool_use", true)).toBe(false);
     expect(shouldDiscardEarly("tool_use", false)).toBe(false);
     await rm(base.session.cwd, { recursive: true, force: true });
   });
@@ -632,8 +634,7 @@ describe("request size, early tools, model.request and cache", () => {
       body: "{}",
       fingerprint: fp,
     });
-    const expected = new Bun.CryptoHasher("sha256").update("{}").digest("hex");
-    expect(data.bodySha256).toBe(expected);
+    expect(data.bodySha256).toBe("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a");
     expect(data.fingerprint).toEqual(fp);
     expect(data.fingerprint.messages).toHaveLength(0);
     const warn = cacheStatusText({ turn: 4, cacheReadTokens: 8000 }, { turn: 5, cacheReadTokens: 0 });
