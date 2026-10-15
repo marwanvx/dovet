@@ -1,14 +1,16 @@
 // Dovet's entry point and composition root: the only file that touches `process.*` (architecture "Modules").
 import { realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { rm } from "node:fs/promises";
+import { homedir, hostname } from "node:os";
 import pkg from "../../package.json";
 import { PROVIDER_AUTH } from "../ai/index.ts";
 import { type Os, resolveDirs } from "../platform/index.ts";
-import { findProjectRoot, loadSettings } from "../store/index.ts";
+import { findProjectRoot, loadSettings, openSession, repairEpochEvent, resumeSession } from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
 import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from "./headless-output.ts";
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
+import { ephemeralDataDir, makeUlid, resolveResumeTarget } from "./resume-target.ts";
 import { ensureDataDir, filterInheritedEnv, loadTrustedFolders } from "./startup.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
@@ -78,6 +80,11 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   }
   const dataState = await ensureDataDir(dirs.data);
   if (dataState.notice !== undefined) console.error(`dovet: ${dataState.notice}`);
+  // Ephemeral sessions keep no log: a temp data dir removed at exit (event-log "Resume").
+  if (parsed.noSessionPersistence) dirs.data = await ephemeralDataDir();
+  const cleanupEphemeral = async (): Promise<void> => {
+    if (parsed.noSessionPersistence) await rm(dirs.data, { recursive: true, force: true });
+  };
   const trusted = await loadTrustedFolders(dirs.data, Date.now());
   if (trusted.warning !== undefined) console.error(`dovet: ${trusted.warning}`);
   let projectRoot: string;
@@ -96,6 +103,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 2;
+    await cleanupEphemeral();
     return;
   }
   const stdin = await readPipedStdin();
@@ -103,15 +111,69 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   if ("error" in combined) {
     console.error(`dovet: ${combined.error}`);
     process.exitCode = combined.exitCode;
+    await cleanupEphemeral();
     return;
   }
   if (!hasProvider(settings, env)) {
     console.error("dovet: no provider connected; run `dovet auth login <provider>` or set e.g. NVIDIA_API_KEY.");
     process.exitCode = 2;
+    await cleanupEphemeral();
     return;
   }
-  // M1-28 runs the startup and output plumbing; the full agent turn arrives with M1-29/M1-31.
-  // Echoing the prompt exercises stdin, --offline and the output schemas end to end (see QUESTIONS Q49).
+  // Resume reopens the log as a stream, applies crash recovery as new events and never rewrites (event-log "Resume").
+  let sessionId = `01K7HEADLESS${String(Date.now() % 100000).padStart(5, "0")}STUB0001`;
+  if (parsed.resume !== undefined || parsed.continued) {
+    const os = hostOs();
+    const target = await resolveResumeTarget({ data: dirs.data, projectRoot, os }, parsed.resume, parsed.continued);
+    if ("error" in target) {
+      console.error(`dovet: ${target.error}`);
+      process.exitCode = 2;
+      await cleanupEphemeral();
+      return;
+    }
+    const loc = { data: dirs.data, projectRoot, os, session: target.id };
+    const resumed = await resumeSession(loc);
+    for (const w of resumed.warnings) console.error(`dovet: ${w}`);
+    if (resumed.readOnly !== undefined) {
+      console.error(
+        `dovet: session ${target.id} is read-only (${resumed.readOnly}). Continue from the last valid point with a fork from turn ${resumed.forkTurn ?? "0"}; the original is left untouched.`,
+      );
+      process.exitCode = 1;
+      await cleanupEphemeral();
+      return;
+    }
+    const ulid = (): string => makeUlid(Date.now(), crypto.getRandomValues(new Uint8Array(16)));
+    const opened = await openSession({
+      ...loc,
+      clock: { now: () => Date.now() },
+      ids: { ulid },
+      pid: process.pid,
+      host: hostname(),
+      secrets: [],
+    });
+    if (opened.mode === "read-only") {
+      console.error(`dovet: session ${target.id} is read-only (${opened.reason})`);
+      process.exitCode = 1;
+      await cleanupEphemeral();
+      return;
+    }
+    if (parsed.repair) {
+      const ev = repairEpochEvent(resumed.state);
+      opened.writer.append({ type: "epoch.start", epoch: ev.epoch, turn: null, data: ev.data });
+      console.error(
+        `dovet: repair epoch ${ev.epoch} started (reasoning dropped, one cache miss). Nothing in the log was edited.`,
+      );
+    } else {
+      for (const r of resumed.repairs) {
+        opened.writer.append({ type: r.type, epoch: r.epoch, turn: r.turn, data: r.data });
+      }
+      if (resumed.repairs.length > 0) console.error("dovet: crash recovery applied as new events.");
+    }
+    await opened.writer.close();
+    sessionId = target.id;
+  }
+  // M1-28 runs the startup and output plumbing; the full agent turn arrives with M1-31 (see QUESTIONS Q49).
+  // Echoing the prompt exercises stdin, --offline and the output schemas end to end.
   if (parsed.offline) console.error("dovet: offline mode; only model requests leave the machine.");
   const result = combined.prompt;
   if (parsed.output === "json") {
@@ -120,7 +182,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
         result,
         stopReason: "end_turn",
         incomplete: false,
-        sessionId: `01K7HEADLESS${String(Date.now() % 100000).padStart(5, "0")}STUB0001`,
+        sessionId,
         receipt: {},
         usage: {},
         cost: 0,
@@ -131,6 +193,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   } else {
     process.stdout.write(`${result}\n`);
   }
+  await cleanupEphemeral();
   process.exitCode = exitCodeFor({ kind: "ok" });
 }
 

@@ -1,6 +1,16 @@
 import { z } from "zod";
 import type { EventEnvelope } from "../../schema/index.ts";
 
+export const ResumeSnapshot = z.object({
+  mode: z.string(),
+  taint: z.array(z.string()),
+  turn: z.number().int().nonnegative(),
+  costUsd: z.number().nonnegative(),
+  provider: z.string(),
+  model: z.string(),
+});
+export type ResumeSnapshot = z.infer<typeof ResumeSnapshot>;
+
 export const SessionMeta = z.object({
   id: z.string(),
   title: z.string(),
@@ -10,6 +20,11 @@ export const SessionMeta = z.object({
   lastId: z.string(),
   /** Log size when this was written; a different size means the sidecar is stale. */
   bytes: z.number().int().nonnegative(),
+  /** Resume fast path: byte offset and event id of the latest `epoch.start`, with the state just before it. */
+  epoch: z.number().int().nonnegative().optional(),
+  epochOffset: z.number().int().nonnegative().optional(),
+  epochEventId: z.string().optional(),
+  snapshot: ResumeSnapshot.optional(),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 

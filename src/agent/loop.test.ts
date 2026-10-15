@@ -53,6 +53,7 @@ import {
   fileChangeEvents,
   fingerprintOf,
   GuardTracker,
+  historyRepairOffer,
   INTERRUPTED_NOT_RUN,
   interruptResults,
   isDoomedRepeat,
@@ -678,5 +679,23 @@ describe("request size, early tools, model.request and cache", () => {
     expect(shellStatusLine({ choice: undefined, parsers: true, languageMode: "FullLanguage" })).toContain(
       "FullLanguage",
     );
+  });
+});
+
+describe("repair epoch offer", () => {
+  // spec: AC-LOG-12
+  test("a history rejection offers the repair epoch with the resume hint", () => {
+    expect(
+      historyRepairOffer({ kind: "invalid_request", retryable: false, message: "replay failed: empty text block" }),
+    ).toEqual({
+      offer: "Repair: continue in a new epoch built from the normalized transcript",
+      hint: "dovet --resume <id> --repair",
+    });
+  });
+
+  // spec: AC-LOG-12
+  test("other failures offer nothing", () => {
+    expect(historyRepairOffer({ kind: "server", retryable: true, message: "overloaded" })).toBeNull();
+    expect(historyRepairOffer({ kind: "invalid_request", retryable: false, message: "schema too complex" })).toBeNull();
   });
 });
