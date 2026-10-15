@@ -81,11 +81,13 @@ describe("live settings reload", () => {
     });
     const prev = await snapshotSettings({ ...input, env: {} });
     expect(prev.loaded.settings.model).toBe("m1");
-    await writeFile(join(dir.root, "proj", ".dovet", "settings.local.json"), '{ "model": "m2" }');
+    // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
+    await writeFile(join(dir.root, "proj", ".dovet", "settings.local.json"), '{ "model": "model-two" }');
     const next = await pollSettings(prev, { ...input, env: {} });
+    expect(next.changed).toBe(true);
     expect(next.loaded.settings.model).toBe("m1");
     expect(next.announced).toContain("model");
-    expect(next.notices.some((n) => n.includes("m2") && n.includes("m1"))).toBe(true);
+    expect(next.notices.some((n) => n.includes("model-two") && n.includes("m1"))).toBe(true);
   });
 
   // spec: AC-PERM-19
