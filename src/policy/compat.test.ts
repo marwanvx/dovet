@@ -69,7 +69,7 @@ const rulesFor = (s: NonNullable<CorpusEntry["settings"]>): RuleSet =>
         deny: (s.deny ?? []).map((text) => ({ text })),
       },
     ],
-    { os, home: "/home/u", canonicalize: (p) => p },
+    { os, home: join(root, "..", "home"), canonicalize: (p) => p },
   ).rules;
 
 function behaviorOf(e: CorpusEntry): "allow" | "ask" | "deny" {

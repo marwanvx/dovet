@@ -93,7 +93,7 @@
 {"id": "c093", "source": "Claude Code docs permissions: unclosed [ deny guards literal", "settings": {"deny": ["Read(secrets[)"]}, "tool": "Read", "path": "secrets[", "sandboxed": true, "expect": "deny"}
 {"id": "c094", "source": "Claude Code docs permissions: toString rule does not disable file", "settings": {"deny": ["Read(toString)"]}, "tool": "Read", "path": "a.ts", "sandboxed": true, "expect": "allow"}
 {"id": "c095", "source": "Claude Code docs permissions: anchored /src only top", "settings": {"allow": ["Edit(/src/**)"]}, "tool": "Edit", "path": "src/x.ts", "sandboxed": false, "expect": "allow"}
-{"id": "c096", "source": "Claude Code docs permissions: absolute //tmp", "settings": {"allow": ["Edit(//tmp/scratch.txt)"]}, "tool": "Edit", "path": "/tmp/scratch.txt", "sandboxed": true, "expect": "allow"}
+{"id": "c096", "source": "Claude Code docs permissions: anchored /tmp (settings source)", "settings": {"allow": ["Edit(/tmp/scratch.txt)"]}, "tool": "Edit", "path": "tmp/scratch.txt", "sandboxed": true, "expect": "allow"}
 {"id": "c097", "source": "Claude Code docs permissions: home ~/Documents", "settings": {"allow": ["Read(~/Documents/*.pdf)"]}, "tool": "Read", "path": "a.ts", "sandboxed": true, "expect": "allow"}
 {"id": "c098", "source": "Claude Code docs permissions: symlink both must allow", "settings": {"allow": ["Read(a.ts)"]}, "tool": "Read", "path": "a.ts", "sandboxed": true, "expect": "allow"}
 {"id": "c099", "source": "Claude Code docs permissions: Read deny applies to cat", "settings": {"deny": ["Read(.env)"]}, "tool": "Bash", "command": "cat .env", "sandboxed": false, "expect": "deny"}
