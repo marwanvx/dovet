@@ -1,6 +1,9 @@
 // The composition root's product: process-wide state owned by one Runtime (interfaces §9, architecture "State ownership").
 import type { Platform } from "../platform/index.ts";
 import type { AbsPath, Ulid } from "../schema/index.ts";
+import { type Session, SessionImpl, type SessionOptions } from "./session.ts";
+
+export type { SessionOptions };
 
 export interface RuntimeDeps {
   clock: { now(): number };
@@ -15,6 +18,7 @@ export interface RuntimeDeps {
 export interface Runtime {
   readonly deps: Readonly<RuntimeDeps>;
   readonly closed: boolean;
+  openSession(opts: SessionOptions): Promise<Session>;
   close(): Promise<void>;
 }
 
@@ -31,6 +35,9 @@ export function createRuntime(deps: RuntimeDeps): Runtime {
     deps: Object.freeze(owned),
     get closed() {
       return closed;
+    },
+    async openSession(opts: SessionOptions) {
+      return new SessionImpl(owned, opts);
     },
     close() {
       closed = true;

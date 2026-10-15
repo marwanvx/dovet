@@ -53,6 +53,31 @@ export type SessionInfo = {
 
 export type ToolProgressEvent = { kind: "status"; text: string } | { kind: "tail"; text: string };
 
+export type AskUserQuestionInput = {
+  questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string; preview?: string | undefined }>;
+    multiSelect: boolean;
+  }>;
+};
+
+export type QuestionAnswers =
+  | { answers: Array<{ selected: string[]; other?: string; notes: Array<{ label: string; text: string }> }> }
+  | { dismissed: true };
+
+export type PlanAnswer =
+  | { approve: "previous" | "accept-edits" | "manual"; edited: boolean }
+  | { keepPlanning: string }
+  | { dismissed: true; reason: "esc" | "mode-changed" };
+
+export class NoUserAvailable extends Error {}
+
+export interface ToolInteract {
+  askQuestions(q: AskUserQuestionInput, signal: AbortSignal): Promise<QuestionAnswers>;
+  presentPlan(plan: { text: string; path: AbsPath }, signal: AbortSignal): Promise<PlanAnswer>;
+}
+
 export interface ToolContext {
   session: Readonly<SessionInfo>;
   settings: Readonly<Settings>;
@@ -73,6 +98,10 @@ export interface ToolContext {
   policy?: ToolPolicyState;
   /** The hard-linked keep-link approval (tools §2.7); set by the loop after the `hard-linked` prompt. */
   keepHardLink?: boolean;
+  /** User interaction (tools §4, §11); absent in unit tests that never prompt. */
+  interact?: ToolInteract;
+  /** Mode active before plan mode; used when ExitPlanMode approves to `previous` (tools §11.4). */
+  planPreviousMode?: PermissionMode;
 }
 
 /** What `describeAction` needs to run the decision and `effectsOf` (M1-23c; wired by M1-25). */
