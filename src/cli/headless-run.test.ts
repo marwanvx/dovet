@@ -5,6 +5,7 @@ import { z } from "zod";
 import { fakePlatform, nvidiaAdapter, scriptedModel, sequentialIds, tempProject } from "../../test/helpers/index.ts";
 import { buildRequest, cacheWarning, headerOf, modelRequestBody, TRUNCATED_INSTRUCTION } from "../agent/index.ts";
 import { createSdkAdapter } from "../ai/index.ts";
+import type { Os } from "../platform/index.ts";
 import { ModelRequestData } from "../schema/index.ts";
 import type { LoadedSettings } from "../store/index.ts";
 import { openSession, readSession } from "../store/index.ts";
@@ -12,6 +13,8 @@ import type { ToolDefinition } from "../tools/index.ts";
 import { readTool } from "../tools/index.ts";
 import { exitCodeFor } from "./headless-output.ts";
 import { headlessToolDefs, resolveHeadlessModel, runHeadless } from "./headless-run.ts";
+
+const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 
 function settingsFor(model = "test/model"): LoadedSettings {
   return {
@@ -134,7 +137,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -158,7 +161,7 @@ describe("runHeadless", () => {
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("done");
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const types = read.events.map((e) => e.type);
       for (const t of [
@@ -190,7 +193,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -222,7 +225,7 @@ describe("runHeadless", () => {
       expect(calls).toBe(1);
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("recovered");
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const err = read.events.find((e) => e.type === "tool.result");
       if (err === undefined) throw new Error("no tool.result event");
@@ -283,7 +286,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -330,7 +333,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -383,7 +386,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -407,7 +410,7 @@ describe("runHeadless", () => {
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.warnings).toEqual([]);
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const result = read.events.find((e) => e.type === "tool.result");
       if (result === undefined) throw new Error("no tool.result event");
@@ -456,7 +459,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -483,7 +486,7 @@ describe("runHeadless", () => {
         ],
       });
       expect(out.exit).toEqual({ kind: "ok" });
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const epochStart = read.events.find((e) => e.type === "epoch.start");
       if (epochStart === undefined) throw new Error("no epoch.start event");
@@ -521,7 +524,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -545,7 +548,7 @@ describe("runHeadless", () => {
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("done small");
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const injected = read.events.find((e) => e.type === "system.injected");
       if (injected === undefined) throw new Error("no system.injected event");
@@ -578,7 +581,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -622,7 +625,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -668,7 +671,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -704,7 +707,7 @@ describe("runHeadless", () => {
     try {
       const data = join(dir.root, "data");
       const session = sequentialIds("W").ulid();
-      const loc = { data, projectRoot: dir.root, os: "linux" as const, session };
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
       const epochData = {
         epoch: 0,
         reason: "session-start",
@@ -746,7 +749,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -790,7 +793,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: {
           settings: {
             provider: "nvidia",
@@ -837,7 +840,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -874,7 +877,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: {
           settings: {},
           rules: { allow: [], ask: [], deny: [] },
@@ -922,7 +925,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -947,7 +950,7 @@ describe("runHeadless", () => {
       expect(out.exit).toEqual({ kind: "refusal" });
       expect(exitCodeFor(out.exit)).toBe(5);
       expect(out.result).toBe("I cannot help with that");
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "linux" as const, session: out.sessionId };
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const end = read.events.find((e) => e.type === "turn.end");
       if (end === undefined) throw new Error("no turn.end event");
@@ -963,7 +966,7 @@ describe("runHeadless", () => {
     try {
       const data = join(dir.root, "data");
       const session = sequentialIds("S").ulid();
-      const loc = { data, projectRoot: dir.root, os: "linux" as const, session };
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
       const opened = await openSession({
         ...loc,
         clock: { now: () => Date.UTC(2026, 9, 14) },
@@ -996,7 +999,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
@@ -1034,7 +1037,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
         args: {
