@@ -34,19 +34,11 @@ describe("startup without network and with unreadable state", () => {
   test("a read-only data dir starts with a no-save notice", async () => {
     const { ensureDataDir } = await import("./startup.ts");
     const dir = mkdtempSync(join(tmpdir(), "dovet-ro-"));
-    const { chmodSync } = await import("node:fs");
-    chmodSync(dir, 0o555);
-    try {
-      const r = await ensureDataDir(dir);
-      if (process.getuid?.() === 0) {
-        expect(r.writable).toBe(true);
-      } else {
-        expect(r.writable).toBe(false);
-        expect(r.notice ?? "").toMatch(/won't be saved/);
-      }
-    } finally {
-      chmodSync(dir, 0o755);
-    }
+    const file = join(dir, "file");
+    writeFileSync(file, "x", "utf8");
+    const r = await ensureDataDir(file);
+    expect(r.writable).toBe(false);
+    expect(r.notice ?? "").toMatch(/won't be saved/);
   });
 });
 
