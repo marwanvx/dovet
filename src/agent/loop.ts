@@ -360,7 +360,7 @@ export async function executeTools(
     const early = deps.earlyResults?.get(callId);
     if (early !== undefined && deps.signal?.aborted !== true) return early;
     if (deps.signal?.aborted === true)
-      return { status: "interrupted", content: [{ kind: "text", text: "Interrupted by the user" }] };
+      return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
     const out = await deps.run(tool, input, deps.makeContext());
     let text = out.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
     const guarded = applySizeGuard(text);
