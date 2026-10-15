@@ -2,13 +2,20 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { HeadlessJson, StreamJson } from "../src/cli/headless-output.ts";
 import { Settings } from "../src/schema/index.ts";
 
 const ROOT = join(import.meta.dir, "..");
 
 export function schemaFiles(): Record<string, string> {
   const settings = z.toJSONSchema(Settings, { io: "input", target: "draft-7" });
-  return { "schema/settings.schema.json": `${JSON.stringify({ title: "Dovet settings", ...settings }, null, 2)}\n` };
+  const headless = z.toJSONSchema(HeadlessJson, { io: "input", target: "draft-7" });
+  const stream = z.toJSONSchema(StreamJson, { io: "input", target: "draft-7" });
+  return {
+    "schema/settings.schema.json": `${JSON.stringify({ title: "Dovet settings", ...settings }, null, 2)}\n`,
+    "schema/headless.schema.json": `${JSON.stringify({ title: "Dovet headless JSON output", ...headless }, null, 2)}\n`,
+    "schema/stream.schema.json": `${JSON.stringify({ title: "Dovet stream JSON", ...stream }, null, 2)}\n`,
+  };
 }
 
 if (import.meta.main) {

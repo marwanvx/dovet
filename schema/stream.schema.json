@@ -1,0 +1,19 @@
+{
+  "title": "Dovet stream JSON",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "dovet.stream/1"
+    },
+    "type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "type"
+  ],
+  "additionalProperties": {}
+}
