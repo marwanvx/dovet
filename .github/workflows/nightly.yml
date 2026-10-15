@@ -1,5 +1,4 @@
-# Nightly live and soak suites (docs/specs/testing.md "Test layers"): the free NVIDIA smoke tests.
-# Never on PRs: a retired model, a rate limit or an outage skips with the reason instead of failing.
+# Nightly live suites (docs/specs/testing.md "Test layers"): the free NVIDIA smoke tests.
 name: nightly
 
 on:

@@ -1,6 +1,4 @@
 // Live NVIDIA smoke tests for nightly CI (testing "Test layers" and "Free test provider: NVIDIA").
-// Every PR runs the workflow shape and the pure normalization checks; only nightly has the key,
-// so the live turns log `live nvidia: skipped: <reason>` and pass when the key or a model is missing.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,8 +64,11 @@ function extendsRequest(a: string, b: string): boolean {
   return JSON.stringify({ ...pb, messages: pb.messages.slice(0, pa.messages.length) }) === a;
 }
 
+const skipLog: string[] = [];
 function skipped(reason: string): void {
-  console.log(`live nvidia: skipped: ${reason}`);
+  const line = `live nvidia: skipped: ${reason}`;
+  skipLog.push(line);
+  console.log(line);
 }
 
 async function selectModel(key: string): Promise<{ model: string; reasons: boolean } | { skipped: string }> {
@@ -91,6 +92,15 @@ describe("nightly workflow", () => {
     expect(text).toContain("nvidia-live");
     expect(text).toContain("contents: read");
     expect(text).not.toContain("pull_request");
+    expect(text).not.toContain("push:");
+  });
+
+  test("a longer message list extends a shorter one, and a shorter one never extends", () => {
+    const a = JSON.stringify({ tools: [], messages: [{ role: "user" }] });
+    const b = JSON.stringify({ tools: [], messages: [{ role: "user" }, { role: "assistant" }] });
+    expect(extendsRequest(a, b)).toBe(true);
+    expect(extendsRequest(b, a)).toBe(false);
+    expect(extendsRequest(a, a)).toBe(false);
   });
 });
 
@@ -99,11 +109,13 @@ describe("live nvidia smoke", () => {
     const key = process.env.NVIDIA_API_KEY;
     if (key === undefined || key === "") {
       skipped("NVIDIA_API_KEY is not set");
+      expect(skipLog.at(-1)).toMatch(/live nvidia: skipped: NVIDIA_API_KEY is not set/);
       return;
     }
     const picked = await selectModel(key);
     if ("skipped" in picked) {
       skipped(picked.skipped);
+      expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
     counter = 0;
@@ -280,11 +292,13 @@ describe("live nvidia smoke", () => {
     const key = process.env.NVIDIA_API_KEY;
     if (key === undefined || key === "") {
       skipped("NVIDIA_API_KEY is not set");
+      expect(skipLog.at(-1)).toMatch(/live nvidia: skipped: NVIDIA_API_KEY is not set/);
       return;
     }
     const picked = await selectModel(key);
     if ("skipped" in picked) {
       skipped(picked.skipped);
+      expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
     const baseURL = endpointOf(providerRecord("nvidia")).baseURL;
