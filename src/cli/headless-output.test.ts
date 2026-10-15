@@ -7,6 +7,7 @@ describe("stdin attachment", () => {
     const { combineStdinAndPrompt } = await import("./headless-output.ts");
     const r = combineStdinAndPrompt({ promptArg: "why?", stdinText: "log lines", piped: true });
     if (!("prompt" in r)) throw new Error(`expected prompt, got ${JSON.stringify(r)}`);
+    expect(r.prompt).toContain("log lines");
     expect(r.prompt).toContain("why?");
     expect(r.prompt.indexOf("log lines")).toBeLessThan(r.prompt.indexOf("why?"));
     expect(r.stdinName).toBe("stdin");

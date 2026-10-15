@@ -125,6 +125,7 @@ describe("dovet -p headless", () => {
     const { dir, ...r } = await headless(["-p", "why?", "--output", "text"], { stdin: "log lines" });
     try {
       expect(r.code).toBe(0);
+      expect(r.out).toContain("log lines");
       expect(r.out.indexOf("log lines")).toBeLessThan(r.out.indexOf("why?"));
     } finally {
       await dir.dispose();
@@ -225,6 +226,9 @@ describe("dovet -p headless", () => {
     });
     const dir = await tempProject({});
     try {
+      await fetch(`http://127.0.0.1:${proxy.port}/`).catch(() => undefined);
+      expect(hits).toBeGreaterThan(0);
+      hits = 0;
       const start = Date.now();
       const proc = Bun.spawn([process.execPath, MAIN, "-p", "hi"], {
         cwd: dir.root,
@@ -244,13 +248,14 @@ describe("dovet -p headless", () => {
           NO_PROXY: "",
         },
       });
-      const [out, err, code] = await Promise.all([
+      const [out, stderrText, code] = await Promise.all([
         new Response(proc.stdout).text(),
         new Response(proc.stderr).text(),
         proc.exited,
       ]);
       expect(code).toBe(0);
       expect(out).toContain("hi");
+      expect(stderrText).not.toContain("dovet: no provider");
       expect(hits).toBe(0);
       expect(Date.now() - start).toBeLessThan(10_000);
     } finally {
