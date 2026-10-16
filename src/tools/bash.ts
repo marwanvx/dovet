@@ -3,6 +3,7 @@ import { access, constants, mkdir, readFile, rm, stat, writeFile } from "node:fs
 import { join } from "node:path";
 import { z } from "zod";
 import { isErrno, isWithin } from "../platform/index.ts";
+import { isExcludedCommand } from "../policy/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 import { sha256Of, sniffEncoding } from "./codec.ts";
@@ -50,6 +51,27 @@ async function raceAbort<T>(work: Promise<T> | undefined, signal: AbortSignal): 
 }
 
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
+
+function sandboxHealthy(ctx: ToolContext): boolean {
+  if (ctx.settings.sandbox?.enabled === false) return false;
+  const svc = ctx.sandbox;
+  if (svc === undefined) return ctx.policy?.sandboxed === true;
+  return svc.state === "on" || svc.state === "weak" || svc.state === "experimental";
+}
+
+function sandboxRouting(
+  ctx: ToolContext,
+  command: string,
+  shell: "Bash" | "PowerShell",
+  retry: boolean,
+): { sandboxed: boolean; unsandboxed: boolean; excluded: boolean } {
+  const allowUnsandboxed = ctx.settings.sandbox?.allowUnsandboxedCommands !== false;
+  const excluded = isExcludedCommand(command, ctx.settings.sandbox?.excludedCommands ?? [], shell) && allowUnsandboxed;
+  const effectiveRetry = retry && allowUnsandboxed;
+  const healthy = sandboxHealthy(ctx);
+  const unsandboxed = effectiveRetry || excluded || !healthy;
+  return { sandboxed: !unsandboxed, unsandboxed, excluded };
+}
 
 export function createBashTool(opts: {
   /** `<data>/tmp`: script and cwd files live in `sh/` below it. */
@@ -264,7 +286,38 @@ export function createBashTool(opts: {
       settingsEnv: ctx.settings.env as Record<string, string> | undefined,
       passEnv: ctx.settings.shell?.passEnv,
     });
-    const env = { ...baseEnv, DOVET_RUN: runMarker.slice("DOVET_RUN=".length) };
+    const shellKind = ps === undefined ? "Bash" : "PowerShell";
+    if (ctx.sandbox !== undefined) await ctx.sandbox.ready;
+    const routing = sandboxRouting(
+      ctx,
+      input.command,
+      shellKind as "Bash" | "PowerShell",
+      input.dangerouslyDisableSandbox === true,
+    );
+    const healthyNow = sandboxHealthy(ctx);
+    if (!healthyNow && ctx.settings.sandbox?.failIfUnavailable === true) {
+      return {
+        status: "error",
+        content: [
+          {
+            kind: "text",
+            text: "The sandbox is unavailable and sandbox.failIfUnavailable is true, so shell commands are refused.",
+          },
+        ],
+      };
+    }
+    const sandboxed = routing.sandboxed && healthyNow;
+    let env: Record<string, string> = { ...baseEnv, DOVET_RUN: runMarker.slice("DOVET_RUN=".length) };
+    let sessionTmp: string | undefined;
+    if (sandboxed && ctx.sandbox !== undefined) {
+      sessionTmp = ctx.sandbox.sessionTmp();
+      try {
+        await mkdir(sessionTmp, { recursive: true });
+      } catch {
+        sessionTmp = undefined;
+      }
+      if (sessionTmp !== undefined) env = { ...env, TMPDIR: sessionTmp };
+    }
     const view = fileView(input.command);
     let before: string | undefined;
     if (view === undefined && ctx.snapshots !== undefined) {
@@ -276,7 +329,10 @@ export function createBashTool(opts: {
     }
 
     const id = crypto.randomUUID().slice(0, 8);
-    const dir = join(opts.tmpDir, ps === undefined ? "sh" : "ps");
+    const dir =
+      sandboxed && sessionTmp !== undefined
+        ? join(sessionTmp, "sh")
+        : join(opts.tmpDir, ps === undefined ? "sh" : "ps");
     const outputDir = opts.outputDir ?? join(opts.tmpDir, "out");
     const script = join(dir, ps === undefined ? `${id}.sh` : `${id}.ps1`);
     const cwdFile = join(dir, `${id}.cwd`);
@@ -301,6 +357,8 @@ export function createBashTool(opts: {
     ctx.signal.addEventListener("abort", onAbort, { once: true });
     if (ctx.signal.aborted) onAbort();
     const group = `${toolName.toLowerCase()}:${ctx.session.id}:${id}`;
+    const violationSince = Date.now();
+    const cleanups: Array<() => Promise<void>> = [];
     try {
       if (abort.signal.aborted) {
         return {
@@ -321,13 +379,22 @@ export function createBashTool(opts: {
       const decoder = new TextDecoder();
       let out: Awaited<ReturnType<typeof collectOutput>>;
       for (;;) {
+        const baseArgv =
+          ps === undefined
+            ? [shell.path, script]
+            : powershellArgv({ exe: shell.path, scriptPath: script, scriptText, viaCommand });
+        let spawnArgv = baseArgv;
+        let spawnEnv = env;
+        if (sandboxed && ctx.sandbox !== undefined) {
+          const wrapped = await ctx.sandbox.wrap({ argv: baseArgv, cwd: ctx.session.cwd, env }, { unsandboxed: false });
+          spawnArgv = wrapped.argv;
+          spawnEnv = wrapped.env;
+          cleanups.push(wrapped.cleanup);
+        }
         const child = ctx.platform.spawn({
-          argv:
-            ps === undefined
-              ? [shell.path, script]
-              : powershellArgv({ exe: shell.path, scriptPath: script, scriptText, viaCommand }),
+          argv: spawnArgv,
           cwd: ctx.session.cwd,
-          env,
+          env: spawnEnv,
           stdin: "null",
           signal: abort.signal,
           group,
@@ -363,6 +430,17 @@ export function createBashTool(opts: {
       }
       let text = sanitizeOutput(out.merged);
       if (capped) text += `\nOutput exceeded ${Math.round(cap / 1_000_000)} MB; the command was stopped.`;
+      const sandboxViolations = sandboxed && ctx.sandbox !== undefined ? ctx.sandbox.violations(violationSince) : [];
+      if (sandboxViolations.length > 0) {
+        const lines = sandboxViolations.map((v) => `Sandbox blocked: ${v}`);
+        const hints: string[] = [];
+        const joined = sandboxViolations.join("\n").toLowerCase();
+        if (/bind|listen|eaddrinuse|address already in use|port/.test(joined)) {
+          hints.push("a dev server that can't bind a port needs sandbox.network.allowLocalBinding");
+        }
+        if (/pbcopy|pbpaste|xclip|xsel|clip/.test(joined)) hints.push("clipboard commands need /copy");
+        text = [text, ...lines, ...hints.map((h) => `Hint: ${h}`)].filter((s) => s !== "").join("\n");
+      }
       if (stragglers.length > 0) {
         const names = [...new Set(stragglers.map((p) => p.name))].slice(0, 3);
         notes.push(
@@ -384,6 +462,7 @@ export function createBashTool(opts: {
         durationMs: Date.now() - started,
         effects,
         ...(fileChanges.length > 0 ? { fileChanges } : {}),
+        ...(sandboxViolations.length > 0 ? { sandboxViolations } : {}),
       };
       const body = (head: string): ToolOutput["content"] => [
         { kind: "text", text: [head, ...notes].filter((s) => s !== "").join("\n") },
@@ -434,6 +513,11 @@ export function createBashTool(opts: {
       clearTimeout(timer);
       ctx.signal.removeEventListener("abort", onAbort);
       await ctx.platform.killTree(group);
+      for (const cleanup of cleanups) {
+        try {
+          await cleanup();
+        } catch {}
+      }
       if (ps === undefined && ctx.platform.os === "win32" && abort.signal.aborted) {
         await killMsysLeftovers(ctx, shell.path, runMarker, env);
       }
@@ -476,16 +560,17 @@ export function createBashTool(opts: {
     parallelSafe: false,
     mutates: "system",
     describeAction(input, ctx) {
-      const unsandboxedRetry = input.dangerouslyDisableSandbox === true;
       const shell = ps === undefined ? "bash" : "powershell";
-      const sandboxed = ctx.policy?.sandboxed === true && !unsandboxedRetry;
+      const tool = ps === undefined ? ("Bash" as const) : ("PowerShell" as const);
+      const routing = sandboxRouting(ctx, input.command, tool, input.dangerouslyDisableSandbox === true);
+      const sandboxed = routing.sandboxed && sandboxHealthy(ctx);
       return {
         kind: "shell",
         shell,
         command: input.command,
         sandboxed,
-        unsandboxedRetry,
-        effects: shellEffects(ctx, shell, input.command, unsandboxedRetry),
+        unsandboxedRetry: input.dangerouslyDisableSandbox === true,
+        effects: shellEffects(ctx, shell, input.command, !routing.sandboxed),
       };
     },
     run,

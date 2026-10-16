@@ -1,7 +1,7 @@
 // Tool contracts (interfaces §4). Services a tool needs (snapshots, sandbox, interact, model) are added by the first tool that uses them.
 import type { z } from "zod";
 import type { Platform } from "../platform/index.ts";
-import type { Effects, Env, RuleSet, ShellParsers } from "../policy/index.ts";
+import type { Effects, Env, RuleSet, SandboxService, ShellParsers } from "../policy/index.ts";
 import type { AbsPath, DocumentPart, ImagePart, PermissionMode, Settings, TextPart } from "../schema/index.ts";
 import type { Snapshotter } from "../store/index.ts";
 import type { ReadResultsIndex } from "./read-results.ts";
@@ -96,6 +96,8 @@ export interface ToolContext {
   env: Readonly<Record<string, string | undefined>>;
   /** Policy state for `describeAction` and the silent read; absent in unit tests without policy (M1-23c). */
   policy?: ToolPolicyState;
+  /** Sandbox service (permissions §7): health-gated wrapping, violations, session temp dir. */
+  sandbox?: SandboxService;
   /** The hard-linked keep-link approval (tools §2.7); set by the loop after the `hard-linked` prompt. */
   keepHardLink?: boolean;
   /** User interaction (tools §4, §11); absent in unit tests that never prompt. */

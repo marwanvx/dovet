@@ -1,6 +1,4 @@
-// Sandbox initialization (permissions §7.1, ADR-6): sandbox-runtime gets every helper by explicit path into the
-// install directory's `libexec/srt/`, so nothing is looked up relative to a `node_modules` that a compiled binary
-// doesn't have (SPIKE-16).
+// Sandbox init (permissions §7.1, ADR-6, SPIKE-16).
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { SandboxManager, type SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
@@ -34,7 +32,13 @@ export type SandboxStartOptions = {
   rgPath?: string | undefined;
   allowWrite: string[];
   denyRead?: string[];
+  denyWrite?: string[];
   allowedDomains?: string[];
+  deniedDomains?: string[];
+  credentials?: SandboxRuntimeConfig["credentials"];
+  allowLocalBinding?: boolean;
+  enableWeakerNestedSandbox?: boolean;
+  strictAllowlist?: boolean;
 };
 
 /**
@@ -49,8 +53,21 @@ export function sandboxRuntimeConfig(opts: SandboxStartOptions): SandboxRuntimeC
   }
   const helper = (name: string) => join(opts.srtDir, name);
   return {
-    network: { allowedDomains: opts.allowedDomains ?? [], deniedDomains: [] },
-    filesystem: { denyRead: opts.denyRead ?? [], allowWrite: opts.allowWrite, denyWrite: [] },
+    network: {
+      allowedDomains: opts.allowedDomains ?? [],
+      deniedDomains: opts.deniedDomains ?? [],
+      ...(opts.strictAllowlist === undefined ? {} : { strictAllowlist: opts.strictAllowlist }),
+      ...(opts.allowLocalBinding === undefined ? {} : { allowLocalBinding: opts.allowLocalBinding }),
+    },
+    filesystem: {
+      denyRead: opts.denyRead ?? [],
+      allowWrite: opts.allowWrite,
+      denyWrite: opts.denyWrite ?? [],
+    },
+    ...(opts.credentials === undefined ? {} : { credentials: opts.credentials }),
+    ...(opts.enableWeakerNestedSandbox === undefined
+      ? {}
+      : { enableWeakerNestedSandbox: opts.enableWeakerNestedSandbox }),
     javaAgentJarPath: helper(SRT_HELPER_FILES.javaAgent),
     ...(opts.rgPath ? { ripgrep: { command: opts.rgPath } } : {}),
     ...(opts.os === "linux" ? { seccomp: { applyPath: helper(SRT_HELPER_FILES.seccomp) } } : {}),

@@ -330,6 +330,8 @@ function shellDefault(
     subs.every((s) => s.readOnly === true || fsCommand(s) || readOnlyAfterRedirects(s))
   )
     return done("allow", "file edits inside the working directories", "the acceptEdits mode");
+  if (!a.sandboxed)
+    return done("ask", `unsandboxed command: ${why} (unsandboxed execution, §7.5)`, "the Manual mode default");
   return done("ask", why, "the Manual mode default");
 }
 
@@ -362,7 +364,15 @@ export function decide(req: Request, st: State): Decision {
     const countdown = asks.some((f) => f.countdown === true);
     return out("ask", first.detail, first.by, countdown ? { countdown: true } : {});
   }
-  if (match?.behavior === "ask") return out("ask", `ask rule ${match.rule}`, `rule ${match.rule}`, { rule: match });
+  if (match?.behavior === "ask") {
+    const bareSkipped =
+      a.kind === "shell" &&
+      a.sandboxed &&
+      st.sandboxAutoAllow === true &&
+      st.mode !== "plan" &&
+      TOOL_WIDE.test(match.rule);
+    if (!bareSkipped) return out("ask", `ask rule ${match.rule}`, `rule ${match.rule}`, { rule: match });
+  }
 
   switch (a.kind) {
     case "interaction":

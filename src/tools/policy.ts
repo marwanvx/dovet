@@ -1,7 +1,7 @@
 // Policy helpers for built-in tools (M1-23c): `describeAction` effects from `effectsOf`, the silent read.
 
 import type { Request, State } from "../policy/index.ts";
-import { analyzeShell, decide, effectsOf, expandGlob, isDirectory } from "../policy/index.ts";
+import { analyzeShell, decide, effectsOf, expandGlob, isDirectory, isExcludedCommand } from "../policy/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import type { Effects, ToolContext, ToolPolicyState } from "./types.ts";
 
@@ -56,7 +56,18 @@ export function shellEffects(
   unsandboxedRetry: boolean,
 ): Effects {
   const policy = ctx.policy;
-  const sandboxed = policy?.sandboxed === true && !unsandboxedRetry;
+  const allowUnsandboxed = ctx.settings.sandbox?.allowUnsandboxedCommands !== false;
+  const tool = shell === "bash" ? ("Bash" as const) : ("PowerShell" as const);
+  const excluded = isExcludedCommand(command, ctx.settings.sandbox?.excludedCommands ?? [], tool) && allowUnsandboxed;
+  const retry = unsandboxedRetry && allowUnsandboxed;
+  const svc = ctx.sandbox;
+  const healthy =
+    ctx.settings.sandbox?.enabled === false
+      ? false
+      : svc === undefined
+        ? policy?.sandboxed === true
+        : svc.state === "on" || svc.state === "weak" || svc.state === "experimental";
+  const sandboxed = healthy && !retry && !excluded;
   if (policy === undefined || policy.parsers === undefined) return { ...FALLBACK_SHELL, sandboxed };
   try {
     const analysis = analyzeShell(policy.parsers, shell, command, {
