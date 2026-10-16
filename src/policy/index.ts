@@ -20,8 +20,26 @@ export type {
   Subcommand,
 } from "./rules/index.ts";
 export { checkExamples, evaluateRules, loadRules, ruleTexts, splitCommand } from "./rules/index.ts";
+export {
+  expandProtectedSymlinks,
+  isExcludedCommand,
+  normalizeHost,
+  normalizeSandboxPath,
+  sandboxProtectedDenyWrite,
+  worktreeCommonDenies,
+} from "./sandbox/hygiene.ts";
 export type { SandboxOs, SandboxStartOptions, SrtHelperFile } from "./sandbox/init.ts";
 export { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor, startSandbox } from "./sandbox/init.ts";
+export type { SandboxBackend, SandboxService, SandboxState, SandboxWrapped } from "./sandbox/service.ts";
+export {
+  backendFor,
+  createSandboxService,
+  DEFAULT_ALLOWED_DOMAINS,
+  DEFAULT_CREDENTIAL_DENY_FILES,
+  fakeSandboxService,
+  sandboxConfigFor,
+  sandboxStatus,
+} from "./sandbox/service.ts";
 export type { Analysis, AnalyzeOptions, Operand } from "./shell-parse/analyze.ts";
 export { analyzeShell, powershellExitOneIsBenign } from "./shell-parse/analyze.ts";
 export { expandGlob, isDirectory } from "./shell-parse/glob.ts";
