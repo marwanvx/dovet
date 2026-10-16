@@ -1,6 +1,7 @@
 // Sandbox configuration hygiene (permissions §7.5b).
 import { lstat, readlink } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname as nativeDirname, resolve as nativeResolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path/posix";
 import {
   canonicalCmdlet,
   needsExactRule,
@@ -12,9 +13,11 @@ import {
 
 /** Expand `~`, strip trailing slashes, accept absolute paths with or without a `//` prefix. */
 export function normalizeSandboxPath(raw: string, home: string): string {
-  let p = raw.trim();
-  if (p === "~") return home;
-  if (p.startsWith("~/") || p.startsWith("~\\")) p = join(home, p.slice(2));
+  // Sandbox paths are POSIX form on every OS (permissions §3.3): normalize Windows `\` first.
+  let p = raw.trim().replace(/\\/g, "/");
+  const posixHome = home.replace(/\\/g, "/");
+  if (p === "~") return posixHome;
+  if (p.startsWith("~/")) p = join(posixHome, p.slice(2));
   if (p.startsWith("/")) p = `/${p.replace(/^\/+/, "")}`;
   if (p.length > 1 && (p.endsWith("/") || p.endsWith("\\"))) p = p.replace(/[/\\]+$/, "");
   if (p.length > 3 && /^[A-Za-z]:[/\\]$/.test(p)) p = p.slice(0, 3).replace(/[/\\]$/, "");
@@ -60,7 +63,7 @@ const gitCloneWithBranch = (argv: string[]): string[] => {
   const name = base[0]?.split("/").pop()?.toLowerCase();
   if (name !== "git" && name !== "git.exe") return argv;
   const out = [...argv];
-  const cloneIdx = out.findIndex((a) => a === "clone");
+  const cloneIdx = out.indexOf("clone");
   if (cloneIdx < 0) return argv;
   for (let i = cloneIdx + 1; i < out.length; i++) {
     if (out[i] === "-b" && i + 1 < out.length) out[i] = "--branch";
@@ -115,6 +118,10 @@ export function sandboxProtectedDenyWrite(
   configDir: string,
   dataDir: string,
 ): string[] {
+  // Config paths are POSIX form on every OS (permissions §3.3).
+  const wds = workingDirs.map((w) => w.replace(/\\/g, "/"));
+  const cfg = configDir.replace(/\\/g, "/");
+  const data = dataDir.replace(/\\/g, "/");
   const out = new Set<string>();
   const parentsOf = (dir: string): string[] => {
     const out: string[] = [];
@@ -127,7 +134,7 @@ export function sandboxProtectedDenyWrite(
     }
     return out;
   };
-  for (const wd of workingDirs) {
+  for (const wd of wds) {
     for (const parent of parentsOf(wd)) {
       out.add(join(parent, ".dovet"));
       out.add(join(parent, ".dovet", "settings.json"));
@@ -146,14 +153,15 @@ export function sandboxProtectedDenyWrite(
     out.add(join(wd, "objects"));
     out.add(join(wd, "refs"));
   }
-  if (isAbsolute(configDir)) out.add(configDir);
-  if (isAbsolute(dataDir)) out.add(dataDir);
+  if (isAbsolute(cfg)) out.add(cfg);
+  if (isAbsolute(data)) out.add(data);
   return [...out];
 }
 
 /** In a linked worktree, the common git dir's objects/refs/logs stay usable; only hooks/ and config are denied. */
 export function worktreeCommonDenies(commonDir: string): string[] {
-  return [join(commonDir, "hooks"), join(commonDir, "config")];
+  const posix = commonDir.replace(/\\/g, "/");
+  return [join(posix, "hooks"), join(posix, "config")];
 }
 
 /** Deny both the link and its target; missing paths are dropped and never stop the sandbox from starting. */
@@ -163,7 +171,9 @@ export async function expandProtectedSymlinks(paths: readonly string[]): Promise
     try {
       const st = await lstat(p);
       if (st.isSymbolicLink()) {
-        const target = resolve(dirname(p), await readlink(p));
+        // Native fs semantics: resolve the target the same way the OS does so the
+        // returned string matches what callers passed in on every platform.
+        const target = nativeResolve(nativeDirname(p), await readlink(p));
         out.add(p);
         out.add(target);
       }

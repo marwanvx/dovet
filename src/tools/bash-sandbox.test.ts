@@ -29,6 +29,9 @@ const sandboxedOf = (
   return d.kind === "shell" && d.sandboxed === true;
 };
 
+// Sandbox config paths are POSIX form on every OS (permissions §3.3); native tmpdirs need the same normalization.
+const px = (p: string): string => p.replace(/\\/g, "/");
+
 let parsers: ShellParsers;
 const ready = loadShellParsers().then((p) => {
   parsers = p;
@@ -261,8 +264,8 @@ describe("sandbox leaves no trace", () => {
       }) as never,
     });
     await svc.ready;
-    expect(captured).toContain(join(cwd, ".git", "hooks"));
-    expect(captured).toContain(join(cwd, ".git", "config"));
+    expect(captured).toContain(px(join(cwd, ".git", "hooks")));
+    expect(captured).toContain(px(join(cwd, ".git", "config")));
   });
 
   test("in a repo with extensions.worktreeConfig git log works and the common dir stays protected", async () => {
@@ -333,8 +336,8 @@ describe("sandbox leaves no trace", () => {
     });
     await svc.ready;
     expect(svc.state).toBe("on");
-    expect(captured.denyWrite ?? []).toContain(join(realCommon, "hooks"));
-    expect(captured.denyWrite ?? []).toContain(join(realCommon, "config"));
+    expect(captured.denyWrite ?? []).toContain(px(join(realCommon, "hooks")));
+    expect(captured.denyWrite ?? []).toContain(px(join(realCommon, "config")));
   });
 });
 
