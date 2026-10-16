@@ -1,14 +1,11 @@
 // The redaction set (permissions §8, §4.7): secret-named env vars and workspace `.env*` values.
-// ASSUMPTION (QUESTIONS Q60): only secret-named variables join (a bare `PORT=3000` is not a secret),
-// values under 8 characters stay (they would match ordinary words), and the scan covers the working
-// directories' `.env` and `.env.*` files except templates, re-read when files change.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnvFile } from "./dotenv.ts";
 
 export type NamedSecret = { name: string; value: string };
 
-/** Values shorter than this are never redacted by value: they would match ordinary words. */
+/** Values shorter than this never redact by value (ASSUMPTION QUESTIONS Q60): they match ordinary words. */
 export const MIN_SECRET_VALUE_LENGTH = 8;
 
 const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;

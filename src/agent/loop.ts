@@ -379,6 +379,7 @@ export async function executeTools(
   let prompted = 0;
 
   const capBytes = deps.capBytes ?? REQUEST_CAP_BYTES;
+  const secrets = deps.secrets?.() ?? [];
 
   const applySizeGuard = (text: string): string => {
     const bytes = Buffer.byteLength(text, "utf8");
@@ -391,7 +392,6 @@ export async function executeTools(
     callId: string,
     name: string,
   ): Promise<ToolOutput> => {
-    const secrets = deps.secrets?.() ?? [];
     const early = deps.earlyResults?.get(callId);
     if (early !== undefined && deps.signal?.aborted !== true) return guardOutput(early, name, secrets);
     if (deps.signal?.aborted === true)
@@ -401,7 +401,11 @@ export async function executeTools(
     let text = guarded.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
     const capped = applySizeGuard(text);
     if (capped !== text) {
-      return { status: "error", content: [{ kind: "text", text: capped }] };
+      return {
+        status: "error",
+        content: [{ kind: "text", text: capped }],
+        ...(guarded.meta === undefined ? {} : { meta: guarded.meta }),
+      };
     }
     if (text.length > 30_000 && tool.limitsOwnOutput !== true) {
       const limited = await limitOutput(text, { dir: deps.offloadDir, id: callId.replace(/[^A-Za-z0-9_-]/g, "_") });
@@ -572,7 +576,8 @@ export async function executeTools(
   }
 
   const ordered = calls.map((c) => results.get(c.id)).filter((r): r is ExecutedResult => r !== undefined);
-  return { results: ordered, stopped, prompted };
+  // Denied, invalid and stopped results echo model-controlled text too, so every result passes the guard.
+  return { results: ordered.map((r) => ({ ...r, output: guardOutput(r.output, r.name, secrets) })), stopped, prompted };
 }
 
 export function modelRequestBody(call: { messages: unknown; tools: unknown }): string {

@@ -1,5 +1,4 @@
-// Output redaction (permissions §8): secret values, known key formats and URL passwords become
-// `[REDACTED:<name>]` in tool results before they reach the model or the log. Not a security boundary.
+// Output redaction (permissions §8): secret values, key formats and URL passwords in tool results.
 import { MIN_SECRET_VALUE_LENGTH, type NamedSecret } from "./secrets.ts";
 
 const MARKER = "[REDACTED:";

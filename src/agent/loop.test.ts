@@ -763,4 +763,30 @@ describe("tool-result output guard", () => {
     expect(textOf(output)).toBe("متن فارسی با نیم‌فاصله and 👨‍👩‍👧‍👦");
     expect(output?.meta?.effects ?? []).toEqual([]);
   });
+
+  // spec: AC-PERM-30
+  test("denied results pass through the output guard too", async () => {
+    const registry = createToolRegistry([toolDef("Bash", true)]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    try {
+      const secret = "rk-live-example-0001-fakevalue";
+      const calls = parseToolCalls(storedParts([{ id: "a", name: "Bash", input: {} }]).parts);
+      const { results } = await executeTools(calls, {
+        registry,
+        decide: () => ({ behavior: "deny", reason: `no ${secret} here` }),
+        prompt: () => Promise.resolve({ allow: true, dontAskAgain: false }),
+        run: () => Promise.resolve({ status: "ok", content: [{ kind: "text", text: "unreached" }] }),
+        makeContext: () => base,
+        offloadDir: join(tmpdir(), "dovet-loop-off"),
+        secrets: () => [{ name: "STRIPE_SECRET_KEY", value: secret }],
+      });
+      const output = results[0]?.output;
+      const text = textOf(output);
+      expect(text).toContain("[REDACTED:STRIPE_SECRET_KEY]");
+      expect(text).not.toContain(secret);
+      expect(output?.meta?.effects ?? []).toEqual([]);
+    } finally {
+      await rm(base.session.cwd, { recursive: true, force: true });
+    }
+  });
 });

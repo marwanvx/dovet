@@ -1,5 +1,6 @@
 // Headless agent turn tests (tui Headless mode, agent-loop Turn state machine, event-log Resume, providers section 1).
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { fakePlatform, nvidiaAdapter, scriptedModel, sequentialIds, tempProject } from "../../test/helpers/index.ts";
@@ -8,7 +9,7 @@ import { createSdkAdapter } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import { ModelRequestData } from "../schema/index.ts";
 import type { LoadedSettings } from "../store/index.ts";
-import { openSession, readSession } from "../store/index.ts";
+import { openSession, readSession, sessionPaths } from "../store/index.ts";
 import type { ToolDefinition } from "../tools/index.ts";
 import { readTool } from "../tools/index.ts";
 import { exitCodeFor } from "./headless-output.ts";
@@ -1061,6 +1062,77 @@ describe("runHeadless", () => {
       expect(out.exit).toEqual({ kind: "usage" });
       expect(exitCodeFor(out.exit)).toBe(2);
       expect(out.result).toContain("--repair");
+    } finally {
+      await dir.dispose();
+    }
+  });
+});
+
+describe("output redaction", () => {
+  // spec: AC-PERM-30
+  test("workspace .env values, env secrets and key formats never reach the model or the log", async () => {
+    const dir = await tempProject({ ".env": "DB_PASSWORD=correct-horse-battery-9\n" });
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: {
+          NVIDIA_API_KEY: "nvapi-FAKE-KEY-0001",
+          STRIPE_SECRET_KEY: "rk-live-example-0001-fakevalue",
+          HOME: "/tmp",
+        },
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "read the config",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("R"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ toolCall: { id: "c1", name: "echo", input: { text: "go" } } }, { text: "done" }]),
+        toolDefs: [
+          echoTool(() => ({
+            status: "ok",
+            text: "db correct-horse-battery-9 stripe rk-live-example-0001-fakevalue key sk-ant-example-fake-key-000004 cred nvapi-FAKE-KEY-0001",
+          })),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const events = (await readSession(loc)).events.filter((e) => e.type === "tool.result");
+      expect(events.length).toBeGreaterThan(0);
+      const logged = JSON.stringify(events);
+      for (const s of [
+        "correct-horse-battery-9",
+        "rk-live-example-0001-fakevalue",
+        "sk-ant-example-fake-key-000004",
+        "nvapi-FAKE-KEY-0001",
+      ])
+        expect(logged, s).not.toContain(s);
+      for (const m of ["[REDACTED:DB_PASSWORD]", "[REDACTED:STRIPE_SECRET_KEY]", "[REDACTED:ANTHROPIC_KEY]"])
+        expect(logged, m).toContain(m);
+      // The credential ties with the env entry on length and is listed first, so this marker proves the
+      // credential arm of the redaction set is load-bearing.
+      expect(logged).toContain("[REDACTED:CREDENTIAL]");
+      const onDisk = await readFile(sessionPaths(loc).log, "utf8");
+      for (const s of [
+        "correct-horse-battery-9",
+        "rk-live-example-0001-fakevalue",
+        "sk-ant-example-fake-key-000004",
+        "nvapi-FAKE-KEY-0001",
+      ])
+        expect(onDisk, s).not.toContain(s);
     } finally {
       await dir.dispose();
     }

@@ -17,7 +17,22 @@ async function corpus(): Promise<
 // spec: AC-PERM-30
 describe("redaction corpus", () => {
   test("every corpus case redacts to exactly its expected text", async () => {
-    for (const c of await corpus()) {
+    const cases = await corpus();
+    for (const id of [
+      "key-name-no-value",
+      "json-in-shell-string",
+      "zero-width-in-key",
+      "zero-width-joiner-in-key",
+      "url-password-paren",
+      "url-password-quotes-bracket-amp",
+      "url-password-second-at",
+      "url-password-encoded-at",
+    ])
+      expect(
+        cases.some((c) => c.id === id),
+        id,
+      ).toBe(true);
+    for (const c of cases) {
       const secrets: NamedSecret[] = Object.entries(c.secrets).map(([name, value]) => ({ name, value }));
       expect(redactText(c.input, secrets), c.id).toBe(c.expected);
     }

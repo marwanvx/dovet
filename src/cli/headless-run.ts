@@ -235,7 +235,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   }
 
   // The output-redaction set (permissions §8, §4.7): the provider credential, secret-named env vars
-  // and workspace `.env*` values, re-read on every tool result so edited files are picked up.
+  // and workspace `.env*` values, re-read regularly so edited files are picked up.
   const dotEnvSecrets = createDotEnvSecrets([input.projectRoot]);
   const outputSecrets = (): NamedSecret[] => [
     { name: "CREDENTIAL", value: secretValue },
