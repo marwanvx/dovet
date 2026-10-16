@@ -30,6 +30,8 @@ export {
 } from "./sandbox/hygiene.ts";
 export type { SandboxOs, SandboxStartOptions, SrtHelperFile } from "./sandbox/init.ts";
 export { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor, startSandbox } from "./sandbox/init.ts";
+export type { MxcSupport } from "./sandbox/mxc.ts";
+export { checkMxcSupport, mxcConfigFor } from "./sandbox/mxc.ts";
 export {
   extractHosts,
   type HostAskMode,
@@ -50,6 +52,7 @@ export {
   sandboxConfigFor,
   sandboxStatus,
 } from "./sandbox/service.ts";
+export { selectWindowsBackend, windowsStatusText } from "./sandbox/windows.ts";
 export type { Analysis, AnalyzeOptions, Operand } from "./shell-parse/analyze.ts";
 export { analyzeShell, powershellExitOneIsBenign } from "./shell-parse/analyze.ts";
 export { expandGlob, isDirectory } from "./shell-parse/glob.ts";

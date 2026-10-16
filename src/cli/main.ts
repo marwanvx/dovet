@@ -222,6 +222,62 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   process.exitCode = exitCodeFor(out.exit);
 }
 
+async function runSandbox(argv: readonly string[]): Promise<void> {
+  const os = hostOs();
+  const { runSandboxCommand } = await import("./sandbox.ts");
+  const { backendFor, checkMxcSupport, selectWindowsBackend } = await import("../policy/index.ts");
+  const { libexecPath } = await import("../platform/index.ts");
+  let backend = backendFor(os);
+  let detail = "n/a";
+  let provisioned = false;
+  if (os === "win32") {
+    const mxc = await checkMxcSupport();
+    detail = mxc.detail;
+    try {
+      const { checkWindowsSandboxStatusAsync, resolveSrtWin } = await import("@anthropic-ai/sandbox-runtime");
+      const exe = realpathSync(process.execPath);
+      const srtDir = libexecPath(exe, os, "srt");
+      const { join } = await import("node:path");
+      const status = await checkWindowsSandboxStatusAsync({
+        srtWin: resolveSrtWin({ path: join(srtDir, "srt-win.exe") }),
+      });
+      provisioned = status.user.provisioned;
+    } catch {
+      provisioned = false;
+    }
+    const mxcSupported = mxc.supported;
+    backend = selectWindowsBackend({ mxcSupported, srtInstalled: provisioned }).backend;
+  }
+  // ASSUMPTION (QUESTIONS Q59): backend mxc reports but stays off until its execution lands, so the
+  // status never claims an experimental sandbox while commands run unsandboxed.
+  const state = backend === "none" || backend === "mxc" ? "off" : os === "win32" ? "experimental" : "on";
+  const { installWindowsSandboxAsync, resolveSrtWin, uninstallWindowsSandbox } = await import(
+    "@anthropic-ai/sandbox-runtime"
+  );
+  const { join } = await import("node:path");
+  const srtWin = (): { exe: string; prependArgs: readonly string[] } => {
+    const exe = realpathSync(process.execPath);
+    return resolveSrtWin({ path: join(libexecPath(exe, os, "srt"), "srt-win.exe") });
+  };
+  const out = await runSandboxCommand(argv.slice(1), {
+    os,
+    backend,
+    state,
+    check: async () => ({ provisioned, detail }),
+    install: async () => {
+      const r = await installWindowsSandboxAsync({ srtWin: srtWin() });
+      return r.cancelled === true ? { cancelled: true as const } : {};
+    },
+    uninstall: async () => {
+      const r = uninstallWindowsSandbox({ srtWin: srtWin() });
+      return r.cancelled === true ? { cancelled: true as const } : {};
+    },
+  });
+  if (out.exitCode === 0) process.stdout.write(out.output);
+  else process.stderr.write(out.output);
+  process.exitCode = out.exitCode;
+}
+
 const args = process.argv.slice(2);
 if (args.includes("-p") || args.includes("--print")) {
   try {
@@ -244,6 +300,16 @@ if (args.includes("-p") || args.includes("--print")) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
   }
+} else if (args[0] === "sandbox" && args.length === 2) {
+  try {
+    await runSandbox(args);
+  } catch (err) {
+    console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+} else if (args[0] === "sandbox") {
+  console.error("usage: dovet sandbox <install|uninstall|status>");
+  process.exitCode = 2;
 } else if (args[0] === "update") {
   console.error("usage: dovet update [--rollback]");
   process.exitCode = 2;
