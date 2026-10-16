@@ -301,6 +301,19 @@ export class SessionImpl implements Session {
       this.currentPlan = undefined;
       return { ok: true };
     }
+    if (cmd.name === "untaint") {
+      if (this.tainted.length === 0) return { ok: true, output: "Session is not tainted." };
+      if (cmd.args.trim() !== "confirm") {
+        return {
+          ok: false,
+          error: `Session is tainted by ${this.tainted.join(", ")}. Run /untaint confirm to clear it. This is logged.`,
+        };
+      }
+      const cleared = [...this.tainted];
+      this.tainted = [];
+      this.emit({ type: "notice", level: "info", text: `Session untainted (was: ${cleared.join(", ")}).` });
+      return { ok: true, output: `Session untainted (was: ${cleared.join(", ")}).` };
+    }
     return { ok: false, error: `Unknown command /${cmd.name}` };
   }
 

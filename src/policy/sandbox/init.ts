@@ -39,6 +39,8 @@ export type SandboxStartOptions = {
   allowLocalBinding?: boolean;
   enableWeakerNestedSandbox?: boolean;
   strictAllowlist?: boolean;
+  /** Proxy ask callback for hosts outside the allowlist (permissions §7.4); absent denies them. */
+  ask?: (params: { host: string; port: number | undefined }) => Promise<boolean>;
 };
 
 /**
@@ -80,6 +82,7 @@ export function sandboxRuntimeConfig(opts: SandboxStartOptions): SandboxRuntimeC
  * this once; the caller owns the result and ends it with `SandboxManager.reset()`.
  */
 export async function startSandbox(opts: SandboxStartOptions): Promise<typeof SandboxManager> {
-  await SandboxManager.initialize(sandboxRuntimeConfig(opts));
+  const { ask, ...rest } = opts;
+  await SandboxManager.initialize(sandboxRuntimeConfig(rest), ask);
   return SandboxManager;
 }

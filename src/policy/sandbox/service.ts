@@ -3,7 +3,7 @@ import { lstat, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { SandboxManager as ManagerType } from "@anthropic-ai/sandbox-runtime";
-import type { Settings } from "../../schema/index.ts";
+import type { PermissionMode, Settings } from "../../schema/index.ts";
 import {
   expandProtectedSymlinks,
   normalizeHost,
@@ -12,6 +12,9 @@ import {
   worktreeCommonDenies,
 } from "./hygiene.ts";
 import { type SandboxOs, startSandbox } from "./init.ts";
+import { DEFAULT_ALLOWED_DOMAINS, makeHostAsker } from "./network.ts";
+
+export { DEFAULT_ALLOWED_DOMAINS };
 
 export type SandboxState = "on" | "weak" | "experimental" | "off";
 export type SandboxBackend = "bubblewrap" | "seatbelt" | "mxc" | "srt-windows" | "none";
@@ -37,21 +40,6 @@ export interface SandboxService {
   violations(since: number): string[];
   globWarnings(): string[];
 }
-
-export const DEFAULT_ALLOWED_DOMAINS = [
-  "registry.npmjs.org",
-  "registry.yarnpkg.com",
-  "pypi.org",
-  "files.pythonhosted.org",
-  "crates.io",
-  "static.crates.io",
-  "index.crates.io",
-  "proxy.golang.org",
-  "sum.golang.org",
-  "rubygems.org",
-  "repo.maven.apache.org",
-  "api.nuget.org",
-];
 
 export const DEFAULT_CREDENTIAL_DENY_FILES = [
   "~/.ssh",
@@ -95,6 +83,10 @@ export type SandboxServiceOptions = {
   home: string;
   tmpBase?: string;
   starter?: (opts: Parameters<typeof startSandbox>[0]) => Promise<typeof ManagerType>;
+  /** Current permission mode for the proxy ask callback; defaults to the settings default (permissions §7.4). */
+  getMode?: () => PermissionMode;
+  /** Prompt for a new host; the proxy waits while it runs. Absent denies new hosts. */
+  onAskHost?: (host: string) => Promise<boolean>;
 };
 
 export function sandboxConfigFor(opts: SandboxServiceOptions, sessionTmp: string): Parameters<typeof startSandbox>[0] {
@@ -227,7 +219,20 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
           const r = normalizeHost(h);
           if (!r.ok) rejectedHosts.push(h);
         }
-        manager = await starter({ ...base, denyWrite: expandedWrite, denyRead: expandedRead });
+        const ask = makeHostAsker({
+          mode: () =>
+            (opts.getMode?.() ?? opts.settings.permissions?.defaultMode ?? "default") as
+              | "default"
+              | "acceptEdits"
+              | "plan"
+              | "dontAsk"
+              | "bypassPermissions",
+          allowedDomains: base.allowedDomains ?? [],
+          deniedDomains: base.deniedDomains ?? [],
+          strictAllowlist: base.strictAllowlist === true,
+          ask: (host) => opts.onAskHost?.(host) ?? Promise.resolve(false),
+        });
+        manager = await starter({ ...base, denyWrite: expandedWrite, denyRead: expandedRead, ask });
         const deps = manager.checkDependencies();
         try {
           warnings = manager.getLinuxGlobPatternWarnings() ?? [];
