@@ -130,9 +130,9 @@ describe("AC-PERM-27 taint triggers and effects", () => {
   });
   test("while tainted there is no don't-ask-again for sensitive reads or new hosts", () => {
     const tainted = state("default", {}, { tainted: true, taintSource: "WebFetch: example.com" });
-    const sensitiveReq = { tool: "Read", action: { kind: "read" as const, paths: [join(root, ".env")] } } as const;
+    const sensitiveReq = { tool: "Read", action: { kind: "read" as const, paths: [join(root, ".env")] } };
     expect(suggestGrant(sensitiveReq, decide(sensitiveReq, tainted), tainted)).toBeUndefined();
-    const netReq = { tool: "WebFetch", action: { kind: "network" as const, host: "example.com" } } as const;
+    const netReq = { tool: "WebFetch", action: { kind: "network" as const, host: "example.com" } };
     expect(suggestGrant(netReq, decide(netReq, tainted), tainted)).toBeUndefined();
   });
 });
