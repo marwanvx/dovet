@@ -430,7 +430,7 @@ describe.skipIf(process.platform === "win32")("Bash: process lifecycle", () => {
     const daemon = (n: string, argv: string): string =>
       `perl -MPOSIX -e 'fork and exit; POSIX::setsid(); open F, ">", "${r.cwd}/${n}.pid"; print F $$; close F; exec ${argv}' &`;
     const out = await bash(r, {
-      command: `${daemon("a", '"sleep", "1001"')}\n${daemon("b", '"sleep", "1002"')}\nsleep 0.3`,
+      command: `${daemon("a", '"sleep", "1001"')}\n${daemon("b", '"sleep", "1002"')}\nfor i in $(seq 1 30); do test -f "${r.cwd}/a.pid" && test -f "${r.cwd}/b.pid" && break; sleep 0.1; done\nsleep 1`,
     });
     expect(out.status).toBe("ok");
     expect(text(out)).toContain("Stopped 2 background process(es)");
