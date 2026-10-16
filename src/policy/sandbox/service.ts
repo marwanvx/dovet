@@ -65,10 +65,10 @@ export function sandboxStatus(state: SandboxState, backend: SandboxBackend): str
 
 const quote = (s: string): string => `'${s.replaceAll("'", `'\\''`)}'`;
 
-export function backendFor(os: SandboxOs): SandboxBackend {
+export function backendFor(os: SandboxOs, windowsBackend: SandboxBackend = "none"): SandboxBackend {
   if (os === "linux") return "bubblewrap";
   if (os === "darwin") return "seatbelt";
-  return "none";
+  return windowsBackend;
 }
 
 export type SandboxServiceOptions = {
@@ -82,6 +82,8 @@ export type SandboxServiceOptions = {
   dataDir: string;
   home: string;
   tmpBase?: string;
+  /** Windows only: which native backend to use (permissions §7.6). Defaults to "none" (off). */
+  windowsBackend?: SandboxBackend | undefined;
   starter?: (opts: Parameters<typeof startSandbox>[0]) => Promise<typeof ManagerType>;
   /** Current permission mode for the proxy ask callback; defaults to the settings default (permissions §7.4). */
   getMode?: () => PermissionMode;
@@ -183,7 +185,12 @@ async function worktreeDenies(workingDirs: readonly string[]): Promise<string[]>
 }
 
 export function createSandboxService(opts: SandboxServiceOptions): SandboxService {
-  const backend = backendFor(opts.os);
+  // ASSUMPTION (QUESTIONS Q59): native Windows backends stay "experimental" until the escape suite
+  // passes; MXC execution lands after the proxy/PTY story is verified, so backend "mxc" reports
+  // without auto-allowing (state stays off) until then.
+  const backend = opts.os === "win32" ? (opts.windowsBackend ?? "none") : backendFor(opts.os);
+  const windowsMxcPending = opts.os === "win32" && backend === "mxc";
+  const winSrt = opts.os === "win32" && backend === "srt-windows";
   const weak = opts.settings.sandbox?.enableWeakerNestedSandbox === true;
   let state: SandboxState = "off";
   const tmp = join(opts.tmpBase ?? tmpdir(), `dovet-${opts.sessionId}`);
@@ -197,7 +204,9 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
   const ready = new Promise<void>((resolve) => {
     readyResolve = resolve;
   });
-  if (opts.os === "win32" || opts.settings.sandbox?.enabled === false) {
+  if (opts.settings.sandbox?.enabled === false || windowsMxcPending) {
+    readyResolve();
+  } else if (opts.os === "win32" && !winSrt) {
     readyResolve();
   } else {
     void (async () => {
@@ -241,6 +250,8 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
         }
         if (deps.errors.length > 0) {
           state = "off";
+        } else if (opts.os === "win32") {
+          state = "experimental";
         } else {
           state = weak ? "weak" : "on";
         }
@@ -269,15 +280,47 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
       const union = [...new Set([...sessionDenyWrite, ...expanded])];
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const commandText = cmd.argv.map(quote).join(" ");
-      const wrapped = await manager.wrapWithSandbox(
-        commandText,
-        undefined,
-        { filesystem: { allowWrite: sessionAllowWrite, denyRead: sessionDenyRead, denyWrite: union } },
-        undefined,
-        {
-          commandId: id,
-        },
-      );
+      const custom = {
+        filesystem: { allowWrite: sessionAllowWrite, denyRead: sessionDenyRead, denyWrite: union },
+      };
+      if (opts.os === "win32") {
+        const runner = (
+          manager as unknown as {
+            wrapWithSandboxArgv?: (
+              command: string,
+              binShell: unknown,
+              cfg: unknown,
+              signal: unknown,
+              cwd: string,
+              options: { commandId: string },
+            ) => Promise<{ argv: string[]; env: Record<string, string> }>;
+          }
+        ).wrapWithSandboxArgv;
+        if (typeof runner !== "function") throw new Error("the Windows sandbox backend is unavailable");
+        // srt-win exec exposes per-exec denies only: session-level grants from initialize() still
+        // apply, but per-exec allowRead/allowWrite throw (sandbox-runtime 0.0.79).
+        const out = await runner.call(
+          manager,
+          commandText,
+          undefined,
+          { filesystem: { denyRead: sessionDenyRead, denyWrite: union } },
+          undefined,
+          cmd.cwd,
+          {
+            commandId: id,
+          },
+        );
+        return {
+          argv: out.argv,
+          env: out.env,
+          cleanup: async (): Promise<void> => {
+            manager?.cleanupAfterCommand();
+          },
+        };
+      }
+      const wrapped = await manager.wrapWithSandbox(commandText, undefined, custom, undefined, {
+        commandId: id,
+      });
       return {
         argv: ["/bin/sh", "-c", wrapped],
         env: cmd.env,
