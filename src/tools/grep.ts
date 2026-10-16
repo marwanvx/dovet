@@ -196,7 +196,8 @@ export function createGrepTool(opts: { limits?: Partial<RgLimits> } = {}): ToolD
   function render(input: GrepInput, result: RgRun, partial: boolean, notes: string[]): ToolOutput {
     const hidden = { n: 0 };
     const reply = (body: string, extra: string[] = []): ToolOutput => {
-      const text = [body, ...extra, ...notes].filter((p) => p !== "").join("\n");
+      const all = hidden.n > 0 ? [...notes, `[${hidden.n} hidden characters were removed from these results.]`] : notes;
+      const text = [body, ...extra, ...all].filter((p) => p !== "").join("\n");
       return {
         status: "ok",
         content: [{ kind: "text", text }],

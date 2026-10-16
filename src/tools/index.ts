@@ -6,6 +6,7 @@ export { collectOutput } from "./child-output.ts";
 export { createEditTool, editTool } from "./edit.ts";
 export { createGlobTool, globTool } from "./glob.ts";
 export { createGrepTool, grepTool } from "./grep.ts";
+export { stripHidden } from "./hidden.ts";
 export { limitOutput, type OffloadTarget, OUTPUT_LIMIT } from "./output.ts";
 export {
   createEnterPlanModeTool,

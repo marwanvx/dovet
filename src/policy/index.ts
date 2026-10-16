@@ -5,6 +5,15 @@ export type { Action, Decision, Env, Finding, FindingKind, Request, State } from
 export { decide, exampleDecider, planExitChoices } from "./decide/index.ts";
 export type { Effects, Grant, RuleSetInput } from "./grants/index.ts";
 export { effectsOf, ruleSetFromSettings, saveGrant, suggestGrant } from "./grants/index.ts";
+export { parseEnvFile } from "./redaction/dotenv.ts";
+export { redactText } from "./redaction/redact.ts";
+export {
+  createDotEnvSecrets,
+  type DotEnvSecrets,
+  MIN_SECRET_VALUE_LENGTH,
+  type NamedSecret,
+  secretsFromEnv,
+} from "./redaction/secrets.ts";
 export type {
   Behavior,
   Example,

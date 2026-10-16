@@ -1,0 +1,29 @@
+{"id":"env-value","secrets":{"STRIPE_SECRET_KEY":"rk-live-example-0001-fakevalue"},"input":"charge with rk-live-example-0001-fakevalue now","expected":"charge with [REDACTED:STRIPE_SECRET_KEY] now"}
+{"id":"dotenv-value","secrets":{"DB_PASSWORD":"correct-horse-battery-9"},"input":"postgres://app:correct-horse-battery-9@db.internal:5432/app","expected":"postgres://app:[REDACTED:DB_PASSWORD]@db.internal:5432/app"}
+{"id":"key-name-no-value","secrets":{},"input":"export GITHUB_TOKEN=\nempty AKIA and a bare sk-ant- prefix","expected":"export GITHUB_TOKEN=\nempty AKIA and a bare sk-ant- prefix"}
+{"id":"json-in-shell-string","secrets":{},"input":"export CONFIG='{\"api_key\": \"sk-ant-example-fake-key-000001\"}'","expected":"export CONFIG='{\"api_key\": \"[REDACTED:ANTHROPIC_KEY]\"}'"}
+{"id":"zero-width-in-key","secrets":{},"input":"leaked sk-​ant-example-fake-key-000002 here","expected":"leaked [REDACTED:ANTHROPIC_KEY] here"}
+{"id":"zero-width-joiner-in-key","secrets":{},"input":"leaked sk-‌ant-example-fake-key-000003 here","expected":"leaked [REDACTED:ANTHROPIC_KEY] here"}
+{"id":"url-password-paren","secrets":{},"input":"fetch https://deploy:s3cr)t@example.com/data","expected":"fetch https://deploy:[REDACTED:URL_PASSWORD]@example.com/data"}
+{"id":"url-password-quotes-bracket-amp","secrets":{},"input":"fetch \"https://deploy:p\"a]ss&x@example.com/data\"","expected":"fetch \"https://deploy:[REDACTED:URL_PASSWORD]@example.com/data\""}
+{"id":"url-password-second-at","secrets":{},"input":"fetch https://deploy:p@ss@example.com/data","expected":"fetch https://deploy:[REDACTED:URL_PASSWORD]@example.com/data"}
+{"id":"url-password-encoded-at","secrets":{},"input":"fetch https://deploy:p%40ss@example.com/data","expected":"fetch https://deploy:[REDACTED:URL_PASSWORD]@example.com/data"}
+{"id":"url-port-not-password","secrets":{},"input":"fetch https://example.com:8080/data@v2","expected":"fetch https://example.com:8080/data@v2"}
+{"id":"url-at-in-path","secrets":{},"input":"fetch https://example.com/data@sight","expected":"fetch https://example.com/data@sight"}
+{"id":"anthropic-key","secrets":{},"input":"key=sk-ant-example-fake-key-000004","expected":"key=[REDACTED:ANTHROPIC_KEY]"}
+{"id":"openrouter-key","secrets":{},"input":"key=sk-or-example-fake-key-000001","expected":"key=[REDACTED:OPENROUTER_KEY]"}
+{"id":"openai-key","secrets":{},"input":"key=sk-example-fake-openai-key-000001","expected":"key=[REDACTED:OPENAI_KEY]"}
+{"id":"google-key","secrets":{},"input":"key=AIzaExampleFakeGoogleKey00000000001","expected":"key=[REDACTED:GOOGLE_API_KEY]"}
+{"id":"github-token","secrets":{},"input":"token ghp_examplefake0000000000000000000001","expected":"token [REDACTED:GITHUB_TOKEN]"}
+{"id":"github-oauth-token","secrets":{},"input":"token gho_examplefake0000000000000000000001","expected":"token [REDACTED:GITHUB_TOKEN]"}
+{"id":"github-fine-grained-pat","secrets":{},"input":"token github_pat_examplefake0000000000000000000000_00000001","expected":"token [REDACTED:GITHUB_TOKEN]"}
+{"id":"gitlab-token","secrets":{},"input":"token glpat-examplefake0000000001","expected":"token [REDACTED:GITLAB_TOKEN]"}
+{"id":"slack-token","secrets":{},"input":"token xoxb-examplefake-0000000000001-abc","expected":"token [REDACTED:SLACK_TOKEN]"}
+{"id":"aws-access-key","secrets":{},"input":"id AKIAIOSFODNN7EXAMPLE","expected":"id [REDACTED:AWS_ACCESS_KEY_ID]"}
+{"id":"aws-session-key","secrets":{},"input":"id ASIAIOSFODNN7EXAMPLE","expected":"id [REDACTED:AWS_ACCESS_KEY_ID]"}
+{"id":"pem-key","secrets":{},"input":"key:\n-----BEGIN RSA PRIVATE KEY-----\nMIIBofakeexample0001\n-----END RSA PRIVATE KEY-----\ndone","expected":"key:\n[REDACTED:PRIVATE_KEY]\ndone"}
+{"id":"jwt","secrets":{},"input":"bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJVadQssw5c","expected":"bearer [REDACTED:JWT]"}
+{"id":"persian-zwnj-unchanged","secrets":{},"input":"متن فارسی با نیم‌فاصله می‌ماند","expected":"متن فارسی با نیم‌فاصله می‌ماند"}
+{"id":"emoji-zwj-unchanged","secrets":{},"input":"family 👨‍👩‍👧‍👦 stays","expected":"family 👨‍👩‍👧‍👦 stays"}
+{"id":"longest-secret-first","secrets":{"SHORT":"example-1","LONG":"xx-example-1-yy"},"input":"saw xx-example-1-yy today","expected":"saw [REDACTED:LONG] today"}
+{"id":"short-value-not-redacted","secrets":{"API_TOKEN":"abc123"},"input":"token abc123 here","expected":"token abc123 here"}

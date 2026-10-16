@@ -351,6 +351,29 @@ describe("sensitive files", () => {
     expect(sh("echo K=1 > .env", state("acceptEdits", { allow: ["Bash"] })).behavior).toBe("ask");
     expect(sh("echo K=1 > ~/.ssh/authorized_keys", state("default", { allow: ["Bash"] })).behavior).toBe("ask");
   });
+
+  // spec: AC-PERM-30
+  test("sensitive files reached through a loop glob ask", async () => {
+    expect(sh("for f in *.env; do cat $f; done", state("default")).behavior).toBe("ask");
+    const project = await tempProject({ ".env.local": "K=1" });
+    try {
+      const e: Env = {
+        os,
+        home: join(project.root, "..", "home"),
+        cwd: project.root,
+        workingDirs: [project.root],
+        canonicalize: (p) => canonicalizePath(p, project.root, os),
+        pid: 4242,
+        ppid: 4241,
+        selfNames: ["dovet", "bun"],
+      };
+      const hit = sh("for f in .env.*; do cat $f; done", state("default", {}, { env: e }));
+      expect(hit.behavior).toBe("ask");
+      expect(hit.findings.some((f) => f.kind === "sensitive")).toBe(true);
+    } finally {
+      await project.dispose();
+    }
+  });
 });
 
 describe("working directories and network paths", () => {
