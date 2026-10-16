@@ -3,7 +3,7 @@ import { access, constants, mkdir, readFile, rm, stat, writeFile } from "node:fs
 import { join } from "node:path";
 import { z } from "zod";
 import { isErrno, isWithin } from "../platform/index.ts";
-import { isExcludedCommand } from "../policy/index.ts";
+import { isExcludedCommand, taintSourceForCommand } from "../policy/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 import { sha256Of, sniffEncoding } from "./codec.ts";
@@ -448,6 +448,17 @@ export function createBashTool(opts: {
         );
       }
       const effects = await carryOver(ctx, cwdFile, notes);
+      const taint = sandboxed ? taintSourceForCommand(input.command) : undefined;
+      // Denied traffic never reached the host, so a blocked host does not taint.
+      if (
+        taint !== undefined &&
+        !sandboxViolations
+          .join("\n")
+          .toLowerCase()
+          .includes(taint.split(":")[1]?.trim() ?? "\0")
+      ) {
+        effects.push({ kind: "taint", source: taint });
+      }
       const fileChanges: NonNullable<NonNullable<ToolOutput["meta"]>["fileChanges"]> = [];
       if (before !== undefined) {
         try {

@@ -10,6 +10,7 @@ import {
   type Subcommand,
   strippedArgvs,
 } from "../rules/index.ts";
+import { shouldRefuseLocalHost } from "../sandbox/network.ts";
 import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
@@ -32,6 +33,8 @@ export type State = {
   env: Env;
   sandboxAutoAllow?: boolean;
   tainted?: boolean;
+  /** Where the taint came from, for the `session tainted by <source>` banner (permissions §10). */
+  taintSource?: string;
   /** Besides `main` and `master`. */
   defaultBranch?: string;
   blockReadsOutsideWorkingDirectories?: boolean;
@@ -130,14 +133,16 @@ function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false
   if (protectedHit !== undefined)
     out.push(finding("protected", `write to a protected path: ${t.path} (${protectedHit})`, "ask", { path: abs }));
   const sensitive = both.map((p) => sensitivePath(p, env)).find((p) => p !== undefined);
-  if (sensitive !== undefined)
+  if (sensitive !== undefined) {
+    const banner = st.tainted === true ? `session tainted by ${st.taintSource ?? "untrusted input"}: ` : "";
     out.push(
-      finding("sensitive", `sensitive file: ${t.path} (${sensitive})`, "ask", {
+      finding("sensitive", `${banner}sensitive file: ${t.path} (${sensitive})`, "ask", {
         path: abs,
         liftable: true,
-        lifted: sensitiveLifted,
+        lifted: st.tainted === true ? false : sensitiveLifted,
       }),
     );
+  }
   if (!insideWorkingDirs(env, forms) && !(sandboxedRead && t.access === "read")) {
     if (file && t.access === "read" && st.blockReadsOutsideWorkingDirectories === true)
       out.push(
@@ -301,6 +306,16 @@ function fsCommand(s: Subcommand): boolean {
   return FS_COMMANDS.has(name) && !(name === "sed" && sedEscapes(argv.slice(1)));
 }
 
+/** Command names that always need a prompt, even under sandbox auto-allow (permissions §4.0 item 1). */
+const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc"]);
+
+function hasDynamicName(subs: Subcommand[]): boolean {
+  return subs.some((s) => {
+    const name = program(unwrapCmd(s).argv[0] ?? "");
+    return DYNAMIC_NAMES.has(name);
+  });
+}
+
 function shellDefault(
   st: State,
   a: Extract<Action, { kind: "shell" }>,
@@ -322,7 +337,17 @@ function shellDefault(
   if (match?.behavior === "allow" && understood)
     return { ...done("allow", `allowed by ${match.rule}`, `rule ${match.rule}`), rule: match };
   const sandboxMode = st.mode === "default" || st.mode === "acceptEdits" || st.mode === "dontAsk";
-  if (st.sandboxAutoAllow === true && a.sandboxed && subs !== undefined && analysis.literalNames && sandboxMode)
+  const taintedHold = st.tainted === true;
+  const dynamicHold = subs !== undefined && hasDynamicName(subs);
+  if (
+    st.sandboxAutoAllow === true &&
+    a.sandboxed &&
+    subs !== undefined &&
+    analysis.literalNames &&
+    sandboxMode &&
+    !taintedHold &&
+    !dynamicHold
+  )
     return done("allow", "sandboxed command", "sandbox auto-allow (§7.3)");
   if (
     st.mode === "acceptEdits" &&
@@ -394,6 +419,8 @@ export function decide(req: Request, st: State): Decision {
     case "network":
       if (match?.behavior === "allow")
         return out("allow", `allowed by ${match.rule}`, `rule ${match.rule}`, { rule: match });
+      if (shouldRefuseLocalHost(a.host))
+        return out("deny", `refused local address: ${a.host}`, "the local-address rule (§7.4)");
       return bypass
         ? out("allow", "bypassPermissions mode", "the bypassPermissions mode")
         : out("ask", `new network host: ${a.host}`, "the network rule (§7.4)");

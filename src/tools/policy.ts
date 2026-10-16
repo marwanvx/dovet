@@ -28,6 +28,7 @@ function stateOf(policy: ToolPolicyState): State {
     env: policy.env,
     ...(policy.sandboxAutoAllow === undefined ? {} : { sandboxAutoAllow: policy.sandboxAutoAllow }),
     ...(policy.tainted === undefined ? {} : { tainted: policy.tainted }),
+    ...(policy.taintSource === undefined ? {} : { taintSource: policy.taintSource }),
     ...(policy.defaultBranch === undefined ? {} : { defaultBranch: policy.defaultBranch }),
     ...(policy.blockReadsOutsideWorkingDirectories === undefined
       ? {}

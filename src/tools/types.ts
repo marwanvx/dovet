@@ -115,6 +115,7 @@ export type ToolPolicyState = {
   /** Whether a shell command would run inside the sandbox. */
   sandboxed?: boolean;
   tainted?: boolean;
+  taintSource?: string;
   sandboxAutoAllow?: boolean;
   defaultBranch?: string;
   blockReadsOutsideWorkingDirectories?: boolean;

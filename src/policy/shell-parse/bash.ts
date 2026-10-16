@@ -211,6 +211,10 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     }
     sub.argv.push(name.text, ...args.map((a) => a.text));
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
+    if (name.text === "xargs" && args.some((a) => !a.literal || a.values !== undefined)) {
+      ctx.state.literalNames = false;
+      ctx.fail("xargs runs a computed command");
+    }
     if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
     if (SHELLS.has(name.text)) shellScript(args, st);
     if (name.text === "cd" || name.text === "pushd" || name.text === "popd") {

@@ -30,6 +30,16 @@ export {
 } from "./sandbox/hygiene.ts";
 export type { SandboxOs, SandboxStartOptions, SrtHelperFile } from "./sandbox/init.ts";
 export { SRT_HELPER_FILES, sandboxRuntimeConfig, srtHelpersFor, startSandbox } from "./sandbox/init.ts";
+export {
+  extractHosts,
+  type HostAskMode,
+  hostNeedsTaint,
+  isLoopbackName,
+  isRegistryHost,
+  makeHostAsker,
+  shouldRefuseLocalHost,
+  taintSourceForCommand,
+} from "./sandbox/network.ts";
 export type { SandboxBackend, SandboxService, SandboxState, SandboxWrapped } from "./sandbox/service.ts";
 export {
   backendFor,
