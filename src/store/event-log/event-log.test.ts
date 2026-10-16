@@ -279,6 +279,17 @@ describe("writer", () => {
     expect(text).toContain("[redacted]");
   });
 
+  // spec: AC-PERM-30
+  test("workspace .env values joined to the writer secrets never reach the log", async () => {
+    const loc = await location();
+    const w = await open(loc, { secrets: ["correct-horse-battery-9"] });
+    w.append({ type: "tool.result", epoch: 0, turn: 1, data: { output: "pw correct-horse-battery-9 here" } });
+    w.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "my db pw is correct-horse-battery-9" } });
+    await w.close();
+    const text = await readFile(sessionPaths(loc).log, "utf8");
+    expect(text).not.toContain("correct-horse-battery-9");
+  });
+
   // spec: AC-LOG-07
   test("a 3 MB Write stores its content as an essential blob and reads back identically", async () => {
     const loc = await location();

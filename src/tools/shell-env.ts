@@ -5,6 +5,8 @@ import type { Os, Platform } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 
+export { parseEnvFile } from "../policy/index.ts";
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
@@ -115,17 +117,6 @@ export function scopedSettingsEnv(scopes: {
     }
   }
   return { env, refused };
-}
-
-/** `KEY=value` lines; `#` comments, `export ` and one pair of quotes are understood. */
-export function parseEnvFile(text: string): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const line of text.split(/\r?\n/)) {
-    const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (m?.[1] === undefined || m[2] === undefined) continue;
-    result[m[1]] = m[2].trim().replace(/^(["'])(.*)\1$/, "$2");
-  }
-  return result;
 }
 
 export function commandEnv(deps: {

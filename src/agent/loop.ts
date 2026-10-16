@@ -2,13 +2,13 @@
 
 import type { ProviderErrorInfo, ProviderRequest, StopReason } from "../ai/index.ts";
 import type { ShellChoice } from "../platform/index.ts";
-import type { Env, RuleContext, RuleSet, ShellParsers } from "../policy/index.ts";
-import { ruleSetFromSettings } from "../policy/index.ts";
+import type { Env, NamedSecret, RuleContext, RuleSet, ShellParsers } from "../policy/index.ts";
+import { redactText, ruleSetFromSettings } from "../policy/index.ts";
 import type { EventEnvelope, PrefixFingerprint, StoredResponse } from "../schema/index.ts";
 import type { LoadedSettings } from "../store/index.ts";
 import { findProjectRoot, isHistoryRelated, REPAIR_HINT } from "../store/index.ts";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolRegistry } from "../tools/index.ts";
-import { buildReadResultsIndex, createBashTool, limitOutput } from "../tools/index.ts";
+import { buildReadResultsIndex, createBashTool, limitOutput, stripHidden } from "../tools/index.ts";
 import { cacheWarning, prefixFingerprint } from "./transcript/index.ts";
 
 export type LoopState = "IDLE" | "PREPARE" | "REQUEST" | "STREAM" | "TOOLS" | "FINALIZE" | "INTERRUPTING";
@@ -298,6 +298,8 @@ export type ExecuteToolsDeps = {
   /** Caller omits these when the response ends in refusal, max_tokens with tool calls, or interrupt (see shouldDiscardEarly). */
   earlyResults?: ReadonlyMap<string, ToolOutput>;
   signal?: AbortSignal;
+  /** Secret values that never reach the model or the log (permissions §8); key formats are always redacted. */
+  secrets?: () => readonly NamedSecret[];
 };
 
 export type ExecutedResult = { callId: string; name: string; output: ToolOutput; invalid: boolean };
@@ -307,6 +309,33 @@ export const UNKNOWN_TOOL_PREFIX = "Unknown tool";
 
 function normalizeKey(name: string, input: unknown): string {
   return `${name}(${JSON.stringify(input) ?? "null"})`;
+}
+
+/** The output guard (permissions §8, §10): hidden-instruction characters are stripped (tainting the
+ * session) and secrets redacted before a tool result reaches the model or the log. */
+function guardOutput(output: ToolOutput, toolName: string, secrets: readonly NamedSecret[]): ToolOutput {
+  let hidden = 0;
+  const content = output.content.map((c) => {
+    if (c.kind !== "text") return c;
+    const stripped = stripHidden(c.text);
+    hidden += stripped.removed;
+    return { ...c, text: redactText(stripped.text, secrets) };
+  });
+  if (hidden === 0) return { ...output, content };
+  const notice = `[${hidden} hidden characters were removed from this result.]`;
+  const last = content.findLastIndex((c) => c.kind === "text");
+  const noted =
+    last < 0
+      ? content
+      : content.map((c, i) => (i === last && c.kind === "text" ? { ...c, text: `${c.text}\n${notice}` } : c));
+  return {
+    ...output,
+    content: noted,
+    meta: {
+      ...output.meta,
+      effects: [...(output.meta?.effects ?? []), { kind: "taint" as const, source: `${toolName} result` }],
+    },
+  };
 }
 
 export async function executeTools(
@@ -360,28 +389,30 @@ export async function executeTools(
     tool: ToolDefinition<unknown>,
     input: unknown,
     callId: string,
-    _name: string,
+    name: string,
   ): Promise<ToolOutput> => {
+    const secrets = deps.secrets?.() ?? [];
     const early = deps.earlyResults?.get(callId);
-    if (early !== undefined && deps.signal?.aborted !== true) return early;
+    if (early !== undefined && deps.signal?.aborted !== true) return guardOutput(early, name, secrets);
     if (deps.signal?.aborted === true)
       return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
     const out = await deps.run(tool, input, deps.makeContext());
-    let text = out.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
-    const guarded = applySizeGuard(text);
-    if (guarded !== text) {
-      return { status: "error", content: [{ kind: "text", text: guarded }] };
+    const guarded = guardOutput(out, name, secrets);
+    let text = guarded.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
+    const capped = applySizeGuard(text);
+    if (capped !== text) {
+      return { status: "error", content: [{ kind: "text", text: capped }] };
     }
     if (text.length > 30_000 && tool.limitsOwnOutput !== true) {
       const limited = await limitOutput(text, { dir: deps.offloadDir, id: callId.replace(/[^A-Za-z0-9_-]/g, "_") });
       text = limited.text;
       return {
-        ...out,
+        ...guarded,
         content: [{ kind: "text", text }],
-        ...(limited.offloadPath === undefined ? {} : { meta: { ...out.meta, offloadPath: limited.offloadPath } }),
+        ...(limited.offloadPath === undefined ? {} : { meta: { ...guarded.meta, offloadPath: limited.offloadPath } }),
       };
     }
-    return out;
+    return guarded;
   };
 
   for (const batch of batches) {

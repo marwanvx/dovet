@@ -516,3 +516,15 @@ describe("resume, home, approvals and network paths", () => {
     expect(mention.notes.join("\n")).toMatch(/network/);
   });
 });
+
+describe("AC-PERM-26: hidden characters in instruction files", () => {
+  // spec: AC-PERM-26
+  test("hidden characters are stripped with a warning and taint the session", async () => {
+    const root = await temp({ "AGENTS.md": "Be helpful \u{E0041}\u{E0042}and kind.\n" });
+    const set = await discoverInstructions(await context(root));
+    expect(set.files).toHaveLength(1);
+    expect(set.files[0]?.content).toBe("Be helpful ⟨2 hidden characters removed⟩and kind.\n");
+    expect(set.warnings.some((w) => w.includes("hidden characters"))).toBe(true);
+    expect(set.taintSources).toHaveLength(1);
+  });
+});

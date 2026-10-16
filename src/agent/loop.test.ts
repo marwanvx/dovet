@@ -714,3 +714,53 @@ describe("repair epoch offer", () => {
     expect(historyRepairOffer({ kind: "invalid_request", retryable: false, message: "schema too complex" })).toBeNull();
   });
 });
+
+describe("tool-result output guard", () => {
+  async function guarded(text: string, secrets: Array<{ name: string; value: string }> = []) {
+    const registry = createToolRegistry([toolDef("Bash", true)]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    try {
+      const calls = parseToolCalls(storedParts([{ id: "a", name: "Bash", input: {} }]).parts);
+      const { results } = await executeTools(calls, {
+        registry,
+        decide: () => ({ behavior: "allow", reason: "t" }),
+        prompt: () => Promise.resolve({ allow: true, dontAskAgain: false }),
+        run: () => Promise.resolve({ status: "ok", content: [{ kind: "text", text }] }),
+        makeContext: () => base,
+        offloadDir: join(tmpdir(), "dovet-loop-off"),
+        secrets: () => secrets,
+      });
+      return results[0]?.output;
+    } finally {
+      await rm(base.session.cwd, { recursive: true, force: true });
+    }
+  }
+
+  const textOf = (output: ToolOutput | undefined): string =>
+    output?.content.map((c) => (c.kind === "text" ? c.text : "")).join("") ?? "";
+
+  // spec: AC-PERM-30
+  test("secret values and key formats are redacted before the model and the log", async () => {
+    const output = await guarded("token rk-live-example-0001-fakevalue and sk-ant-example-fake-key-000004", [
+      { name: "STRIPE_SECRET_KEY", value: "rk-live-example-0001-fakevalue" },
+    ]);
+    expect(textOf(output)).toBe("token [REDACTED:STRIPE_SECRET_KEY] and [REDACTED:ANTHROPIC_KEY]");
+  });
+
+  // spec: AC-PERM-26
+  test("hidden characters are stripped from any tool result and taint the session", async () => {
+    const output = await guarded("note: all \u{E0041}\u{E0042}good", []);
+    const text = textOf(output);
+    expect(text).toBe(
+      "note: all ⟨2 hidden characters removed⟩good\n[2 hidden characters were removed from this result.]",
+    );
+    expect(output?.meta?.effects).toEqual([{ kind: "taint", source: "Bash result" }]);
+  });
+
+  // spec: AC-PERM-26
+  test("ordinary multilingual text passes through the guard unchanged", async () => {
+    const output = await guarded("متن فارسی با نیم‌فاصله and 👨‍👩‍👧‍👦", []);
+    expect(textOf(output)).toBe("متن فارسی با نیم‌فاصله and 👨‍👩‍👧‍👦");
+    expect(output?.meta?.effects ?? []).toEqual([]);
+  });
+});

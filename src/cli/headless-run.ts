@@ -31,12 +31,15 @@ import {
 import { canonicalizePath, type Os, type Platform, readGitHead } from "../platform/index.ts";
 import {
   analyzeShell,
+  createDotEnvSecrets,
   decide,
   expandGlob,
   isDirectory,
   loadShellParsers,
+  type NamedSecret,
   type RuleSet,
   ruleSetFromSettings,
+  secretsFromEnv,
 } from "../policy/index.ts";
 import type { AbsPath, EventEnvelope } from "../schema/index.ts";
 import { PermissionMode } from "../schema/index.ts";
@@ -231,6 +234,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     return errOut("", err instanceof Error ? err.message : String(err), { kind: "usage" }, warnings);
   }
 
+  // The output-redaction set (permissions §8, §4.7): the provider credential, secret-named env vars
+  // and workspace `.env*` values, re-read on every tool result so edited files are picked up.
+  const dotEnvSecrets = createDotEnvSecrets([input.projectRoot]);
+  const outputSecrets = (): NamedSecret[] => [
+    { name: "CREDENTIAL", value: secretValue },
+    ...secretsFromEnv(input.env),
+    ...dotEnvSecrets.current(),
+  ];
+
   const endpointBase = {
     package: record?.endpoints[0]?.package ?? "@ai-sdk/openai-compatible",
     baseURL,
@@ -298,7 +310,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     ids: input.ids,
     pid: input.pid,
     host: input.host,
-    secrets: [secretValue],
+    secrets: [secretValue, ...outputSecrets().map((s) => s.value)],
   });
   if (opened.mode !== "write")
     return errOut(sessionId, `session ${sessionId} is read-only (${opened.reason})`, { kind: "error" }, warnings);
@@ -880,6 +892,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         makeContext: () => ctx,
         offloadDir: `${input.dirs.data}/tmp`,
         headless: true,
+        secrets: outputSecrets,
       });
       const byId = new Map(results.map((r) => [r.callId, r]));
       const recordCalls = (): void => {

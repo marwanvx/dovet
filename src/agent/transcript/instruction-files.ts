@@ -5,6 +5,7 @@ import { posix, win32 } from "node:path";
 import { canonicalizePath, isErrno, isWithin, type Os, PathRefused, pathKey } from "../../platform/index.ts";
 import type { AbsPath, InstructionsLoadedData, Settings } from "../../schema/index.ts";
 import type { ExternalImportApprovals } from "../../store/index.ts";
+import { stripHidden } from "../../tools/index.ts";
 import { excludeMatcher, findImports, parseRule, stripHtmlComments } from "./instruction-text.ts";
 import { type InstructionPart, instructionsUpdated, type LoadedInstruction, lazyInstructions } from "./instructions.ts";
 
@@ -45,6 +46,8 @@ export type InstructionSet = {
   files: LoadedInstruction[];
   found: FoundInstruction[];
   warnings: string[];
+  /** Files whose hidden-instruction characters set taint (permissions §10); the session applies them. */
+  taintSources: string[];
   launchEvent: InstructionsLoadedData;
   /** On resume: launch files whose content changed since they were last sent, as `instructions-updated` parts. */
   resumeUpdates: InstructionPart[];
@@ -105,6 +108,7 @@ async function build(
   const seen = new Set<string>();
   const found: FoundInstruction[] = [];
   const warnings: string[] = [];
+  const taintSources: string[] = [];
   const pending = new Set<string>();
   const scoped: Scoped[] = [];
   const scanned = new Set<string>();
@@ -226,11 +230,18 @@ async function build(
         `${display(requested)} has ${records[0].lines} lines (over ${Math.round(200 * scale)}); long instructions are followed less reliably`,
       );
     }
+    const stripped = stripHidden(out);
+    if (stripped.removed > 0) {
+      warnings.push(
+        `${display(requested)}: ${stripped.removed} hidden characters removed; the file on disk is unchanged`,
+      );
+      taintSources.push(admitted.canonical);
+    }
     return {
       file: {
         path: admitted.canonical,
         displayPath: display(requested),
-        content: out,
+        content: stripped.text,
         mtimeMs: admitted.mtimeMs,
         sha256: records[0]?.sha256 ?? "",
       },
@@ -436,6 +447,7 @@ async function build(
     resumeUpdates,
     found,
     warnings,
+    taintSources,
     launchEvent,
     touch,
     async touchMentions(message) {
