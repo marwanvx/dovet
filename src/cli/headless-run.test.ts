@@ -1,14 +1,22 @@
 // Headless agent turn tests (tui Headless mode, agent-loop Turn state machine, event-log Resume, providers section 1).
 import { describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { fakePlatform, nvidiaAdapter, scriptedModel, sequentialIds, tempProject } from "../../test/helpers/index.ts";
+import {
+  fakePlatform,
+  nvidiaAdapter,
+  scriptedModel,
+  sequentialIds,
+  type TempProject,
+  tempProject,
+} from "../../test/helpers/index.ts";
 import { buildRequest, cacheWarning, headerOf, modelRequestBody, TRUNCATED_INSTRUCTION } from "../agent/index.ts";
 import { createSdkAdapter } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import { ModelRequestData } from "../schema/index.ts";
-import type { LoadedSettings } from "../store/index.ts";
+import type { LoadedSettings, LoadInput } from "../store/index.ts";
 import { openSession, readSession, sessionPaths } from "../store/index.ts";
 import type { ToolDefinition } from "../tools/index.ts";
 import { readTool } from "../tools/index.ts";
@@ -25,6 +33,13 @@ function settingsFor(model = "test/model"): LoadedSettings {
     notices: [],
     files: [],
   };
+}
+
+const TEST_ENV: Record<string, string | undefined> = { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" };
+
+/** The same LoadInput main.ts builds, pointing at the test project, so the turn polls real settings files. */
+function loadInputFor(dir: TempProject, env: Record<string, string | undefined>): LoadInput {
+  return { dirs: { config: join(dir.root, "cfg") }, home: join(dir.root, "home"), projectRoot: dir.root, env };
 }
 
 function echoTool(onRun?: (text: string) => { status: "ok" | "error"; text: string }): ToolDefinition<unknown> {
@@ -140,7 +155,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -186,6 +202,202 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: AC-PERM-19
+  test("a deny rule written mid-session blocks the next call; removing it unblocks", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const ran: string[] = [];
+      const echo = echoTool((text) => {
+        ran.push(text);
+        if (text === "add-deny") writeFileSync(local, JSON.stringify({ permissions: { deny: ["echo"] } }));
+        return { status: "ok", text: `echo:${text}` };
+      });
+      const setRules: ToolDefinition<unknown> = {
+        name: "SetRules",
+        input: z.strictObject({ deny: z.array(z.string()) }),
+        descriptionFile: "tools/Read.md",
+        errorExample: { deny: [] },
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (input) => {
+          writeFileSync(local, JSON.stringify({ permissions: { deny: (input as { deny: string[] }).deny } }));
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "rules set" }] });
+        },
+      };
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("D"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "echo", input: { text: "add-deny" } } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "blocked" } } },
+          { toolCall: { id: "c3", name: "SetRules", input: { deny: [] } } },
+          { toolCall: { id: "c4", name: "echo", input: { text: "after" } } },
+          { text: "done" },
+        ]),
+        toolDefs: [echo, setRules],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(ran).toEqual(["add-deny", "after"]);
+      expect(out.warnings.some((w) => w.includes("Settings updated from") && w.includes("settings.local.json"))).toBe(
+        true,
+      );
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const changes = read.events.filter((e) => e.type === "settings.change");
+      expect(changes.length).toBe(2);
+      for (const c of changes) {
+        expect((c.data as { key: string }).key).toBe("permissions");
+        expect((c.data as { source: string }).source).toBe("file");
+      }
+      const denied = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { status: string; output: string });
+      expect(denied.some((d) => d.status === "error" && d.output.includes("Permission denied"))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-PERM-19
+  test("a mid-session model change in the file is announced, not applied", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "model": "test/model" }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "switch the model",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("M"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ toolCall: { id: "c1", name: "echo", input: { text: "rewrite" } } }, { text: "done" }]),
+        toolDefs: [
+          echoTool((text) => {
+            if (text === "rewrite")
+              // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
+              writeFileSync(local, '{ "model": "model-two" }');
+            return { status: "ok", text: `echo:${text}` };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("done");
+      expect(
+        out.warnings.some((w) => w.includes("model-two") && w.includes("test/model") && w.includes("Settings file")),
+      ).toBe(true);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const changes = read.events.filter((e) => e.type === "settings.change");
+      expect(changes).toEqual([]);
+      for (const req of read.events.filter((e) => e.type === "model.request"))
+        expect((req.data as { model: string }).model).toBe("test/model");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-PERM-19
+  test("a mid-session edit that fails the rule compile keeps the previous rules with a warning", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const ran: string[] = [];
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("K"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "echo", input: { text: "break-examples" } } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "second" } } },
+          { text: "done" },
+        ]),
+        toolDefs: [
+          echoTool((text) => {
+            ran.push(text);
+            if (text === "break-examples")
+              writeFileSync(
+                local,
+                JSON.stringify({ permissions: { deny: [], examples: [{ Bash: "echo hi", expect: "deny" }] } }),
+              );
+            return { status: "ok", text: `echo:${text}` };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(ran).toEqual(["break-examples", "second"]);
+      expect(out.warnings.some((w) => w.includes("kept the previous rules"))).toBe(true);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.some((e) => e.type === "settings.change")).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   test("an error tool result is returned to the model, which recovers", async () => {
     const dir = await tempProject({});
     try {
@@ -196,7 +408,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -289,7 +502,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -336,7 +550,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -389,7 +604,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -462,7 +678,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -527,7 +744,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -584,7 +802,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -628,7 +847,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -674,7 +894,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -752,7 +973,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -807,6 +1029,7 @@ describe("runHeadless", () => {
           files: [],
         },
         env: { HOME: "/tmp" },
+        loadInput: loadInputFor(dir, { HOME: "/tmp" }),
         args: {
           print: true,
           output: "text",
@@ -843,7 +1066,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -886,7 +1110,8 @@ describe("runHeadless", () => {
           notices: [],
           files: [],
         } as unknown as LoadedSettings,
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -928,7 +1153,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -1002,7 +1228,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -1040,7 +1267,8 @@ describe("runHeadless", () => {
         cwd: dir.root,
         os: testOs(),
         settings: settingsFor(),
-        env: { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" },
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
         args: {
           print: true,
           output: "text",
@@ -1084,6 +1312,11 @@ describe("output redaction", () => {
           STRIPE_SECRET_KEY: "rk-live-example-0001-fakevalue",
           HOME: "/tmp",
         },
+        loadInput: loadInputFor(dir, {
+          NVIDIA_API_KEY: "nvapi-FAKE-KEY-0001",
+          STRIPE_SECRET_KEY: "rk-live-example-0001-fakevalue",
+          HOME: "/tmp",
+        }),
         args: {
           print: true,
           output: "text",

@@ -46,14 +46,19 @@ import { PermissionMode } from "../schema/index.ts";
 import {
   createCredentials,
   createSecretStore,
+  describeProblem,
   isHistoryRelated,
   type LoadedSettings,
+  type LoadInput,
   listSessions,
   openSession,
+  pollSettings,
   readSession,
   repairEpochEvent,
   resumeSession,
   Secret,
+  SettingsError,
+  snapshotSettings,
   validateTranscriptItems,
 } from "../store/index.ts";
 import {
@@ -83,6 +88,8 @@ export type HeadlessRunInput = {
   cwd: string;
   os: Os;
   settings: LoadedSettings;
+  /** The exact startup LoadInput (frozen env and flags); live reload re-passes it on every poll. */
+  loadInput: LoadInput;
   env: Record<string, string | undefined>;
   args: HeadlessArgs;
   prompt: string;
@@ -192,6 +199,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       );
     mode = parsedMode.data === "auto" ? "default" : parsedMode.data;
   }
+  // Live settings reload (cli-config): snapshot the watched files once; the turn polls before each batch.
+  let snapshot = await snapshotSettings(input.loadInput);
 
   const configured = input.settings.settings.providers?.[provider];
   const record = (() => {
@@ -440,7 +449,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         return undefined;
       }
     })();
-    const rules: RuleSet | undefined = ruleInput?.rules;
+    let rules: RuleSet | undefined = ruleInput?.rules;
+    let effectiveSettings = input.settings.settings;
     const readState = createReadState(input.os);
     const baseSignal = new AbortController().signal;
     const baseCtx: ToolContext = {
@@ -452,7 +462,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         taint: [],
         interactive: false,
       },
-      settings: input.settings.settings,
+      settings: effectiveSettings,
       signal: baseSignal,
       readState,
       readResults: { lookup: () => undefined },
@@ -473,6 +483,28 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let pauseContinuations = 0;
 
     for (;;) {
+      // cli-config "Live settings reload": re-stat before each turn and tool batch; invalid files keep
+      // the previous settings and rules; a rule-compile failure keeps the previous rules.
+      const poll = await pollSettings(snapshot, input.loadInput);
+      snapshot = poll.snapshot;
+      for (const change of poll.events)
+        push("settings.change", epochNum, turn, { key: change.key, old: change.old, new: change.new, source: "file" });
+      warnings.push(...poll.notices, ...poll.warnings.map(describeProblem));
+      if (poll.changed) {
+        effectiveSettings = poll.settings;
+        try {
+          rules = ruleSetFromSettings({
+            loaded: poll.loaded,
+            env: policyEnv,
+            parsers: parsers as never,
+            ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
+            configDir: input.dirs.config,
+          }).rules;
+        } catch (err) {
+          const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
+          warnings.push(`Settings change kept the previous rules: ${problems}`);
+        }
+      }
       const built = buildRequest(events, { header, params, cache });
       try {
         validateTranscriptItems(

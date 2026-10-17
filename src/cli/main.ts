@@ -6,7 +6,7 @@ import pkg from "../../package.json";
 import { PROVIDER_AUTH } from "../ai/index.ts";
 import { createPlatformCore, type Os, resolveDirs } from "../platform/index.ts";
 import type { AbsPath, Settings } from "../schema/index.ts";
-import { findProjectRoot, type LoadedSettings, loadSettings } from "../store/index.ts";
+import { findProjectRoot, type LoadedSettings, type LoadInput, loadSettings } from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
 import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from "./headless-output.ts";
@@ -109,14 +109,17 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
     projectRoot = process.cwd();
   }
   let loaded: LoadedSettings;
+  const flags: Settings = {
+    ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
+    ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+    ...(parsed.effort !== undefined ? { effort: parsed.effort as Settings["effort"] } : {}),
+    ...(parsed.budget !== undefined ? { budget: { session: parsed.budget } } : {}),
+  };
+  const home = homedir();
+  // One LoadInput for the startup load and the turn's live reload, so env and flags stay frozen session overrides.
+  const loadInput: LoadInput = { dirs, home, projectRoot, env, flags };
   try {
-    const flags: Settings = {
-      ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
-      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
-      ...(parsed.effort !== undefined ? { effort: parsed.effort as Settings["effort"] } : {}),
-      ...(parsed.budget !== undefined ? { budget: { session: parsed.budget } } : {}),
-    };
-    loaded = await loadSettings({ dirs, home: homedir(), projectRoot, env, flags });
+    loaded = await loadSettings(loadInput);
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 2;
@@ -179,6 +182,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       cwd: process.cwd(),
       os,
       settings: loaded,
+      loadInput,
       env,
       args: parsed,
       prompt: combined.prompt,

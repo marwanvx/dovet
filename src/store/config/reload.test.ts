@@ -75,19 +75,47 @@ describe("live settings reload", () => {
   });
 
   // spec: AC-PERM-19
-  test("a model change in the file is announced, not applied", async () => {
-    const { dir, input } = await setup({
-      "proj/.dovet/settings.local.json": '{ "model": "m1" }',
-    });
+  test.each(["model", "provider", "effort"] as const)(
+    "a %s change in the file is announced, not applied",
+    async (key) => {
+      const { dir, input } = await setup({
+        "proj/.dovet/settings.local.json": '{ "model": "m1", "provider": "p1", "effort": "low" }',
+      });
+      const prev = await snapshotSettings({ ...input, env: {} });
+      // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
+      await writeFile(
+        join(dir.root, "proj", ".dovet", "settings.local.json"),
+        '{ "model": "model-two", "provider": "provider-two", "effort": "high" }',
+      );
+      const next = await pollSettings(prev, { ...input, env: {} });
+      expect(next.changed).toBe(true);
+      expect(next.loaded.settings[key]).toBe({ model: "m1", provider: "p1", effort: "low" }[key]);
+      expect(next.announced).toContain(key);
+      expect(
+        next.notices.some(
+          (n) =>
+            n.includes({ model: "model-two", provider: "provider-two", effort: "high" }[key]) &&
+            n.includes({ model: "m1", provider: "p1", effort: "low" }[key]),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  // spec: AC-PERM-19
+  test("the user config file and a .claude settings file are picked up by a poll", async () => {
+    const { dir, input } = await setup({});
     const prev = await snapshotSettings({ ...input, env: {} });
-    expect(prev.loaded.settings.model).toBe("m1");
-    // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
-    await writeFile(join(dir.root, "proj", ".dovet", "settings.local.json"), '{ "model": "model-two" }');
+    await mkdir(join(dir.root, "cfg"), { recursive: true });
+    await writeFile(join(dir.root, "cfg", "settings.json"), '{ "permissions": { "deny": ["WebFetch"] } }');
+    await mkdir(join(dir.root, "home", ".claude"), { recursive: true });
+    await writeFile(join(dir.root, "home", ".claude", "settings.json"), '{ "permissions": { "deny": ["Read(/a)"] } }');
+    await mkdir(join(dir.root, "proj", ".claude"), { recursive: true });
+    await writeFile(join(dir.root, "proj", ".claude", "settings.json"), '{ "permissions": { "deny": ["Read(/b)"] } }');
     const next = await pollSettings(prev, { ...input, env: {} });
     expect(next.changed).toBe(true);
-    expect(next.loaded.settings.model).toBe("m1");
-    expect(next.announced).toContain("model");
-    expect(next.notices.some((n) => n.includes("model-two") && n.includes("m1"))).toBe(true);
+    expect(next.loaded.settings.permissions?.deny).toContain("WebFetch");
+    expect(next.loaded.settings.permissions?.deny).toContain("Read(/a)");
+    expect(next.loaded.settings.permissions?.deny).toContain("Read(/b)");
   });
 
   // spec: AC-PERM-19
@@ -124,6 +152,7 @@ describe("live settings reload", () => {
     expect(next.loaded).toBe(prev.loaded);
   });
 
+  // spec: AC-PERM-19
   test.skipIf(process.platform === "win32")("a symlinked settings file is checked at its target", async () => {
     const { dir, input } = await setup({ "dotfiles/local.json": '{ "permissions": { "deny": [] } }' });
     await mkdir(join(dir.root, "proj", ".dovet"), { recursive: true });
