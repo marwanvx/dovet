@@ -66,6 +66,9 @@ describe("live settings reload", () => {
       '{\n  "permissions": {\n    "deny": [\n      "Read(.env)",\n      "Bash(ls) x"\n    ]\n  }\n}',
     );
     const next = await pollSettings(prev, { ...input, env: {} });
+    expect(next.changed).toBe(false);
+    // One warning per edit (Q45): the invalid file surfaces only through warnings.
+    expect(next.notices).toEqual([]);
     expect(next.loaded.settings.permissions?.deny).toEqual(["Read(.env)"]);
     expect(next.warnings.length).toBeGreaterThan(0);
     const w = next.warnings[0];

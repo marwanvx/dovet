@@ -272,7 +272,8 @@ describe("runHeadless", () => {
       const read = await readSession(loc);
       const changes = read.events.filter((e) => e.type === "settings.change");
       expect(changes.length).toBe(2);
-      const added = changes[0]?.data as { new?: { deny?: string[] } } | undefined;
+      const added = changes[0]?.data as { old?: { deny?: string[] }; new?: { deny?: string[] } } | undefined;
+      expect(added?.old?.deny).toEqual([]);
       expect(added?.new?.deny).toEqual(["echo"]);
       for (const c of changes) {
         expect((c.data as { key: string }).key).toBe("permissions");
