@@ -97,7 +97,10 @@ function sameSigs(a: SettingsSnapshot, b: Pick<SettingsSnapshot, "files" | "dirs
 /** Load once and remember the stat of every watched file and directory. */
 export async function snapshotSettings(input: LoadInput): Promise<SettingsSnapshot> {
   const paths = watchedSettingsPaths(input);
-  const [sigs, loaded] = await Promise.all([takeSigs(paths), loadSettings(input)]);
+  // Signatures first: a write during the load then leaves signatures stale, which the next
+  // poll recovers; signatures taken after the load would be ahead of it and never recover.
+  const sigs = await takeSigs(paths);
+  const loaded = await loadSettings(input);
   return { ...sigs, loaded };
 }
 
@@ -144,10 +147,8 @@ export async function pollSettings(prev: SettingsSnapshot, input: LoadInput): Pr
       snapshot: { ...sigs, loaded: prev.loaded },
       loaded: prev.loaded,
       settings: prev.loaded.settings,
-      notices: problems.map(
-        (p) =>
-          `Settings file ${p.file}${p.line === undefined ? "" : `:${p.line}`}: keeping previous settings (${p.key}: ${p.message})`,
-      ),
+      // One warning per edit (Q45): the problem is surfaced only in warnings, described with file, line and key.
+      notices: [],
       warnings: problems,
       events: [],
       announced: [],

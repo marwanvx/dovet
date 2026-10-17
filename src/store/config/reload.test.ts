@@ -66,6 +66,9 @@ describe("live settings reload", () => {
       '{\n  "permissions": {\n    "deny": [\n      "Read(.env)",\n      "Bash(ls) x"\n    ]\n  }\n}',
     );
     const next = await pollSettings(prev, { ...input, env: {} });
+    expect(next.changed).toBe(false);
+    // One warning per edit (Q45): the invalid file surfaces only through warnings.
+    expect(next.notices).toEqual([]);
     expect(next.loaded.settings.permissions?.deny).toEqual(["Read(.env)"]);
     expect(next.warnings.length).toBeGreaterThan(0);
     const w = next.warnings[0];
@@ -75,19 +78,60 @@ describe("live settings reload", () => {
   });
 
   // spec: AC-PERM-19
-  test("a model change in the file is announced, not applied", async () => {
+  test.each(["model", "provider", "effort"] as const)(
+    "a %s change in the file is announced, not applied",
+    async (key) => {
+      const { dir, input } = await setup({
+        "proj/.dovet/settings.local.json": '{ "model": "m1", "provider": "p1", "effort": "low" }',
+      });
+      const prev = await snapshotSettings({ ...input, env: {} });
+      // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
+      await writeFile(
+        join(dir.root, "proj", ".dovet", "settings.local.json"),
+        '{ "model": "model-two", "provider": "provider-two", "effort": "high" }',
+      );
+      const next = await pollSettings(prev, { ...input, env: {} });
+      expect(next.changed).toBe(true);
+      expect(next.loaded.settings[key]).toBe({ model: "m1", provider: "p1", effort: "low" }[key]);
+      expect(next.announced).toContain(key);
+      expect(
+        next.notices.some(
+          (n) =>
+            n.includes({ model: "model-two", provider: "provider-two", effort: "high" }[key]) &&
+            n.includes({ model: "m1", provider: "p1", effort: "low" }[key]),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  // spec: AC-PERM-19
+  test("in-place edits to the user config file and .claude files are picked up by a poll", async () => {
     const { dir, input } = await setup({
-      "proj/.dovet/settings.local.json": '{ "model": "m1" }',
+      "cfg/settings.json": '{ "permissions": { "deny": [] } }',
+      "home/.claude/settings.json": '{ "permissions": { "deny": [] } }',
+      "proj/.claude/settings.json": '{ "permissions": { "deny": [] } }',
+      "proj/.claude/settings.local.json": '{ "permissions": { "deny": [] } }',
+      "proj/.dovet/settings.json": '{ "permissions": { "deny": [] } }',
     });
-    const prev = await snapshotSettings({ ...input, env: {} });
-    expect(prev.loaded.settings.model).toBe("m1");
-    // Different lengths so the rewrite is visible to stat polling even within one mtime tick.
-    await writeFile(join(dir.root, "proj", ".dovet", "settings.local.json"), '{ "model": "model-two" }');
-    const next = await pollSettings(prev, { ...input, env: {} });
-    expect(next.changed).toBe(true);
-    expect(next.loaded.settings.model).toBe("m1");
-    expect(next.announced).toContain("model");
-    expect(next.notices.some((n) => n.includes("model-two") && n.includes("m1"))).toBe(true);
+    // One file edited per poll: a dropped watch entry then goes undetected (in-place
+    // writes don't move directory signatures) and fails. Sizes differ across edits.
+    const targets: Array<{ path: string; deny: string }> = [
+      { path: join(dir.root, "cfg", "settings.json"), deny: "WebFetch" },
+      { path: join(dir.root, "home", ".claude", "settings.json"), deny: "Read(/a)" },
+      { path: join(dir.root, "proj", ".claude", "settings.json"), deny: "Read(/b)" },
+      { path: join(dir.root, "proj", ".claude", "settings.local.json"), deny: "Read(/c)" },
+      { path: join(dir.root, "proj", ".dovet", "settings.json"), deny: "Read(/d)" },
+    ];
+    let snap = await snapshotSettings({ ...input, env: {} });
+    expect(snap.loaded.settings.permissions?.deny ?? []).toEqual([]);
+    for (const t of targets) {
+      await writeFile(t.path, JSON.stringify({ permissions: { deny: [t.deny] } }));
+      const next = await pollSettings(snap, { ...input, env: {} });
+      expect(next.changed).toBe(true);
+      expect(next.notices.some((n) => n.includes(t.path))).toBe(true);
+      expect(next.loaded.settings.permissions?.deny).toContain(t.deny);
+      snap = next.snapshot;
+    }
   });
 
   // spec: AC-PERM-19
@@ -124,6 +168,7 @@ describe("live settings reload", () => {
     expect(next.loaded).toBe(prev.loaded);
   });
 
+  // spec: AC-PERM-19
   test.skipIf(process.platform === "win32")("a symlinked settings file is checked at its target", async () => {
     const { dir, input } = await setup({ "dotfiles/local.json": '{ "permissions": { "deny": [] } }' });
     await mkdir(join(dir.root, "proj", ".dovet"), { recursive: true });

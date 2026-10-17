@@ -46,14 +46,19 @@ import { PermissionMode } from "../schema/index.ts";
 import {
   createCredentials,
   createSecretStore,
+  describeProblem,
   isHistoryRelated,
   type LoadedSettings,
+  type LoadInput,
   listSessions,
   openSession,
+  pollSettings,
   readSession,
   repairEpochEvent,
   resumeSession,
   Secret,
+  SettingsError,
+  snapshotSettings,
   validateTranscriptItems,
 } from "../store/index.ts";
 import {
@@ -83,6 +88,8 @@ export type HeadlessRunInput = {
   cwd: string;
   os: Os;
   settings: LoadedSettings;
+  /** The exact startup LoadInput (frozen env and flags); live reload re-passes it on every poll. */
+  loadInput: LoadInput;
   env: Record<string, string | undefined>;
   args: HeadlessArgs;
   prompt: string;
@@ -192,6 +199,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       );
     mode = parsedMode.data === "auto" ? "default" : parsedMode.data;
   }
+  // Live settings reload (cli-config): snapshot the watched files once; the turn polls before each batch.
+  let snapshot = await snapshotSettings(input.loadInput);
 
   const configured = input.settings.settings.providers?.[provider];
   const record = (() => {
@@ -430,7 +439,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const ruleInput = (() => {
       try {
         return ruleSetFromSettings({
-          loaded: input.settings,
+          loaded: snapshot.loaded,
           env: policyEnv,
           parsers: parsers as never,
           ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
@@ -440,7 +449,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         return undefined;
       }
     })();
-    const rules: RuleSet | undefined = ruleInput?.rules;
+    let rules: RuleSet | undefined = ruleInput?.rules;
+    let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = new AbortController().signal;
     const baseCtx: ToolContext = {
@@ -452,7 +462,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         taint: [],
         interactive: false,
       },
-      settings: input.settings.settings,
+      settings: effectiveSettings,
       signal: baseSignal,
       readState,
       readResults: { lookup: () => undefined },
@@ -465,6 +475,29 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
     const guards = new GuardTracker();
     const maxRequests = input.args.maxRequests ?? MAX_REQUESTS_PER_TURN;
+    // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
+    const pollAndApply = async (): Promise<void> => {
+      const poll = await pollSettings(snapshot, input.loadInput);
+      snapshot = poll.snapshot;
+      for (const change of poll.events)
+        push("settings.change", epochNum, turn, { key: change.key, old: change.old, new: change.new, source: "file" });
+      warnings.push(...poll.notices, ...poll.warnings.map(describeProblem));
+      if (poll.changed) {
+        effectiveSettings = poll.settings;
+        try {
+          rules = ruleSetFromSettings({
+            loaded: poll.loaded,
+            env: policyEnv,
+            parsers: parsers as never,
+            ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
+            configDir: input.dirs.config,
+          }).rules;
+        } catch (err) {
+          const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
+          warnings.push(`Settings change kept the previous rules: ${problems}`);
+        }
+      }
+    };
     let usage: Record<string, unknown> = {};
     let prevCache: number | undefined;
     let prevTurn = 0;
@@ -473,6 +506,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let pauseContinuations = 0;
 
     for (;;) {
+      await pollAndApply();
       const built = buildRequest(events, { header, params, cache });
       try {
         validateTranscriptItems(
@@ -814,8 +848,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           warnings,
         };
       }
-      const ctx: ToolContext = {
+      const buildCtx = (): ToolContext => ({
         ...baseCtx,
+        settings: effectiveSettings,
         readResults: buildReadResultsIndex(events, epochNum),
         ...(rules === undefined
           ? {}
@@ -827,7 +862,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                 ...(parsers === undefined ? {} : { parsers }),
               },
             }),
-      };
+      });
+      let ctx = buildCtx();
       const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
         if (input.args.disallowedTools.includes(name))
           return { behavior: "deny", reason: "disallowed by --disallowedTools" };
@@ -890,6 +926,10 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         prompt: () => Promise.resolve({ allow: false, dontAskAgain: false }),
         run: (tool, value, c) => (tool.run as (v: unknown, ctx: ToolContext) => Promise<never>)(value, c) as never,
         makeContext: () => ctx,
+        beforeBatch: async () => {
+          await pollAndApply();
+          ctx = buildCtx();
+        },
         offloadDir: `${input.dirs.data}/tmp`,
         headless: true,
         secrets: outputSecrets,
