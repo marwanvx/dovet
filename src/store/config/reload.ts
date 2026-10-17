@@ -147,10 +147,8 @@ export async function pollSettings(prev: SettingsSnapshot, input: LoadInput): Pr
       snapshot: { ...sigs, loaded: prev.loaded },
       loaded: prev.loaded,
       settings: prev.loaded.settings,
-      notices: problems.map(
-        (p) =>
-          `Settings file ${p.file}${p.line === undefined ? "" : `:${p.line}`}: keeping previous settings (${p.key}: ${p.message})`,
-      ),
+      // One warning per edit (Q45): the problem is surfaced only in warnings, described with file, line and key.
+      notices: [],
       warnings: problems,
       events: [],
       announced: [],

@@ -638,9 +638,7 @@ describe("runHeadless", () => {
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("done");
       expect(ran).toEqual(["write-bad", "after"]);
-      expect(
-        out.warnings.some((w) => w.includes("keeping previous settings") && w.includes("settings.local.json")),
-      ).toBe(true);
+      expect(out.warnings.some((w) => w.includes("settings.local.json"))).toBe(true);
       const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       expect(read.events.filter((e) => e.type === "settings.change")).toEqual([]);
