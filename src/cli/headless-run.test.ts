@@ -285,6 +285,77 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: cli-config "Live settings reload"
+  test("a mid-session edit reaches the next tool call through ctx.settings", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const seen: unknown[] = [];
+      const probe: ToolDefinition<unknown> = {
+        name: "Probe",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (_input, ctx) => {
+          seen.push(ctx.settings);
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "probed" }] });
+        },
+      };
+      const editor = echoTool((text) => {
+        if (text === "edit")
+          writeFileSync(local, JSON.stringify({ permissions: { deny: [] }, glob: { respectGitignore: false } }));
+        return { status: "ok", text: `echo:${text}` };
+      });
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "Probe", input: {} } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "edit" } } },
+          { toolCall: { id: "c3", name: "Probe", input: {} } },
+          { text: "done" },
+        ]),
+        toolDefs: [probe, editor],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(seen).toHaveLength(2);
+      const before = seen[0] as { glob?: unknown };
+      const after = seen[1] as { glob?: unknown };
+      expect(before.glob).toEqual({ respectGitignore: true });
+      expect(after.glob).toEqual({ respectGitignore: false });
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: AC-PERM-19
   test("a mid-session model change in the file is announced, not applied", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "model": "test/model" }' });

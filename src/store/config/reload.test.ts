@@ -102,20 +102,31 @@ describe("live settings reload", () => {
   );
 
   // spec: AC-PERM-19
-  test("the user config file and a .claude settings file are picked up by a poll", async () => {
-    const { dir, input } = await setup({});
-    const prev = await snapshotSettings({ ...input, env: {} });
-    await mkdir(join(dir.root, "cfg"), { recursive: true });
-    await writeFile(join(dir.root, "cfg", "settings.json"), '{ "permissions": { "deny": ["WebFetch"] } }');
-    await mkdir(join(dir.root, "home", ".claude"), { recursive: true });
-    await writeFile(join(dir.root, "home", ".claude", "settings.json"), '{ "permissions": { "deny": ["Read(/a)"] } }');
-    await mkdir(join(dir.root, "proj", ".claude"), { recursive: true });
-    await writeFile(join(dir.root, "proj", ".claude", "settings.json"), '{ "permissions": { "deny": ["Read(/b)"] } }');
-    const next = await pollSettings(prev, { ...input, env: {} });
-    expect(next.changed).toBe(true);
-    expect(next.loaded.settings.permissions?.deny).toContain("WebFetch");
-    expect(next.loaded.settings.permissions?.deny).toContain("Read(/a)");
-    expect(next.loaded.settings.permissions?.deny).toContain("Read(/b)");
+  test("in-place edits to the user config file and .claude files are picked up by a poll", async () => {
+    const { dir, input } = await setup({
+      "cfg/settings.json": '{ "permissions": { "deny": [] } }',
+      "home/.claude/settings.json": '{ "permissions": { "deny": [] } }',
+      "proj/.claude/settings.json": '{ "permissions": { "deny": [] } }',
+    });
+    // One file edited per poll: if any file entry were dropped from
+    // watchedSettingsPaths, its edit would go undetected (directory signatures stay
+    // unchanged on in-place writes) and fail. Baseline and edit differ in size, so
+    // rewrites are visible to stat polling even within one mtime tick.
+    const targets: Array<{ path: string; deny: string }> = [
+      { path: join(dir.root, "cfg", "settings.json"), deny: "WebFetch" },
+      { path: join(dir.root, "home", ".claude", "settings.json"), deny: "Read(/a)" },
+      { path: join(dir.root, "proj", ".claude", "settings.json"), deny: "Read(/b)" },
+    ];
+    let snap = await snapshotSettings({ ...input, env: {} });
+    expect(snap.loaded.settings.permissions?.deny ?? []).toEqual([]);
+    for (const t of targets) {
+      await writeFile(t.path, JSON.stringify({ permissions: { deny: [t.deny] } }));
+      const next = await pollSettings(snap, { ...input, env: {} });
+      expect(next.changed).toBe(true);
+      expect(next.notices.some((n) => n.includes(t.path))).toBe(true);
+      expect(next.loaded.settings.permissions?.deny).toContain(t.deny);
+      snap = next.snapshot;
+    }
   });
 
   // spec: AC-PERM-19

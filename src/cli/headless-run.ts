@@ -439,7 +439,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const ruleInput = (() => {
       try {
         return ruleSetFromSettings({
-          loaded: input.settings,
+          loaded: snapshot.loaded,
           env: policyEnv,
           parsers: parsers as never,
           ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
@@ -450,7 +450,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     })();
     let rules: RuleSet | undefined = ruleInput?.rules;
-    let effectiveSettings = input.settings.settings;
+    let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = new AbortController().signal;
     const baseCtx: ToolContext = {
@@ -483,8 +483,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let pauseContinuations = 0;
 
     for (;;) {
-      // cli-config "Live settings reload": re-stat before each turn and tool batch; invalid files keep
-      // the previous settings and rules; a rule-compile failure keeps the previous rules.
+      // cli-config "Live settings reload": re-stat before each turn and tool batch.
       const poll = await pollSettings(snapshot, input.loadInput);
       snapshot = poll.snapshot;
       for (const change of poll.events)
@@ -848,6 +847,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
       const ctx: ToolContext = {
         ...baseCtx,
+        settings: effectiveSettings,
         readResults: buildReadResultsIndex(events, epochNum),
         ...(rules === undefined
           ? {}
