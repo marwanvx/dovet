@@ -300,6 +300,9 @@ export type ExecuteToolsDeps = {
   signal?: AbortSignal;
   /** Secret values that never reach the model or the log (permissions §8); key formats are always redacted. */
   secrets?: () => readonly NamedSecret[];
+  /** Re-stat hook run before each batch that executes (cli-config "Live settings reload");
+   * the caller decides what a change re-applies (rules, context, events). */
+  beforeBatch?: () => Promise<void>;
 };
 
 export type ExecutedResult = { callId: string; name: string; output: ToolOutput; invalid: boolean };
@@ -436,6 +439,7 @@ export async function executeTools(
     const items = batch.map((idx) => valid[idx]).filter((v) => v !== undefined);
     const pending = items.filter((v) => !results.has(v.call.id));
     if (pending.length === 0) continue;
+    await deps.beforeBatch?.();
     const alone = pending.length === 1 && pending[0]?.tool.parallelSafe !== true;
     if (alone) {
       const v = pending[0];

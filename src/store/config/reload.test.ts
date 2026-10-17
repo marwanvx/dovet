@@ -108,10 +108,8 @@ describe("live settings reload", () => {
       "home/.claude/settings.json": '{ "permissions": { "deny": [] } }',
       "proj/.claude/settings.json": '{ "permissions": { "deny": [] } }',
     });
-    // One file edited per poll: if any file entry were dropped from
-    // watchedSettingsPaths, its edit would go undetected (directory signatures stay
-    // unchanged on in-place writes) and fail. Baseline and edit differ in size, so
-    // rewrites are visible to stat polling even within one mtime tick.
+    // One file edited per poll: a dropped watch entry then goes undetected (in-place
+    // writes don't move directory signatures) and fails. Sizes differ across edits.
     const targets: Array<{ path: string; deny: string }> = [
       { path: join(dir.root, "cfg", "settings.json"), deny: "WebFetch" },
       { path: join(dir.root, "home", ".claude", "settings.json"), deny: "Read(/a)" },

@@ -475,15 +475,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
     const guards = new GuardTracker();
     const maxRequests = input.args.maxRequests ?? MAX_REQUESTS_PER_TURN;
-    let usage: Record<string, unknown> = {};
-    let prevCache: number | undefined;
-    let prevTurn = 0;
-    let emptyRetries = 0;
-    let refusalRetries = 0;
-    let pauseContinuations = 0;
-
-    for (;;) {
-      // cli-config "Live settings reload": re-stat before each turn and tool batch.
+    // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
+    const pollAndApply = async (): Promise<void> => {
       const poll = await pollSettings(snapshot, input.loadInput);
       snapshot = poll.snapshot;
       for (const change of poll.events)
@@ -504,6 +497,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           warnings.push(`Settings change kept the previous rules: ${problems}`);
         }
       }
+    };
+    let usage: Record<string, unknown> = {};
+    let prevCache: number | undefined;
+    let prevTurn = 0;
+    let emptyRetries = 0;
+    let refusalRetries = 0;
+    let pauseContinuations = 0;
+
+    for (;;) {
+      await pollAndApply();
       const built = buildRequest(events, { header, params, cache });
       try {
         validateTranscriptItems(
@@ -845,7 +848,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           warnings,
         };
       }
-      const ctx: ToolContext = {
+      const buildCtx = (): ToolContext => ({
         ...baseCtx,
         settings: effectiveSettings,
         readResults: buildReadResultsIndex(events, epochNum),
@@ -859,7 +862,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                 ...(parsers === undefined ? {} : { parsers }),
               },
             }),
-      };
+      });
+      let ctx = buildCtx();
       const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
         if (input.args.disallowedTools.includes(name))
           return { behavior: "deny", reason: "disallowed by --disallowedTools" };
@@ -922,6 +926,10 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         prompt: () => Promise.resolve({ allow: false, dontAskAgain: false }),
         run: (tool, value, c) => (tool.run as (v: unknown, ctx: ToolContext) => Promise<never>)(value, c) as never,
         makeContext: () => ctx,
+        beforeBatch: async () => {
+          await pollAndApply();
+          ctx = buildCtx();
+        },
         offloadDir: `${input.dirs.data}/tmp`,
         headless: true,
         secrets: outputSecrets,

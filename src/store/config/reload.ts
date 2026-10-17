@@ -97,7 +97,10 @@ function sameSigs(a: SettingsSnapshot, b: Pick<SettingsSnapshot, "files" | "dirs
 /** Load once and remember the stat of every watched file and directory. */
 export async function snapshotSettings(input: LoadInput): Promise<SettingsSnapshot> {
   const paths = watchedSettingsPaths(input);
-  const [sigs, loaded] = await Promise.all([takeSigs(paths), loadSettings(input)]);
+  // Signatures first: a write during the load then leaves signatures stale, which the next
+  // poll recovers; signatures taken after the load would be ahead of it and never recover.
+  const sigs = await takeSigs(paths);
+  const loaded = await loadSettings(input);
   return { ...sigs, loaded };
 }
 

@@ -272,6 +272,8 @@ describe("runHeadless", () => {
       const read = await readSession(loc);
       const changes = read.events.filter((e) => e.type === "settings.change");
       expect(changes.length).toBe(2);
+      const added = changes[0]?.data as { new?: { deny?: string[] } } | undefined;
+      expect(added?.new?.deny).toEqual(["echo"]);
       for (const c of changes) {
         expect((c.data as { key: string }).key).toBe("permissions");
         expect((c.data as { source: string }).source).toBe("file");
@@ -346,11 +348,88 @@ describe("runHeadless", () => {
         toolDefs: [probe, editor],
       });
       expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("Settings updated from"))).toBe(true);
       expect(seen).toHaveLength(2);
       const before = seen[0] as { glob?: unknown };
       const after = seen[1] as { glob?: unknown };
       expect(before.glob).toEqual({ respectGitignore: true });
       expect(after.glob).toEqual({ respectGitignore: false });
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: cli-config "Live settings reload"
+  test("a rule written in one batch denies a call in the next batch of the same response", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const ran: string[] = [];
+      const echo = echoTool((text) => {
+        ran.push(text);
+        return { status: "ok", text: `echo:${text}` };
+      });
+      const setRules: ToolDefinition<unknown> = {
+        name: "SetRules",
+        input: z.strictObject({ deny: z.array(z.string()) }),
+        descriptionFile: "tools/Read.md",
+        errorExample: { deny: [] },
+        parallelSafe: false,
+        mutates: "files",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (input) => {
+          writeFileSync(local, JSON.stringify({ permissions: { deny: (input as { deny: string[] }).deny } }));
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "rules set" }] });
+        },
+      };
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("0"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          {
+            toolCalls: [
+              { id: "c1", name: "SetRules", input: { deny: ["echo"] } },
+              { id: "c2", name: "echo", input: { text: "blocked" } },
+            ],
+          },
+          { text: "done" },
+        ]),
+        toolDefs: [echo, setRules],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(ran).toEqual([]);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const denied = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { status: string; output: string });
+      expect(denied).toHaveLength(2);
+      expect(denied.filter((d) => d.status === "error" && d.output.includes("Permission denied"))).toHaveLength(1);
     } finally {
       await dir.dispose();
     }
@@ -413,10 +492,32 @@ describe("runHeadless", () => {
 
   // spec: AC-PERM-19
   test("a mid-session edit that fails the rule compile keeps the previous rules with a warning", async () => {
-    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": ["echo"] } }' });
     try {
       const local = join(dir.root, ".dovet", "settings.local.json");
       const ran: string[] = [];
+      const setFile: ToolDefinition<unknown> = {
+        name: "SetFile",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: false,
+        mutates: "files",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          // Schema-valid but rule-compile-breaking; the deny list also drops "echo" on paper, so only
+          // keeping the previous rules lets the later echo call be denied again.
+          writeFileSync(
+            local,
+            JSON.stringify({ permissions: { deny: [], examples: [{ Bash: "echo hi", expect: "deny" }] } }),
+          );
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "wrote" }] });
+        },
+      };
       const out = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
@@ -442,28 +543,82 @@ describe("runHeadless", () => {
         host: "h",
         platform: fakePlatform(),
         adapter: adapterFor([
-          { toolCall: { id: "c1", name: "echo", input: { text: "break-examples" } } },
-          { toolCall: { id: "c2", name: "echo", input: { text: "second" } } },
+          { toolCall: { id: "c1", name: "SetFile", input: {} } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "still" } } },
           { text: "done" },
         ]),
         toolDefs: [
           echoTool((text) => {
             ran.push(text);
-            if (text === "break-examples")
-              writeFileSync(
-                local,
-                JSON.stringify({ permissions: { deny: [], examples: [{ Bash: "echo hi", expect: "deny" }] } }),
-              );
+            return { status: "ok", text: `echo:${text}` };
+          }),
+          setFile,
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(ran).toEqual([]);
+      expect(out.warnings.some((w) => w.includes("kept the previous rules"))).toBe(true);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.some((e) => e.type === "settings.change")).toBe(true);
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { status: string; output: string });
+      expect(results.filter((r) => r.status === "error" && r.output.includes("Permission denied"))).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-PERM-19
+  test("a mid-session edit that is invalid JSON keeps the previous settings and the turn continues", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("1"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "echo", input: { text: "write-bad" } } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "after" } } },
+          { text: "done" },
+        ]),
+        toolDefs: [
+          echoTool((text) => {
+            if (text === "write-bad") writeFileSync(local, "{ invalid json");
             return { status: "ok", text: `echo:${text}` };
           }),
         ],
       });
       expect(out.exit).toEqual({ kind: "ok" });
-      expect(ran).toEqual(["break-examples", "second"]);
-      expect(out.warnings.some((w) => w.includes("kept the previous rules"))).toBe(true);
+      expect(out.result).toBe("done");
+      expect(
+        out.warnings.some((w) => w.includes("keeping previous settings") && w.includes("settings.local.json")),
+      ).toBe(true);
       const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
-      expect(read.events.some((e) => e.type === "settings.change")).toBe(true);
+      expect(read.events.filter((e) => e.type === "settings.change")).toEqual([]);
     } finally {
       await dir.dispose();
     }
