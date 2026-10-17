@@ -365,6 +365,7 @@ describe("runHeadless", () => {
     try {
       const local = join(dir.root, ".dovet", "settings.local.json");
       const ran: string[] = [];
+      const seen: unknown[] = [];
       const echo = echoTool((text) => {
         ran.push(text);
         return { status: "ok", text: `echo:${text}` };
@@ -384,6 +385,23 @@ describe("runHeadless", () => {
         run: (input) => {
           writeFileSync(local, JSON.stringify({ permissions: { deny: (input as { deny: string[] }).deny } }));
           return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "rules set" }] });
+        },
+      };
+      const probe: ToolDefinition<unknown> = {
+        name: "Probe",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (_input, ctx) => {
+          seen.push(ctx.settings);
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "probed" }] });
         },
       };
       const out = await runHeadless({
@@ -415,20 +433,24 @@ describe("runHeadless", () => {
             toolCalls: [
               { id: "c1", name: "SetRules", input: { deny: ["echo"] } },
               { id: "c2", name: "echo", input: { text: "blocked" } },
+              { id: "c3", name: "Probe", input: {} },
             ],
           },
           { text: "done" },
         ]),
-        toolDefs: [echo, setRules],
+        toolDefs: [echo, setRules, probe],
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(ran).toEqual([]);
+      // Probe shares batch 2 with the denied echo and must see the settings that batch poll applied.
+      expect(seen).toHaveLength(1);
+      expect((seen[0] as { permissions?: { deny?: string[] } }).permissions?.deny).toEqual(["echo"]);
       const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
       const denied = read.events
         .filter((e) => e.type === "tool.result")
         .map((e) => e.data as { status: string; output: string });
-      expect(denied).toHaveLength(2);
+      expect(denied).toHaveLength(3);
       expect(denied.filter((d) => d.status === "error" && d.output.includes("Permission denied"))).toHaveLength(1);
     } finally {
       await dir.dispose();
@@ -575,6 +597,7 @@ describe("runHeadless", () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
     try {
       const local = join(dir.root, ".dovet", "settings.local.json");
+      const ran: string[] = [];
       const out = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
@@ -606,6 +629,7 @@ describe("runHeadless", () => {
         ]),
         toolDefs: [
           echoTool((text) => {
+            ran.push(text);
             if (text === "write-bad") writeFileSync(local, "{ invalid json");
             return { status: "ok", text: `echo:${text}` };
           }),
@@ -613,6 +637,7 @@ describe("runHeadless", () => {
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("done");
+      expect(ran).toEqual(["write-bad", "after"]);
       expect(
         out.warnings.some((w) => w.includes("keeping previous settings") && w.includes("settings.local.json")),
       ).toBe(true);

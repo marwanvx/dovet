@@ -107,6 +107,8 @@ describe("live settings reload", () => {
       "cfg/settings.json": '{ "permissions": { "deny": [] } }',
       "home/.claude/settings.json": '{ "permissions": { "deny": [] } }',
       "proj/.claude/settings.json": '{ "permissions": { "deny": [] } }',
+      "proj/.claude/settings.local.json": '{ "permissions": { "deny": [] } }',
+      "proj/.dovet/settings.json": '{ "permissions": { "deny": [] } }',
     });
     // One file edited per poll: a dropped watch entry then goes undetected (in-place
     // writes don't move directory signatures) and fails. Sizes differ across edits.
@@ -114,6 +116,8 @@ describe("live settings reload", () => {
       { path: join(dir.root, "cfg", "settings.json"), deny: "WebFetch" },
       { path: join(dir.root, "home", ".claude", "settings.json"), deny: "Read(/a)" },
       { path: join(dir.root, "proj", ".claude", "settings.json"), deny: "Read(/b)" },
+      { path: join(dir.root, "proj", ".claude", "settings.local.json"), deny: "Read(/c)" },
+      { path: join(dir.root, "proj", ".dovet", "settings.json"), deny: "Read(/d)" },
     ];
     let snap = await snapshotSettings({ ...input, env: {} });
     expect(snap.loaded.settings.permissions?.deny ?? []).toEqual([]);
