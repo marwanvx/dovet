@@ -719,6 +719,69 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: permissions §3.1 (a rule that compiles with a warning surfaces it on reload too)
+  test("a rule warning from a mid-session edit reaches the run's warnings", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": "{}" });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const setFile: ToolDefinition<unknown> = {
+        name: "SetFile",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: false,
+        mutates: "files",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          writeFileSync(local, JSON.stringify({ permissions: { allow: ["Read(open[)"] } }));
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "wrote" }] });
+        },
+      };
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("D"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "SetFile", input: {} } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "hi" } } },
+          { text: "done" },
+        ]),
+        toolDefs: [echoTool(), setFile],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("Read(open["))).toBe(true);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.some((e) => e.type === "settings.change")).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: AC-PERM-19
   test("a mid-session edit that is invalid JSON keeps the previous settings and the turn continues", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
@@ -1274,6 +1337,93 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: agent-loop "Stop-reason handling" (max_tokens without a tool call)
+  test("a thinking-only response cut off at the output limit finalizes with the truncation note", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("B"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "max_tokens", reasoning: "thinking hard" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toContain("truncated at output limit");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(1);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (refusal before any visible output)
+  test("a thinking-only refusal retries with a clean transcript", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "refusal", reasoning: "the filter stopped the reply" },
+          { stop: "end_turn", text: "fine" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("fine");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: permissions §3.1, agent-loop "Turn state machine" (a settings error must fail closed)
   test("a malformed settings rule is a usage error before anything runs", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "allow": ["Bash(ls) x"] } }' });
@@ -1323,7 +1473,7 @@ describe("runHeadless", () => {
     }
   });
 
-  // spec: cli-config "Settings files" (a settings file that fails to load is a usage error)
+  // spec: cli-config "Startup sequence (interactive)" (step 1), permissions §3.1
   test("a broken settings file is a usage error before anything runs", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": "{ not json" });
     try {
@@ -1851,6 +2001,17 @@ describe("runHeadless", () => {
       expect(exitCodeFor(out.exit)).toBe(3);
       expect(out.incomplete).toBe(true);
       expect(out.result).toContain("/model");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const callIds = read.events
+        .filter((e) => e.type === "tool.call")
+        .map((e) => (e.data as { callId: string }).callId);
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { callId: string; status: string; output: string });
+      expect(callIds).toEqual(["c1", "c2", "c3"]);
+      expect(results.map((r) => r.callId)).toEqual(["c1", "c2", "c3"]);
+      expect(results.every((r) => r.status === "error" && r.output.includes("Unknown tool"))).toBe(true);
     } finally {
       await dir.dispose();
     }

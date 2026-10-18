@@ -885,8 +885,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           : {}),
       };
       const action = decideStopAction(stopInput);
-      // An empty or thinking-only response is not appended, so the retry sees a clean transcript.
-      if (!emptyOnly) push("model.response", epochNum, turn, done.stored);
+      // A response with no text and no tool call is not appended (agent-loop "Stop-reason handling"), so an
+      // empty or thinking-only retry sees a clean transcript and the log never holds a reasoning-only turn.
+      if (hasText || calls.length > 0) push("model.response", epochNum, turn, done.stored);
       const recordNotRun = (text: (c: ParsedCall) => string): void => {
         for (const c of calls) {
           const raw = (() => {

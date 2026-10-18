@@ -532,6 +532,37 @@ describe("no cascade and single prompt", () => {
   });
 
   // spec: AC-LOOP-12
+  test("a deny with a comment does not auto-run an identical sibling", async () => {
+    const registry = createToolRegistry([toolDef("Read", true)]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    let allowed = false;
+    let prompts = 0;
+    const calls = parseToolCalls(
+      storedParts([
+        { id: "a", name: "Read", input: {} },
+        { id: "b", name: "Read", input: {} },
+      ]).parts,
+    );
+    const { results, prompted } = await executeTools(calls, {
+      registry,
+      decide: () => (allowed ? { behavior: "allow", reason: "granted" } : { behavior: "ask", reason: "ask" }),
+      prompt: () => {
+        prompts += 1;
+        allowed = true;
+        return Promise.resolve({ allow: false, comment: "no", dontAskAgain: true });
+      },
+      run: (tool, input, ctx) => (tool.run as (i: unknown, c: ToolContext) => Promise<ToolOutput>)(input, ctx),
+      makeContext: () => base,
+      offloadDir: join(tmpdir(), "dovet-loop-off"),
+    });
+    expect(prompts).toBe(2);
+    expect(prompted).toBe(2);
+    expect(results.map((r) => r.callId)).toEqual(["a", "b"]);
+    expect(results.every((r) => r.output.status === "error")).toBe(true);
+    await rm(base.session.cwd, { recursive: true, force: true });
+  });
+
+  // spec: AC-LOOP-12
   test("a tool that throws gets an error result and its siblings still run", async () => {
     const registry = createToolRegistry([
       toolDef("Read", true, () => {
