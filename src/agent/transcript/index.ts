@@ -25,7 +25,7 @@ export {
   loadInstruction,
 } from "./instructions.ts";
 export { escapeReservedMarkers } from "./markers.ts";
-export { PROMPT_FILES, PROMPT_VERSION, prompt, toolDescription } from "./prompts.ts";
+export { PROMPT_FILES, PROMPT_VERSION, prompt } from "./prompts.ts";
 export {
   type EnvironmentFacts,
   type InstructionText,

@@ -3,20 +3,30 @@ import {
   buildRequest,
   cacheReadOf,
   cacheWarning,
+  checkTranscriptPairing,
   decideStopAction,
+  ENDED_NOT_RUN,
   executeTools,
   GuardTracker,
   historyRepairOffer,
+  isEarlyEligible,
   MAX_REQUESTS_PER_TURN,
   modelRequestBody,
   modelRequestData,
+  type ParsedCall,
   parseToolCalls,
   prefixFingerprint,
+  prompt,
+  REFUSAL_NOT_RUN,
   renderSystemPrompt,
+  requestCapFor,
   serializeTools,
   sessionDate,
+  shellToolFor,
+  shellToolName,
+  shouldDiscardEarly,
   startEpoch,
-  toolDescription,
+  TRUNCATED_NOT_RUN,
 } from "../agent/index.ts";
 import {
   callModel,
@@ -28,7 +38,7 @@ import {
   type SdkCall,
   type StreamEvent,
 } from "../ai/index.ts";
-import { canonicalizePath, type Os, type Platform, readGitHead } from "../platform/index.ts";
+import { canonicalizePath, type Os, type Platform, readGitHead, type ShellChoice } from "../platform/index.ts";
 import {
   analyzeShell,
   createDotEnvSecrets,
@@ -53,22 +63,24 @@ import {
   listSessions,
   openSession,
   pollSettings,
+  REPAIR_HINT,
   readSession,
   repairEpochEvent,
   resumeSession,
   Secret,
   SettingsError,
+  type SettingsSnapshot,
   snapshotSettings,
   validateTranscriptItems,
 } from "../store/index.ts";
 import {
   buildReadResultsIndex,
   builtinTools,
-  createBashTool,
   createReadState,
   createToolRegistry,
   type ToolContext,
   type ToolDefinition,
+  type ToolOutput,
   toolInputSchema,
 } from "../tools/index.ts";
 import type { HeadlessArgs } from "./args.ts";
@@ -127,28 +139,24 @@ export function resolveHeadlessModel(
 }
 
 export function headlessToolDefs(input: {
-  platform: Platform;
+  shell?: ShellChoice | undefined;
   tmpDir: string;
-  offline: boolean;
 }): ToolDefinition<unknown>[] {
   const base = [...builtinTools];
-  const bash =
-    input.platform.os === "win32"
-      ? createBashTool({ tmpDir: input.tmpDir, gitBash: true })
-      : createBashTool({ tmpDir: input.tmpDir });
   return [
     ...base.filter((t) => t.name !== "Bash" && t.name !== "PowerShell" && t.name !== "AskUserQuestion"),
-    bash,
+    shellToolFor(input.shell, input.tmpDir),
   ] as ToolDefinition<unknown>[];
 }
 
-function toToolDef(
-  def: ToolDefinition<unknown>,
-  shellTool: string,
-): { name: string; description: string; inputSchema: Record<string, unknown> } {
+function toToolDef(def: ToolDefinition<unknown>): {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+} {
   let description: string;
   try {
-    description = toolDescription(def.name === "Bash" && shellTool === "git-bash" ? "BashGitBash" : def.name);
+    description = prompt(def.descriptionFile);
   } catch {
     description = def.name;
   }
@@ -200,7 +208,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     mode = parsedMode.data === "auto" ? "default" : parsedMode.data;
   }
   // Live settings reload (cli-config): snapshot the watched files once; the turn polls before each batch.
-  let snapshot = await snapshotSettings(input.loadInput);
+  // A malformed settings file fails the run closed (permissions §3.1), before any session event is written.
+  let snapshot: SettingsSnapshot;
+  try {
+    snapshot = await snapshotSettings(input.loadInput);
+  } catch (err) {
+    if (!(err instanceof SettingsError)) throw err;
+    return errOut("", `invalid settings: ${err.problems.map(describeProblem).join("; ")}`, { kind: "usage" }, warnings);
+  }
 
   const configured = input.settings.settings.providers?.[provider];
   const record = (() => {
@@ -336,18 +351,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       events.push(writer.append({ type, epoch, turn, data }));
     };
     const isNew = resumed.lines === 0;
+    const shellChoice = await input.platform.resolveShell(input.settings.settings.shell);
+    const defs = input.toolDefs ?? headlessToolDefs({ shell: shellChoice, tmpDir: `${input.dirs.data}/tmp` });
     let header: RenderInput["header"];
     let params: RenderInput["params"];
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
     let epochNum: number;
     let turn: number;
     if (isNew) {
-      const defs =
-        input.toolDefs ??
-        headlessToolDefs({ platform: input.platform, tmpDir: `${input.dirs.data}/tmp`, offline: input.args.offline });
-      const toolsJson = serializeTools(
-        defs.map((d) => toToolDef(d, input.platform.os === "win32" ? "git-bash" : "bash")),
-      );
+      const toolsJson = serializeTools(defs.map(toToolDef));
       const gitPath = await input.platform.resolve("git").catch(() => undefined);
       const git =
         gitPath === undefined
@@ -364,7 +376,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         },
         {
           os: input.os,
-          shellTool: "Bash",
+          shellTool: shellToolName(shellChoice),
           workspaceRoot: input.projectRoot,
           git,
           date: sessionDate(input.clock.now()),
@@ -420,9 +432,6 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       push("user.message", epochNum, turn, { text: input.prompt });
     }
 
-    const defs =
-      input.toolDefs ??
-      headlessToolDefs({ platform: input.platform, tmpDir: `${input.dirs.data}/tmp`, offline: input.args.offline });
     const registry = createToolRegistry(defs);
     const parsers = await loadShellParsers().catch(() => undefined);
     const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
@@ -436,20 +445,24 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       ppid: input.pid,
       selfNames: ["dovet", "bun"] as readonly string[],
     };
-    const ruleInput = (() => {
-      try {
-        return ruleSetFromSettings({
-          loaded: snapshot.loaded,
-          env: policyEnv,
-          parsers: parsers as never,
-          ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
-          configDir: input.dirs.config,
-        });
-      } catch {
-        return undefined;
-      }
-    })();
-    let rules: RuleSet | undefined = ruleInput?.rules;
+    // A malformed rule set fails the run closed (permissions §3.1): guessing would run tools under wrong rules.
+    let rules: RuleSet;
+    try {
+      const compiled = ruleSetFromSettings({
+        loaded: snapshot.loaded,
+        env: policyEnv,
+        parsers: parsers as never,
+        ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
+        configDir: input.dirs.config,
+      });
+      rules = compiled.rules;
+      warnings.push(...compiled.warnings.map((w) => w.message));
+    } catch (err) {
+      const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
+      writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
+      await writer.flush();
+      return errOut(sessionId, `invalid settings: ${problems}`, { kind: "usage" }, warnings);
+    }
     let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = new AbortController().signal;
@@ -485,13 +498,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (poll.changed) {
         effectiveSettings = poll.settings;
         try {
-          rules = ruleSetFromSettings({
+          const compiled = ruleSetFromSettings({
             loaded: poll.loaded,
             env: policyEnv,
             parsers: parsers as never,
             ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
             configDir: input.dirs.config,
-          }).rules;
+          });
+          rules = compiled.rules;
+          warnings.push(...compiled.warnings.map((w) => w.message));
         } catch (err) {
           const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
           warnings.push(`Settings change kept the previous rules: ${problems}`);
@@ -505,8 +520,86 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let refusalRetries = 0;
     let pauseContinuations = 0;
 
+    const buildCtx = (): ToolContext => ({
+      ...baseCtx,
+      settings: effectiveSettings,
+      readResults: buildReadResultsIndex(events, epochNum),
+      policy: {
+        rules,
+        mode,
+        env: policyEnv as never,
+        ...(parsers === undefined ? {} : { parsers }),
+      },
+    });
+    let ctx = buildCtx();
+    const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
+      if (input.args.disallowedTools.includes(name))
+        return { behavior: "deny", reason: "disallowed by --disallowedTools" };
+      if (input.args.allowedTools.includes(name)) return { behavior: "allow", reason: "allowed by --allowedTools" };
+      const prep = registry.prepare(name, value);
+      if (!prep.ok) return { behavior: "deny", reason: prep.message };
+      try {
+        const desc = prep.tool.describeAction(prep.input as never, ctx);
+        if (desc.kind === "read" || desc.kind === "edit") {
+          const d = decide(
+            { tool: name, action: { kind: desc.kind, paths: [...desc.paths] } },
+            { mode, rules, env: policyEnv },
+          );
+          return d.behavior === "allow"
+            ? { behavior: "allow", reason: d.reason }
+            : d.behavior === "deny"
+              ? { behavior: "deny", reason: d.reason }
+              : { behavior: "ask", reason: d.reason };
+        }
+        if (desc.kind === "shell") {
+          if (parsers === undefined) return { behavior: "ask", reason: "no shell parsers" };
+          const analysis = analyzeShell(parsers, desc.shell === "powershell" ? "powershell" : "bash", desc.command, {
+            cwd: policyEnv.cwd,
+            workingDirs: [...policyEnv.workingDirs],
+            home: policyEnv.home,
+            glob: expandGlob,
+            isDirectory,
+          });
+          const d = decide(
+            { tool: name, action: { kind: "shell", analysis, sandboxed: desc.sandboxed } },
+            { mode, rules, env: policyEnv },
+          );
+          return d.behavior === "allow"
+            ? { behavior: "allow", reason: d.reason }
+            : d.behavior === "deny"
+              ? { behavior: "deny", reason: d.reason }
+              : { behavior: "ask", reason: d.reason };
+        }
+        if (desc.kind === "network") {
+          const d = decide(
+            { tool: name, action: { kind: "network", host: desc.host } },
+            { mode, rules, env: policyEnv },
+          );
+          return d.behavior === "allow"
+            ? { behavior: "allow", reason: d.reason }
+            : d.behavior === "deny"
+              ? { behavior: "deny", reason: d.reason }
+              : { behavior: "ask", reason: d.reason };
+        }
+        if (desc.kind === "interaction") return { behavior: "ask", reason: "needs the user's answer" };
+        return { behavior: "allow", reason: "task list" };
+      } catch (err) {
+        return { behavior: "deny", reason: err instanceof Error ? err.message : String(err) };
+      }
+    };
+    const runTool = (tool: ToolDefinition<unknown>, value: unknown, c: ToolContext): Promise<ToolOutput> =>
+      (tool.run as (v: unknown, ctx: ToolContext) => Promise<ToolOutput>)(value, c);
+    const runEarly = async (tool: ToolDefinition<unknown>, value: unknown): Promise<ToolOutput> => {
+      try {
+        return await runTool(tool, value, ctx);
+      } catch (err) {
+        return { status: "error", content: [{ kind: "text", text: err instanceof Error ? err.message : String(err) }] };
+      }
+    };
+
     for (;;) {
       await pollAndApply();
+      ctx = buildCtx();
       const built = buildRequest(events, { header, params, cache });
       try {
         validateTranscriptItems(
@@ -533,6 +626,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                 : { kind: t.kind },
           ),
         );
+        const pairing = checkTranscriptPairing(built.transcript);
+        if (pairing !== null) throw new Error(`InvariantViolation: ${pairing}. Repair: ${REPAIR_HINT}`);
       } catch (err) {
         writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
         await writer.flush();
@@ -586,6 +681,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       let failed: Extract<StreamEvent, { type: "error" }> | undefined;
       let aborted = false;
       let sawRequest = false;
+      const early = new Map<string, Promise<ToolOutput>>();
+      const earlyBlocks = new Map<number, { id: string; name: string; json: string }>();
       const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
         new Promise((resolve, reject) => {
           const t = setTimeout(resolve, ms);
@@ -632,6 +729,28 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           if (warn !== null) warnings.push(warn.text);
           prevCache = read;
           prevTurn = turn;
+        } else if (e.type === "tool_call.start") {
+          earlyBlocks.set(e.blockIndex, { id: e.id, name: e.name, json: "" });
+        } else if (e.type === "tool_call.delta") {
+          const block = earlyBlocks.get(e.blockIndex);
+          if (block !== undefined) block.json += e.partialJson;
+        } else if (e.type === "block.done" && e.kind === "tool_call") {
+          const block = earlyBlocks.get(e.blockIndex);
+          earlyBlocks.delete(e.blockIndex);
+          if (block !== undefined && !early.has(block.id)) {
+            const value = (() => {
+              try {
+                return JSON.parse(block.json) as unknown;
+              } catch {
+                return undefined;
+              }
+            })();
+            const prep = value === undefined ? undefined : registry.prepare(block.name, value);
+            if (prep?.ok === true && isEarlyEligible(block.name, decideFn(block.name, prep.input).behavior))
+              early.set(block.id, runEarly(prep.tool, prep.input));
+          }
+        } else if (e.type === "discarded" || e.type === "kept") {
+          early.clear();
         }
       }
       if (!sawRequest && !aborted) {
@@ -724,8 +843,18 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (warn !== null) warnings.push(warn.text);
       prevCache = read;
       prevTurn = turn;
-      push("model.response", epochNum, turn, done.stored);
       const calls = parseToolCalls(done.stored.parts);
+      if (shouldDiscardEarly(done.stopReason, calls.length > 0)) early.clear();
+      const invalidOf = (c: ParsedCall): string | undefined => {
+        let value: unknown;
+        try {
+          value = JSON.parse(c.rawJson);
+        } catch {
+          return "INVALID_JSON";
+        }
+        const prep = registry.prepare(c.name, value);
+        return prep.ok ? undefined : prep.message;
+      };
       const malformedPause = (() => {
         if (calls.length === 0) {
           guards.noteMalformedRound(false, "", false, header.model);
@@ -733,40 +862,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         }
         if (done.stopReason === "max_tokens")
           return guards.noteMalformedRound(true, "cut off by the output limit", true, header.model);
-        const bad: string[] = [];
-        for (const c of calls) {
-          let value: unknown;
-          try {
-            value = JSON.parse(c.rawJson);
-          } catch {
-            bad.push("INVALID_JSON");
-            continue;
-          }
-          const prep = registry.prepare(c.name, value);
-          if (!prep.ok) bad.push(prep.message);
-        }
+        const bad = calls.flatMap((c) => invalidOf(c) ?? []);
         if (bad.length === calls.length)
           return guards.noteMalformedRound(true, bad[0] ?? "invalid tool call", false, header.model);
         guards.noteMalformedRound(false, "", false, header.model);
         return null;
       })();
-      if (malformedPause !== null) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
-        return {
-          sessionId,
-          result: malformedPause.message,
-          stopReason: "error",
-          incomplete: true,
-          usage,
-          cost: null,
-          receipt: {},
-          exit: { kind: "guard" },
-          warnings,
-        };
-      }
       const hasText = done.stored.parts.some((p) => p.kind === "text" && p.text.trim() !== "");
-      const emptyOnly = done.stored.parts.length > 0 && !hasText && calls.length === 0;
+      // Refusal and max_tokens have their own stop-reason rows; anything else with no text and no call is empty.
+      const emptyOnly =
+        !hasText && calls.length === 0 && done.stopReason !== "refusal" && done.stopReason !== "max_tokens";
       const truncated = done.stopReason === "max_tokens" && calls.length > 0;
       const stopInput = {
         stop: done.stopReason,
@@ -782,7 +887,46 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           : {}),
       };
       const action = decideStopAction(stopInput);
+      // A response with no text and no tool call is not appended (agent-loop "Stop-reason handling"), so an
+      // empty or thinking-only retry sees a clean transcript and the log never holds a reasoning-only turn.
+      if (hasText || calls.length > 0) push("model.response", epochNum, turn, done.stored);
+      const recordNotRun = (text: (c: ParsedCall) => string): void => {
+        for (const c of calls) {
+          const raw = (() => {
+            try {
+              return JSON.parse(c.rawJson);
+            } catch {
+              return c.rawJson;
+            }
+          })();
+          const prep = registry.prepare(c.name, raw);
+          push("tool.call", epochNum, turn, {
+            callId: c.id,
+            name: c.name,
+            raw,
+            input: prep.ok ? prep.normalized : raw,
+          });
+          push("tool.result", epochNum, turn, { callId: c.id, status: "error", output: text(c) });
+        }
+      };
+      if (malformedPause !== null) {
+        recordNotRun((c) => (truncated ? TRUNCATED_NOT_RUN : (invalidOf(c) ?? "invalid tool call")));
+        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
+        await writer.flush();
+        return {
+          sessionId,
+          result: malformedPause.message,
+          stopReason: "error",
+          incomplete: true,
+          usage,
+          cost: null,
+          receipt: {},
+          exit: { kind: "guard" },
+          warnings,
+        };
+      }
       if (action.kind === "retry") {
+        if (calls.length > 0) recordNotRun(() => REFUSAL_NOT_RUN);
         if (emptyOnly) emptyRetries += 1;
         else refusalRetries += 1;
         continue;
@@ -793,6 +937,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           .map((p) => (p.kind === "text" ? p.text : ""))
           .join("");
         if (action.reason === "refusal") {
+          if (calls.length > 0) recordNotRun(() => REFUSAL_NOT_RUN);
           writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "refusal" } });
           await writer.flush();
           return {
@@ -807,6 +952,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             warnings,
           };
         }
+        // Every tool_use needs exactly one tool_result (agent-loop "Stop-reason handling"), so a call the
+        // finalize skipped is logged as not run instead of leaving the turn unpaired.
+        if (calls.length > 0) recordNotRun(() => ENDED_NOT_RUN);
         writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "end_turn" } });
         await writer.flush();
         return {
@@ -822,11 +970,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       if (action.kind === "prepare") {
-        push("system.injected", epochNum, turn, {
-          text: action.instruction,
-          reason: "queued-messages",
-          delivery: "reminder-block",
-        });
+        recordNotRun(() => TRUNCATED_NOT_RUN);
+        push("user.message", epochNum, turn, { text: action.instruction });
         continue;
       }
       if (action.kind === "pause-continue") {
@@ -848,83 +993,17 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           warnings,
         };
       }
-      const buildCtx = (): ToolContext => ({
-        ...baseCtx,
-        settings: effectiveSettings,
-        readResults: buildReadResultsIndex(events, epochNum),
-        ...(rules === undefined
-          ? {}
-          : {
-              policy: {
-                rules,
-                mode,
-                env: policyEnv as never,
-                ...(parsers === undefined ? {} : { parsers }),
-              },
-            }),
-      });
-      let ctx = buildCtx();
-      const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
-        if (input.args.disallowedTools.includes(name))
-          return { behavior: "deny", reason: "disallowed by --disallowedTools" };
-        if (input.args.allowedTools.includes(name)) return { behavior: "allow", reason: "allowed by --allowedTools" };
-        if (rules === undefined) return { behavior: "allow", reason: "no rules" };
-        const prep = registry.prepare(name, value);
-        if (!prep.ok) return { behavior: "deny", reason: prep.message };
-        try {
-          const desc = prep.tool.describeAction(prep.input as never, ctx);
-          if (desc.kind === "read" || desc.kind === "edit") {
-            const d = decide(
-              { tool: name, action: { kind: desc.kind, paths: [...desc.paths] } },
-              { mode, rules, env: policyEnv },
-            );
-            return d.behavior === "allow"
-              ? { behavior: "allow", reason: d.reason }
-              : d.behavior === "deny"
-                ? { behavior: "deny", reason: d.reason }
-                : { behavior: "ask", reason: d.reason };
-          }
-          if (desc.kind === "shell") {
-            if (parsers === undefined) return { behavior: "ask", reason: "no shell parsers" };
-            const analysis = analyzeShell(parsers, desc.shell === "powershell" ? "powershell" : "bash", desc.command, {
-              cwd: policyEnv.cwd,
-              workingDirs: [...policyEnv.workingDirs],
-              home: policyEnv.home,
-              glob: expandGlob,
-              isDirectory,
-            });
-            const d = decide(
-              { tool: name, action: { kind: "shell", analysis, sandboxed: desc.sandboxed } },
-              { mode, rules, env: policyEnv },
-            );
-            return d.behavior === "allow"
-              ? { behavior: "allow", reason: d.reason }
-              : d.behavior === "deny"
-                ? { behavior: "deny", reason: d.reason }
-                : { behavior: "ask", reason: d.reason };
-          }
-          if (desc.kind === "network") {
-            const d = decide(
-              { tool: name, action: { kind: "network", host: desc.host } },
-              { mode, rules, env: policyEnv },
-            );
-            return d.behavior === "allow"
-              ? { behavior: "allow", reason: d.reason }
-              : d.behavior === "deny"
-                ? { behavior: "deny", reason: d.reason }
-                : { behavior: "ask", reason: d.reason };
-          }
-          if (desc.kind === "interaction") return { behavior: "ask", reason: "needs the user's answer" };
-          return { behavior: "allow", reason: "task list" };
-        } catch (err) {
-          return { behavior: "deny", reason: err instanceof Error ? err.message : String(err) };
-        }
-      };
+      const earlyResults = new Map<string, ToolOutput>();
+      for (const c of calls) {
+        const pending = early.get(c.id);
+        if (pending !== undefined) earlyResults.set(c.id, await pending);
+      }
+      early.clear();
       const { results, stopped } = await executeTools(calls, {
         registry,
         decide: decideFn,
         prompt: () => Promise.resolve({ allow: false, dontAskAgain: false }),
-        run: (tool, value, c) => (tool.run as (v: unknown, ctx: ToolContext) => Promise<never>)(value, c) as never,
+        run: runTool,
         makeContext: () => ctx,
         beforeBatch: async () => {
           await pollAndApply();
@@ -932,6 +1011,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         },
         offloadDir: `${input.dirs.data}/tmp`,
         headless: true,
+        capBytes: requestCapFor(provider),
+        earlyResults,
         secrets: outputSecrets,
       });
       const byId = new Map(results.map((r) => [r.callId, r]));

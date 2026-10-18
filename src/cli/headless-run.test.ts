@@ -12,7 +12,16 @@ import {
   type TempProject,
   tempProject,
 } from "../../test/helpers/index.ts";
-import { buildRequest, cacheWarning, headerOf, modelRequestBody, TRUNCATED_INSTRUCTION } from "../agent/index.ts";
+import {
+  buildRequest,
+  cacheWarning,
+  ENDED_NOT_RUN,
+  headerOf,
+  modelRequestBody,
+  REFUSAL_NOT_RUN,
+  TRUNCATED_INSTRUCTION,
+  TRUNCATED_NOT_RUN,
+} from "../agent/index.ts";
 import { createSdkAdapter } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import { ModelRequestData } from "../schema/index.ts";
@@ -78,6 +87,7 @@ type StubStep = {
   stop: "tool_use" | "end_turn" | "max_tokens" | "refusal";
   calls?: { id: string; name: string; input: unknown }[];
   text?: string;
+  reasoning?: string;
   usage?: Record<string, unknown>;
 };
 
@@ -106,6 +116,7 @@ function stubAdapter(steps: StubStep[]) {
           packageVersion: "1",
           modelId: "m",
           parts: [
+            ...(step.reasoning === undefined ? [] : [{ kind: "reasoning", summary: step.reasoning }]),
             ...(step.calls ?? []).map((c) => ({
               kind: "tool_call",
               id: c.id,
@@ -117,6 +128,101 @@ function stubAdapter(steps: StubStep[]) {
           usage: step.usage ?? {},
           finishReason: step.stop === "tool_use" ? "tool_calls" : "stop",
         },
+      };
+    },
+  } as never;
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+function readTestTool(text: string, onStart: () => void): ToolDefinition<unknown> {
+  return {
+    name: "Read",
+    input: z.strictObject({ file_path: z.string() }),
+    descriptionFile: "tools/Read.md",
+    errorExample: { file_path: "x" },
+    parallelSafe: true,
+    mutates: "none",
+    describeAction: () => ({
+      kind: "read",
+      paths: [],
+      effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+    }),
+    run: () => {
+      onStart();
+      return Promise.resolve({ status: "ok", content: [{ kind: "text", text }] });
+    },
+  } as ToolDefinition<unknown>;
+}
+
+/** Streams one tool call, then finishes only after the driver started running it (or fails). */
+function earlyProbeAdapter(input: {
+  call: { id: string; name: string; input: unknown };
+  started: Promise<void>;
+  firstStop: "tool_use" | "max_tokens";
+  thenText: string;
+}) {
+  let step = 0;
+  const response = (parts: unknown[], finishReason: string) => ({
+    provider: "nvidia",
+    protocol: "openai-chat",
+    package: "x",
+    packageVersion: "1",
+    modelId: "m",
+    parts,
+    usage: {},
+    finishReason,
+  });
+  return {
+    render: () => ({
+      provider: "nvidia",
+      package: "x",
+      modelId: "m",
+      messages: [{ role: "user", content: "x" }],
+      tools: [],
+      providerOptions: {},
+    }),
+    stream: async function* () {
+      step += 1;
+      if (step === 1) {
+        yield { type: "tool_call.start", blockIndex: 0, id: input.call.id, name: input.call.name };
+        yield { type: "tool_call.delta", blockIndex: 0, partialJson: JSON.stringify(input.call.input) };
+        yield { type: "block.done", blockIndex: 0, kind: "tool_call" };
+        const started = await new Promise<boolean>((resolve) => {
+          const timer = setTimeout(() => resolve(false), 1000);
+          void input.started.then(() => {
+            clearTimeout(timer);
+            resolve(true);
+          });
+        });
+        if (!started) throw new Error("the tool was not started while the response was still streaming");
+        yield {
+          type: "done",
+          stopReason: input.firstStop,
+          stored: response(
+            [
+              {
+                kind: "tool_call",
+                id: input.call.id,
+                name: input.call.name,
+                inputJson: JSON.stringify(input.call.input),
+              },
+            ],
+            input.firstStop === "tool_use" ? "tool_calls" : "length",
+          ),
+        };
+        return;
+      }
+      yield {
+        type: "done",
+        stopReason: "end_turn",
+        stored: response([{ kind: "text", text: input.thenText }], "stop"),
       };
     },
   } as never;
@@ -137,11 +243,32 @@ describe("resolveHeadlessModel", () => {
 
 describe("headlessToolDefs", () => {
   test("carries the real tools without AskUserQuestion", () => {
-    const defs = headlessToolDefs({ platform: fakePlatform(), tmpDir: "/tmp", offline: false });
+    const defs = headlessToolDefs({ shell: undefined, tmpDir: "/tmp" });
     const names = defs.map((d) => d.name);
     expect(names).toContain("Read");
     expect(names).toContain("Bash");
+    expect(names).not.toContain("PowerShell");
     expect(names).not.toContain("AskUserQuestion");
+  });
+
+  // spec: platforms "Windows specifics" (QUESTIONS Q39)
+  test("registers the shell the platform resolved, with its matching description", () => {
+    const gitBash = headlessToolDefs({ shell: { kind: "git-bash", path: "/git/bash.exe" as never }, tmpDir: "/tmp" });
+    expect(gitBash.find((d) => d.name === "Bash")?.descriptionFile).toBe("tools/BashGitBash.md");
+
+    const pwsh = headlessToolDefs({
+      shell: { kind: "powershell", path: "/ps/pwsh.exe" as never, edition: "pwsh" },
+      tmpDir: "/tmp",
+    });
+    expect(pwsh.map((d) => d.name)).toContain("PowerShell");
+    expect(pwsh.map((d) => d.name)).not.toContain("Bash");
+    expect(pwsh.find((d) => d.name === "PowerShell")?.descriptionFile).toBe("tools/PowerShell.md");
+
+    const windows = headlessToolDefs({
+      shell: { kind: "powershell", path: "/ps/ps.exe" as never, edition: "windows" },
+      tmpDir: "/tmp",
+    });
+    expect(windows.find((d) => d.name === "PowerShell")?.descriptionFile).toBe("tools/PowerShell51.md");
   });
 });
 
@@ -593,6 +720,69 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: permissions §3.1 (a rule that compiles with a warning surfaces it on reload too)
+  test("a rule warning from a mid-session edit reaches the run's warnings", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": "{}" });
+    try {
+      const local = join(dir.root, ".dovet", "settings.local.json");
+      const setFile: ToolDefinition<unknown> = {
+        name: "SetFile",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: false,
+        mutates: "files",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          writeFileSync(local, JSON.stringify({ permissions: { allow: ["Read(open[)"] } }));
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "wrote" }] });
+        },
+      };
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "use the tools",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("D"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "c1", name: "SetFile", input: {} } },
+          { toolCall: { id: "c2", name: "echo", input: { text: "hi" } } },
+          { text: "done" },
+        ]),
+        toolDefs: [echoTool(), setFile],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("Read(open["))).toBe(true);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.some((e) => e.type === "settings.change")).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: AC-PERM-19
   test("a mid-session edit that is invalid JSON keeps the previous settings and the turn continues", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
@@ -980,14 +1170,15 @@ describe("runHeadless", () => {
     }
   });
 
-  // spec: agent-loop "Turn state machine", event-log "Resume"
-  test("a truncated tool call injects the retry instruction mid-turn", async () => {
+  // spec: agent-loop "Turn state machine", AC-LOOP-04, event-log "Resume"
+  test("a truncated tool call is answered not-run and retried without executing it", async () => {
     const dir = await tempProject({});
     try {
       const adapter = stubAdapter([
         { stop: "max_tokens", calls: [{ id: "c1", name: "echo", input: { text: "big" } }] },
         { stop: "end_turn", text: "done small" },
       ]);
+      let runs = 0;
       const out = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
@@ -1013,15 +1204,26 @@ describe("runHeadless", () => {
         host: "h",
         platform: fakePlatform(),
         adapter,
-        toolDefs: [echoTool()],
+        toolDefs: [
+          echoTool(() => {
+            runs += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
       });
       expect(out.exit).toEqual({ kind: "ok" });
       expect(out.result).toBe("done small");
+      expect(runs).toBe(0);
       const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
       const read = await readSession(loc);
-      const injected = read.events.find((e) => e.type === "system.injected");
-      if (injected === undefined) throw new Error("no system.injected event");
-      expect((injected.data as { text: string }).text).toBe(TRUNCATED_INSTRUCTION);
+      expect(read.events.some((e) => e.type === "system.injected")).toBe(false);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect(result.data).toEqual({ callId: "c1", status: "error", output: TRUNCATED_NOT_RUN });
+      const users = read.events.filter((e) => e.type === "user.message");
+      const last = users[users.length - 1];
+      if (last === undefined) throw new Error("no user.message event");
+      expect((last.data as { text: string }).text).toBe(TRUNCATED_INSTRUCTION);
       const epochStart = read.events.find((e) => e.type === "epoch.start");
       if (epochStart === undefined) throw new Error("no epoch.start event");
       const header = headerOf(epochStart.data as never);
@@ -1036,7 +1238,918 @@ describe("runHeadless", () => {
           cache: { breakpoints: "auto", ttl: "auto" },
         }),
       );
-      expect(JSON.stringify(rebuilt.messages)).toContain(`[Dovet instruction] ${TRUNCATED_INSTRUCTION}`);
+      const messages = rebuilt.messages as Array<{ role: string; content: unknown }>;
+      const body = JSON.stringify(messages.filter((m) => m.role !== "system"));
+      expect(body).toContain(TRUNCATED_INSTRUCTION);
+      expect(body).toContain(TRUNCATED_NOT_RUN);
+      expect(body).not.toContain("[Dovet instruction]");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (empty or thinking-only response)
+  test("thinking-only responses are not appended and finalize after one retry", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "think",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("H"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "end_turn", reasoning: "thinking about it" },
+          { stop: "end_turn", reasoning: "thinking again" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("The model returned no answer.");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+      const end = read.events.find((e) => e.type === "turn.end");
+      if (end === undefined) throw new Error("no turn.end event");
+      expect((end.data as { reason: string }).reason).toBe("end_turn");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (empty response)
+  test("a response with no parts is empty: not appended, retried once", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("5"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn" }, { stop: "end_turn", text: "second try" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("second try");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (max_tokens without a tool call)
+  test("a thinking-only response cut off at the output limit finalizes with the truncation note", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("B"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "max_tokens", reasoning: "thinking hard" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toContain("truncated at output limit");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(1);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (refusal before any visible output)
+  test("a thinking-only refusal retries with a clean transcript", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "refusal", reasoning: "the filter stopped the reply" },
+          { stop: "end_turn", text: "fine" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("fine");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (refusal before any visible output)
+  test("a second thinking-only refusal finalizes as a refusal", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("7"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "refusal", reasoning: "the filter stopped the first reply" },
+          { stop: "refusal", reasoning: "the filter stopped the second reply" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "refusal" });
+      expect(out.stopReason).toBe("refusal");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+      const ends = read.events.filter((e) => e.type === "turn.end");
+      const last = ends[ends.length - 1];
+      expect(last === undefined ? "" : (last.data as { reason: string }).reason).toBe("refusal");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (every tool_use gets exactly one tool_result)
+  test("an end_turn that carries a tool call logs it as not run and stays resumable", async () => {
+    const dir = await tempProject({});
+    try {
+      let ran = 0;
+      const first = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "stop now",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("8"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "end_turn",
+            text: "I will stop.",
+            calls: [{ id: "c1", name: "echo", input: { text: "hi" } }],
+          },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            ran += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(first.exit).toEqual({ kind: "ok" });
+      expect(first.result).toBe("I will stop.");
+      expect(ran).toBe(0);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: first.sessionId };
+      const read = await readSession(loc);
+      const callIds = read.events
+        .filter((e) => e.type === "tool.call")
+        .map((e) => (e.data as { callId: string }).callId);
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { callId: string; status: string; output: string });
+      expect(callIds).toEqual(["c1"]);
+      expect(results.map((r) => r.callId)).toEqual(["c1"]);
+      expect(results[0]?.status).toBe("error");
+      expect(results[0]?.output).toBe(ENDED_NOT_RUN);
+      const again = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "again",
+        clock: { now: () => Date.UTC(2026, 9, 16) },
+        ids: sequentialIds("9"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "ok" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(again.sessionId).toBe(first.sessionId);
+      expect(again.exit).toEqual({ kind: "ok" });
+      expect(again.result).toBe("ok");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: permissions §3.1, agent-loop "Turn state machine" (a settings error must fail closed)
+  test("a malformed settings rule is a usage error before anything runs", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "allow": ["Bash(ls) x"] } }' });
+    try {
+      let ran = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "do it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "tool_use", calls: [{ id: "c1", name: "echo", input: { text: "x" } }] },
+          { stop: "end_turn", text: "never" },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            ran += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "usage" });
+      expect(exitCodeFor(out.exit)).toBe(2);
+      expect(out.result).toContain("settings.local.json");
+      expect(ran).toBe(0);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: permissions §3.1 (a settings file that loads but fails the rule compile must fail closed)
+  test("a failing settings example is a usage error before anything runs", async () => {
+    const dir = await tempProject({
+      ".dovet/settings.local.json": '{ "permissions": { "examples": [{ "Bash": "echo hi", "expect": "deny" }] } }',
+    });
+    try {
+      let ran = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "do it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("6"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "tool_use", calls: [{ id: "c1", name: "echo", input: { text: "x" } }] },
+          { stop: "end_turn", text: "never" },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            ran += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "usage" });
+      expect(exitCodeFor(out.exit)).toBe(2);
+      expect(out.result).toContain("expected deny but is");
+      expect(ran).toBe(0);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: cli-config "Startup sequence (interactive)" (step 1), permissions §3.1
+  test("a broken settings file is a usage error before anything runs", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": "{ not json" });
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "do it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("6"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "never" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "usage" });
+      expect(exitCodeFor(out.exit)).toBe(2);
+      expect(out.result).toContain("settings.local.json");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: permissions §3.1 (rule problems that are warnings, not errors, reach the run's warnings)
+  test("a rule warning from the settings reaches the run's warnings", async () => {
+    const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "allow": ["Read(open[)"] } }' });
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "hi",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("7"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "done" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("Read(open["))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: platforms "Windows specifics" (QUESTIONS Q39)
+  test("a PowerShell-only host registers PowerShell and tells the model", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: "win32",
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "hi",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("W"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform({
+          os: "win32",
+          resolveShell: () => Promise.resolve({ kind: "powershell", path: "/ps/pwsh.exe" as never, edition: "pwsh" }),
+        }),
+        adapter: stubAdapter([{ stop: "end_turn", text: "done" }]),
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "win32" as const, session: out.sessionId };
+      const read = await readSession(loc);
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      const data = epochStart.data as { toolsJson: string; systemText: string };
+      const names = (JSON.parse(data.toolsJson) as Array<{ name: string }>).map((t) => t.name);
+      expect(names).toContain("PowerShell");
+      expect(names).not.toContain("Bash");
+      expect(data.systemText).toContain("Shell tool: PowerShell 7");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Early execution of read-only tools" (ADR-21)
+  test("a Read whose block completes during streaming starts before the response ends", async () => {
+    const dir = await tempProject({});
+    try {
+      const started = deferred();
+      let runs = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["Read"],
+          disallowedTools: [],
+        },
+        prompt: "read it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("A"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: earlyProbeAdapter({
+          call: { id: "c1", name: "Read", input: { file_path: "note.txt" } },
+          started: started.promise,
+          firstStop: "tool_use",
+          thenText: "done",
+        }),
+        toolDefs: [
+          readTestTool("EARLY RESULT", () => {
+            runs += 1;
+            started.resolve();
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("done");
+      expect(runs).toBe(1);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect((result.data as { output: string }).output).toBe("EARLY RESULT");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Early execution of read-only tools" (discard on max_tokens + tool call)
+  test("early results are discarded when the response is cut off at max_tokens", async () => {
+    const dir = await tempProject({});
+    try {
+      const started = deferred();
+      let runs = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["Read"],
+          disallowedTools: [],
+        },
+        prompt: "read it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("S"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: earlyProbeAdapter({
+          call: { id: "c1", name: "Read", input: { file_path: "secret.txt" } },
+          started: started.promise,
+          firstStop: "max_tokens",
+          thenText: "done small",
+        }),
+        toolDefs: [
+          readTestTool("EARLY-SECRET", () => {
+            runs += 1;
+            started.resolve();
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("done small");
+      expect(runs).toBe(1);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect((result.data as { output: string }).output).toBe(TRUNCATED_NOT_RUN);
+      expect(JSON.stringify(read.events)).not.toContain("EARLY-SECRET");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Early execution of read-only tools" (never start early)
+  test("a mutating tool's completed block does not start early", async () => {
+    const dir = await tempProject({});
+    try {
+      let responseEnded = false;
+      let startsBeforeResponseEnd = 0;
+      let runs = 0;
+      const response = (parts: unknown[], finishReason: string) => ({
+        provider: "nvidia",
+        protocol: "openai-chat",
+        package: "x",
+        packageVersion: "1",
+        modelId: "m",
+        parts,
+        usage: {},
+        finishReason,
+      });
+      let step = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["Write"],
+          disallowedTools: [],
+        },
+        prompt: "write it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("8"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: {
+          render: () => ({
+            provider: "nvidia",
+            package: "x",
+            modelId: "m",
+            messages: [{ role: "user", content: "x" }],
+            tools: [],
+            providerOptions: {},
+          }),
+          stream: async function* () {
+            step += 1;
+            if (step === 1) {
+              yield { type: "tool_call.start", blockIndex: 0, id: "c1", name: "Write" };
+              yield { type: "tool_call.delta", blockIndex: 0, partialJson: JSON.stringify({ file_path: "x" }) };
+              yield { type: "block.done", blockIndex: 0, kind: "tool_call" };
+              responseEnded = true;
+              yield {
+                type: "done",
+                stopReason: "tool_use",
+                stored: response(
+                  [
+                    {
+                      kind: "tool_call",
+                      id: "c1",
+                      name: "Write",
+                      inputJson: JSON.stringify({ file_path: "x" }),
+                    },
+                  ],
+                  "tool_calls",
+                ),
+              };
+              return;
+            }
+            yield { type: "done", stopReason: "end_turn", stored: response([{ kind: "text", text: "wrote" }], "stop") };
+          },
+        } as never,
+        toolDefs: [
+          {
+            name: "Write",
+            input: z.strictObject({ file_path: z.string() }),
+            descriptionFile: "tools/Write.md",
+            errorExample: { file_path: "x" },
+            parallelSafe: false,
+            mutates: "files",
+            describeAction: () => ({
+              kind: "edit",
+              paths: [],
+              effects: { writes: "workspace", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+            }),
+            run: () => {
+              if (!responseEnded) startsBeforeResponseEnd += 1;
+              runs += 1;
+              return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "wrote" }] });
+            },
+          } as ToolDefinition<unknown>,
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(startsBeforeResponseEnd).toBe(0);
+      expect(runs).toBe(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (pairing invariant), event-log "Resume"
+  test("resuming an unpaired transcript stops with an InvariantViolation", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("3").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("4"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed the session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "test/model",
+          systemText: "s",
+          toolsJson: "[]",
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "old" } });
+      opened.writer.append({
+        type: "model.response",
+        epoch: 0,
+        turn: 1,
+        data: {
+          provider: "nvidia",
+          protocol: "openai-chat",
+          package: "x",
+          packageVersion: "1",
+          modelId: "test/model",
+          parts: [{ kind: "tool_call", id: "k1", name: "echo", inputJson: "{}" }],
+          usage: {},
+          finishReason: "tool_calls",
+        },
+      });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "new turn",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("P"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "never" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "error" });
+      expect(exitCodeFor(out.exit)).toBe(1);
+      expect(out.result).toContain("InvariantViolation");
+      expect(out.result).toContain("pairing");
+      expect(out.result).toContain("--repair");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Tool execution within a turn" step 5b (per-provider request caps)
+  test("a Bedrock-sized tool result is replaced by the request-size guard", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: {
+          settings: {
+            provider: "bedrock",
+            model: "test/model",
+            providers: { bedrock: { baseUrl: "http://unused", apiKey: "env:BEDROCK_KEY" } },
+          } as LoadedSettings["settings"],
+          rules: { allow: [], ask: [], deny: [] },
+          warnings: [],
+          notices: [],
+          files: [],
+        },
+        env: { ...TEST_ENV, BEDROCK_KEY: "fake-key" },
+        loadInput: loadInputFor(dir, { ...TEST_ENV, BEDROCK_KEY: "fake-key" }),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "read big",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "tool_use", calls: [{ id: "c1", name: "echo", input: { text: "big" } }] },
+          { stop: "end_turn", text: "done" },
+        ]),
+        // 15.1 MB of 4-byte characters: past 90% of Bedrock's 16 MB cap, under the 32 MB default.
+        toolDefs: [echoTool(() => ({ status: "ok", text: "\u{1F600}".repeat(3_775_000) }))],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect((result.data as { status: string }).status).toBe("error");
+      expect((result.data as { output: string }).output).toContain("90%");
     } finally {
       await dir.dispose();
     }
@@ -1082,6 +2195,17 @@ describe("runHeadless", () => {
       expect(exitCodeFor(out.exit)).toBe(3);
       expect(out.incomplete).toBe(true);
       expect(out.result).toContain("/model");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const callIds = read.events
+        .filter((e) => e.type === "tool.call")
+        .map((e) => (e.data as { callId: string }).callId);
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { callId: string; status: string; output: string });
+      expect(callIds).toEqual(["c1", "c2", "c3"]);
+      expect(results.map((r) => r.callId)).toEqual(["c1", "c2", "c3"]);
+      expect(results.every((r) => r.status === "error" && r.output.includes("Unknown tool"))).toBe(true);
     } finally {
       await dir.dispose();
     }
@@ -1432,6 +2556,114 @@ describe("runHeadless", () => {
       const end = read.events.find((e) => e.type === "turn.end");
       if (end === undefined) throw new Error("no turn.end event");
       expect((end.data as { reason: string }).reason).toBe("refusal");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (a refusal's tool calls are never run and are recorded not-run)
+  test("a refusal carrying a tool call records it not-run and retries cleanly", async () => {
+    const dir = await tempProject({});
+    try {
+      let runs = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["echo"],
+          disallowedTools: [],
+        },
+        prompt: "forbidden topic",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("9"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "refusal", calls: [{ id: "c1", name: "echo", input: { text: "x" } }] },
+          { stop: "end_turn", text: "fine" },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            runs += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("fine");
+      expect(runs).toBe(0);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect((result.data as { output: string }).output).toBe(REFUSAL_NOT_RUN);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (a finalized refusal's log keeps every tool_use paired)
+  test("a finalized refusal with a tool call writes a paired log", async () => {
+    const dir = await tempProject({});
+    try {
+      let runs = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["echo"],
+          disallowedTools: [],
+        },
+        prompt: "forbidden topic",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("A"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "refusal",
+            text: "I cannot help with that",
+            calls: [{ id: "c1", name: "echo", input: { text: "x" } }],
+          },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            runs += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "refusal" });
+      expect(runs).toBe(0);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      const result = read.events.find((e) => e.type === "tool.result");
+      if (result === undefined) throw new Error("no tool.result event");
+      expect(result.data).toEqual({ callId: "c1", status: "error", output: REFUSAL_NOT_RUN });
     } finally {
       await dir.dispose();
     }

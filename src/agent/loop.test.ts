@@ -48,6 +48,7 @@ import {
   buildLoopContext,
   cacheStatusText,
   checkPairing,
+  checkTranscriptPairing,
   decideStopAction,
   executeTools,
   fileChangeEvents,
@@ -68,6 +69,7 @@ import {
   requestCapFor,
   shellStatusLine,
   shellToolFor,
+  shellToolName,
   shouldDiscardEarly,
   shutdownResults,
   sizeGuardText,
@@ -279,6 +281,39 @@ describe("stop reasons", () => {
     expect(checkPairing(["a", "b"], ["b", "a"])).toContain("mismatch");
     expect(checkPairing(["a"], [])).toContain("expected 1");
   });
+
+  // spec: agent-loop "Stop-reason handling" (pairing invariant)
+  test("transcript pairing walks every assistant turn that has tool calls", () => {
+    const assistant = (ids: string[]) => ({
+      kind: "assistant" as const,
+      stored: { ...storedParts(ids.map((id) => ({ id, name: "Read", input: {} }))) },
+    });
+    const results = (ids: string[]) => ({
+      kind: "user" as const,
+      parts: ids.map((callId) => ({ kind: "tool_result" as const, callId, isError: false, content: [] })),
+    });
+    expect(checkTranscriptPairing([assistant(["a", "b"]), results(["a", "b"])])).toBeNull();
+    expect(checkTranscriptPairing([assistant([]), results([])])).toBeNull();
+    expect(
+      checkTranscriptPairing([
+        assistant(["a"]),
+        { kind: "user", parts: [{ kind: "text", text: "queued" }] },
+        results(["a"]),
+      ]),
+    ).toContain("pairing");
+    expect(checkTranscriptPairing([assistant(["a", "b"]), results(["b", "a"])])).toContain("pairing");
+    expect(checkTranscriptPairing([assistant(["a"])])).toContain("pairing");
+    expect(
+      checkTranscriptPairing([assistant(["a"]), { kind: "user", parts: [{ kind: "text", text: "hello" }] }]),
+    ).toContain("pairing");
+    expect(
+      checkTranscriptPairing([
+        { kind: "user", parts: [{ kind: "tool_result" as const, callId: "stray", isError: false, content: [] }] },
+        assistant(["a"]),
+        results(["a"]),
+      ]),
+    ).toBeNull();
+  });
 });
 
 describe("batching and ordering", () => {
@@ -462,6 +497,99 @@ describe("no cascade and single prompt", () => {
     expect(prompted).toBe(1);
     expect(results).toHaveLength(2);
     expect(results.every((r) => r.output.status === "ok")).toBe(true);
+    await rm(base.session.cwd, { recursive: true, force: true });
+  });
+
+  // spec: AC-LOOP-12
+  test("two identical parallel-safe calls needing approval prompt once on don't ask again", async () => {
+    const registry = createToolRegistry([toolDef("Read", true)]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    let allowed = false;
+    let prompts = 0;
+    const calls = parseToolCalls(
+      storedParts([
+        { id: "a", name: "Read", input: {} },
+        { id: "b", name: "Read", input: {} },
+      ]).parts,
+    );
+    const { results, prompted } = await executeTools(calls, {
+      registry,
+      decide: () => (allowed ? { behavior: "allow", reason: "granted" } : { behavior: "ask", reason: "ask" }),
+      prompt: () => {
+        prompts += 1;
+        allowed = true;
+        return Promise.resolve({ allow: true, dontAskAgain: true });
+      },
+      run: (tool, input, ctx) => (tool.run as (i: unknown, c: ToolContext) => Promise<ToolOutput>)(input, ctx),
+      makeContext: () => base,
+      offloadDir: join(tmpdir(), "dovet-loop-off"),
+    });
+    expect(prompts).toBe(1);
+    expect(prompted).toBe(1);
+    expect(results.map((r) => r.callId)).toEqual(["a", "b"]);
+    expect(results.every((r) => r.output.status === "ok")).toBe(true);
+    await rm(base.session.cwd, { recursive: true, force: true });
+  });
+
+  // spec: AC-LOOP-12
+  test("a deny with a comment does not auto-run an identical sibling", async () => {
+    const registry = createToolRegistry([toolDef("Read", true)]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    let allowed = false;
+    let prompts = 0;
+    const calls = parseToolCalls(
+      storedParts([
+        { id: "a", name: "Read", input: {} },
+        { id: "b", name: "Read", input: {} },
+      ]).parts,
+    );
+    const { results, prompted } = await executeTools(calls, {
+      registry,
+      decide: () => (allowed ? { behavior: "allow", reason: "granted" } : { behavior: "ask", reason: "ask" }),
+      prompt: () => {
+        prompts += 1;
+        allowed = true;
+        return Promise.resolve({ allow: false, comment: "no", dontAskAgain: true });
+      },
+      run: (tool, input, ctx) => (tool.run as (i: unknown, c: ToolContext) => Promise<ToolOutput>)(input, ctx),
+      makeContext: () => base,
+      offloadDir: join(tmpdir(), "dovet-loop-off"),
+    });
+    expect(prompts).toBe(2);
+    expect(prompted).toBe(2);
+    expect(results.map((r) => r.callId)).toEqual(["a", "b"]);
+    expect(results.every((r) => r.output.status === "error")).toBe(true);
+    await rm(base.session.cwd, { recursive: true, force: true });
+  });
+
+  // spec: AC-LOOP-12
+  test("a tool that throws gets an error result and its siblings still run", async () => {
+    const registry = createToolRegistry([
+      toolDef("Read", true, () => {
+        throw new Error("boom");
+      }),
+      toolDef("Grep", true),
+    ]);
+    const base = context(await mkdtemp(join(tmpdir(), "dovet-loop-")));
+    const calls = parseToolCalls(
+      storedParts([
+        { id: "a", name: "Read", input: {} },
+        { id: "b", name: "Grep", input: {} },
+      ]).parts,
+    );
+    const { results } = await executeTools(calls, {
+      registry,
+      decide: () => ({ behavior: "allow", reason: "t" }),
+      prompt: () => Promise.resolve({ allow: true, dontAskAgain: false }),
+      run: (tool, input, ctx) => (tool.run as (i: unknown, c: ToolContext) => Promise<ToolOutput>)(input, ctx),
+      makeContext: () => base,
+      offloadDir: join(tmpdir(), "dovet-loop-off"),
+    });
+    expect(results).toHaveLength(2);
+    expect(results[0]?.output.status).toBe("error");
+    const text = results[0]?.output.content[0];
+    expect(text !== undefined && text.kind === "text" ? text.text : "").toContain("boom");
+    expect(results[1]?.output.status).toBe("ok");
     await rm(base.session.cwd, { recursive: true, force: true });
   });
 
@@ -686,10 +814,22 @@ describe("request size, early tools, model.request and cache", () => {
     expect(fileChangeEvents([{ callId: "a", name: "Write", output: out, invalid: false }])).toHaveLength(1);
   });
 
-  // spec: AC-LOOP-01
+  // spec: AC-LOOP-01, platforms "Windows specifics" (QUESTIONS Q39)
   test("shell selection and status show fallback and language mode", () => {
     expect(shellToolFor(undefined, tmpdir()).name).toBe("Bash");
     expect(shellToolFor({ kind: "git-bash", path: "/bin/bash" as never }, tmpdir()).name).toBe("Bash");
+    const pwsh = shellToolFor({ kind: "powershell", path: "/ps/pwsh" as never, edition: "pwsh" }, tmpdir());
+    expect(pwsh.name).toBe("PowerShell");
+    expect(pwsh.descriptionFile).toBe("tools/PowerShell.md");
+    const windows = shellToolFor({ kind: "powershell", path: "/ps/ps" as never, edition: "windows" }, tmpdir());
+    expect(windows.descriptionFile).toBe("tools/PowerShell51.md");
+    expect(shellToolName(undefined)).toBe("Bash");
+    expect(shellToolName({ kind: "bash", path: "/bin/bash" as never })).toBe("Bash");
+    expect(shellToolName({ kind: "git-bash", path: "/git/bash.exe" as never })).toBe("Git Bash");
+    expect(shellToolName({ kind: "powershell", path: "/ps/pwsh" as never, edition: "pwsh" })).toBe("PowerShell 7");
+    expect(shellToolName({ kind: "powershell", path: "/ps/ps" as never, edition: "windows" })).toBe(
+      "Windows PowerShell 5.1",
+    );
     expect(shellStatusLine({ choice: undefined, parsers: false })).toContain("fallback");
     expect(shellStatusLine({ choice: undefined, parsers: true, languageMode: "FullLanguage" })).toContain(
       "FullLanguage",
