@@ -62,6 +62,7 @@ describe("EnterPlanMode", () => {
 describe("ExitPlanMode", () => {
   // spec: AC-TOOLS-13
   test("each approve choice sets the right mode; No feedback reaches the model", async () => {
+    expect(createExitPlanModeTool().parallelSafe).toBe(false);
     const dir = await mkdtemp(join(tmpdir(), "dovet-plan-"));
     try {
       const planFile = join(dir, "plan.md") as never;
@@ -153,6 +154,7 @@ describe("ExitPlanMode", () => {
 
   // spec: AC-TOOLS-46
   test("a plan written in the same response is the one shown; second exit errors with no dialog", async () => {
+    expect(createExitPlanModeTool().parallelSafe).toBe(false);
     const dir = await mkdtemp(join(tmpdir(), "dovet-plan-"));
     try {
       const planFile = join(dir, "plan.md") as never;
