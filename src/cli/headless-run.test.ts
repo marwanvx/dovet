@@ -15,6 +15,7 @@ import {
 import {
   buildRequest,
   cacheWarning,
+  ENDED_NOT_RUN,
   headerOf,
   modelRequestBody,
   REFUSAL_NOT_RUN,
@@ -1424,6 +1425,147 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: agent-loop "Stop-reason handling" (refusal before any visible output)
+  test("a second thinking-only refusal finalizes as a refusal", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "say something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("7"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "refusal", reasoning: "the filter stopped the first reply" },
+          { stop: "refusal", reasoning: "the filter stopped the second reply" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "refusal" });
+      expect(out.stopReason).toBe("refusal");
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.request")).toHaveLength(2);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+      const ends = read.events.filter((e) => e.type === "turn.end");
+      const last = ends[ends.length - 1];
+      expect(last === undefined ? "" : (last.data as { reason: string }).reason).toBe("refusal");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: agent-loop "Stop-reason handling" (every tool_use gets exactly one tool_result)
+  test("an end_turn that carries a tool call logs it as not run and stays resumable", async () => {
+    const dir = await tempProject({});
+    try {
+      let ran = 0;
+      const first = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "stop now",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("8"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "end_turn",
+            text: "I will stop.",
+            calls: [{ id: "c1", name: "echo", input: { text: "hi" } }],
+          },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            ran += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(first.exit).toEqual({ kind: "ok" });
+      expect(first.result).toBe("I will stop.");
+      expect(ran).toBe(0);
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: first.sessionId };
+      const read = await readSession(loc);
+      const callIds = read.events
+        .filter((e) => e.type === "tool.call")
+        .map((e) => (e.data as { callId: string }).callId);
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { callId: string; status: string; output: string });
+      expect(callIds).toEqual(["c1"]);
+      expect(results.map((r) => r.callId)).toEqual(["c1"]);
+      expect(results[0]?.status).toBe("error");
+      expect(results[0]?.output).toBe(ENDED_NOT_RUN);
+      const again = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "again",
+        clock: { now: () => Date.UTC(2026, 9, 16) },
+        ids: sequentialIds("9"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "ok" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(again.sessionId).toBe(first.sessionId);
+      expect(again.exit).toEqual({ kind: "ok" });
+      expect(again.result).toBe("ok");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: permissions §3.1, agent-loop "Turn state machine" (a settings error must fail closed)
   test("a malformed settings rule is a usage error before anything runs", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "allow": ["Bash(ls) x"] } }' });
@@ -1467,6 +1609,57 @@ describe("runHeadless", () => {
       expect(out.exit).toEqual({ kind: "usage" });
       expect(exitCodeFor(out.exit)).toBe(2);
       expect(out.result).toContain("settings.local.json");
+      expect(ran).toBe(0);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: permissions §3.1 (a settings file that loads but fails the rule compile must fail closed)
+  test("a failing settings example is a usage error before anything runs", async () => {
+    const dir = await tempProject({
+      ".dovet/settings.local.json": '{ "permissions": { "examples": [{ "Bash": "echo hi", "expect": "deny" }] } }',
+    });
+    try {
+      let ran = 0;
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "do it",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("6"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "tool_use", calls: [{ id: "c1", name: "echo", input: { text: "x" } }] },
+          { stop: "end_turn", text: "never" },
+        ]),
+        toolDefs: [
+          echoTool(() => {
+            ran += 1;
+            return { status: "ok", text: "ran" };
+          }),
+        ],
+      });
+      expect(out.exit).toEqual({ kind: "usage" });
+      expect(exitCodeFor(out.exit)).toBe(2);
+      expect(out.result).toContain("expected deny but is");
       expect(ran).toBe(0);
     } finally {
       await dir.dispose();
@@ -1899,6 +2092,7 @@ describe("runHeadless", () => {
       expect(exitCodeFor(out.exit)).toBe(1);
       expect(out.result).toContain("InvariantViolation");
       expect(out.result).toContain("pairing");
+      expect(out.result).toContain("--repair");
     } finally {
       await dir.dispose();
     }

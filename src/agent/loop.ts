@@ -344,6 +344,7 @@ export type ExecutedResult = { callId: string; name: string; output: ToolOutput;
 export const NOT_RUN_STOPPED = "Not run: the user stopped this turn";
 export const TRUNCATED_NOT_RUN = "Not run: the response was cut off at the output limit.";
 export const REFUSAL_NOT_RUN = "Not run: the model refused this turn.";
+export const ENDED_NOT_RUN = "Not run: the model ended its turn.";
 export const UNKNOWN_TOOL_PREFIX = "Unknown tool";
 
 function normalizeKey(name: string, input: unknown): string {

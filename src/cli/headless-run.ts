@@ -5,6 +5,7 @@ import {
   cacheWarning,
   checkTranscriptPairing,
   decideStopAction,
+  ENDED_NOT_RUN,
   executeTools,
   GuardTracker,
   historyRepairOffer,
@@ -62,6 +63,7 @@ import {
   listSessions,
   openSession,
   pollSettings,
+  REPAIR_HINT,
   readSession,
   repairEpochEvent,
   resumeSession,
@@ -625,7 +627,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           ),
         );
         const pairing = checkTranscriptPairing(built.transcript);
-        if (pairing !== null) throw new Error(`InvariantViolation: ${pairing}`);
+        if (pairing !== null) throw new Error(`InvariantViolation: ${pairing}. Repair: ${REPAIR_HINT}`);
       } catch (err) {
         writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
         await writer.flush();
@@ -950,6 +952,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             warnings,
           };
         }
+        // Every tool_use needs exactly one tool_result (agent-loop "Stop-reason handling"), so a call the
+        // finalize skipped is logged as not run instead of leaving the turn unpaired.
+        if (calls.length > 0) recordNotRun(() => ENDED_NOT_RUN);
         writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "end_turn" } });
         await writer.flush();
         return {
