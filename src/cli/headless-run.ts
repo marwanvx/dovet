@@ -16,6 +16,7 @@ import {
   parseToolCalls,
   prefixFingerprint,
   prompt,
+  REFUSAL_NOT_RUN,
   renderSystemPrompt,
   requestCapFor,
   serializeTools,
@@ -495,13 +496,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (poll.changed) {
         effectiveSettings = poll.settings;
         try {
-          rules = ruleSetFromSettings({
+          const compiled = ruleSetFromSettings({
             loaded: poll.loaded,
             env: policyEnv,
             parsers: parsers as never,
             ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
             configDir: input.dirs.config,
-          }).rules;
+          });
+          rules = compiled.rules;
+          warnings.push(...compiled.warnings.map((w) => w.message));
         } catch (err) {
           const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
           warnings.push(`Settings change kept the previous rules: ${problems}`);
@@ -864,7 +867,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         return null;
       })();
       const hasText = done.stored.parts.some((p) => p.kind === "text" && p.text.trim() !== "");
-      const emptyOnly = done.stored.parts.length > 0 && !hasText && calls.length === 0;
+      // Refusal and max_tokens have their own stop-reason rows; anything else with no text and no call is empty.
+      const emptyOnly =
+        !hasText && calls.length === 0 && done.stopReason !== "refusal" && done.stopReason !== "max_tokens";
       const truncated = done.stopReason === "max_tokens" && calls.length > 0;
       const stopInput = {
         stop: done.stopReason,
@@ -918,6 +923,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       if (action.kind === "retry") {
+        if (calls.length > 0) recordNotRun(() => REFUSAL_NOT_RUN);
         if (emptyOnly) emptyRetries += 1;
         else refusalRetries += 1;
         continue;
@@ -928,6 +934,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           .map((p) => (p.kind === "text" ? p.text : ""))
           .join("");
         if (action.reason === "refusal") {
+          if (calls.length > 0) recordNotRun(() => REFUSAL_NOT_RUN);
           writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "refusal" } });
           await writer.flush();
           return {

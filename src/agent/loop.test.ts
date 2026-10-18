@@ -282,7 +282,7 @@ describe("stop reasons", () => {
     expect(checkPairing(["a"], [])).toContain("expected 1");
   });
 
-  // spec: AC-LOOP-01
+  // spec: agent-loop "Stop-reason handling" (pairing invariant)
   test("transcript pairing walks every assistant turn that has tool calls", () => {
     const assistant = (ids: string[]) => ({
       kind: "assistant" as const,

@@ -75,8 +75,3 @@ export function prompt(name: string): string {
   if (text === undefined) throw new Error(`no prompt file ${name}`);
   return text.replace(/\r?\n$/, "");
 }
-
-/** The description of a built-in tool; the shell tools come in variants named by the detected shell. */
-export function toolDescription(name: string): string {
-  return prompt(`tools/${name}.md`);
-}

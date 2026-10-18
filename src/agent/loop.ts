@@ -343,6 +343,7 @@ export type ExecutedResult = { callId: string; name: string; output: ToolOutput;
 
 export const NOT_RUN_STOPPED = "Not run: the user stopped this turn";
 export const TRUNCATED_NOT_RUN = "Not run: the response was cut off at the output limit.";
+export const REFUSAL_NOT_RUN = "Not run: the model refused this turn.";
 export const UNKNOWN_TOOL_PREFIX = "Unknown tool";
 
 function normalizeKey(name: string, input: unknown): string {
@@ -615,6 +616,7 @@ export async function executeTools(
         const re = deps.decide(rest.call.name, rest.input);
         if (
           re.behavior === "allow" &&
+          answer.allow &&
           answer.dontAskAgain &&
           normalizeKey(v.call.name, v.input) === normalizeKey(rest.call.name, rest.input)
         ) {
@@ -716,7 +718,7 @@ export function shellToolFor(choice: ShellChoice | undefined, tmpDir: string): T
   return createBashTool({ tmpDir }) as ToolDefinition<unknown>;
 }
 
-/** The shell tool's name as the system prompt states it (`prompts/system.md` env facts). */
+/** The shell tool's name as the system prompt's env facts state it (`transcript/system-prompt.ts`). */
 export function shellToolName(choice: ShellChoice | undefined): string {
   if (choice?.kind === "powershell") return choice.edition === "windows" ? "Windows PowerShell 5.1" : "PowerShell 7";
   if (choice?.kind === "git-bash") return "Git Bash";
