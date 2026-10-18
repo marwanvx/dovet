@@ -13,6 +13,7 @@ import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from
 import { type HeadlessRunOutput, runHeadless as runHeadlessTurn } from "./headless-run.ts";
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
 import { ephemeralDataDir, makeUlid } from "./resume-target.ts";
+import { installSignalHandlers, stopSignalsFor } from "./signals.ts";
 import { ensureDataDir, filterInheritedEnv, loadTrustedFolders } from "./startup.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
@@ -100,14 +101,47 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   const cleanupEphemeral = async (): Promise<void> => {
     if (ephemeral) await rm(dirs.data, { recursive: true, force: true });
   };
-  const trusted = await loadTrustedFolders(dirs.data, Date.now());
-  if (trusted.warning !== undefined) console.error(`dovet: ${trusted.warning}`);
+  // AC-LOOP-02/09: SIGINT aborts the turn, a second press within the window flushes and exits 130;
+  // SIGTERM/SIGHUP/SIGBREAK flush and release the log, kill the child trees (SIGTERM, then SIGKILL after
+  // the grace period), then exit 143/129.
+  const os = hostOs();
+  const turnController = new AbortController();
   let projectRoot: string;
   try {
     projectRoot = await findProjectRoot(process.cwd());
   } catch {
     projectRoot = process.cwd();
   }
+  const core = createPlatformCore({
+    os,
+    arch: process.arch,
+    execPath: realpathSync(process.execPath),
+    env,
+    projectRoot: projectRoot as AbsPath,
+    kill: (pid, signal) => process.kill(pid, signal),
+  });
+  const signals = installSignalHandlers({
+    runtime: {
+      onStop: (signal, handler) => {
+        process.on(signal, () => handler());
+      },
+      onCrash: (handler) => {
+        process.on("uncaughtException", (err) => handler(err));
+        process.on("unhandledRejection", (reason) => handler(reason));
+      },
+      exit: (code) => process.exit(code),
+      now: () => Date.now(),
+      writeErr: (text) => {
+        process.stderr.write(text);
+      },
+    },
+    signals: stopSignalsFor(os),
+    abort: () => turnController.abort(),
+    killTrees: () => core.killTrees(),
+    crash: { dir: `${dirs.data}/crash`, versions: { dovet: pkg.version, os, arch: process.arch } },
+  });
+  const trusted = await loadTrustedFolders(dirs.data, Date.now());
+  if (trusted.warning !== undefined) console.error(`dovet: ${trusted.warning}`);
   let loaded: LoadedSettings;
   const flags: Settings = {
     ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
@@ -145,15 +179,6 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
     return;
   }
   if (parsed.offline) console.error("dovet: offline mode; only model requests leave the machine.");
-  const os = hostOs();
-  const core = createPlatformCore({
-    os,
-    arch: process.arch,
-    execPath: realpathSync(process.execPath),
-    env,
-    projectRoot: projectRoot as AbsPath,
-    kill: (pid, signal) => process.kill(pid, signal),
-  });
   const platform = {
     ...core,
     shells: () => ({}),
@@ -191,6 +216,8 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       pid: process.pid,
       host: hostname(),
       platform,
+      signal: turnController.signal,
+      onSession: (handle) => signals.attach(handle),
     });
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
@@ -200,7 +227,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   }
   for (const w of out.warnings) console.error(`dovet: ${w}`);
   if (out.exit.kind !== "ok") {
-    console.error(`dovet: ${out.result}`);
+    if (out.result !== "") console.error(`dovet: ${out.result}`);
     await cleanupEphemeral();
     process.exitCode = exitCodeFor(out.exit);
     return;

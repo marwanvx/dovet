@@ -7,16 +7,20 @@ type Env = Readonly<Record<string, string | undefined>>;
 
 /**
  * Spawns children as leaders of their own process group and kills whole trees (platforms "Process-tree kill").
- * `group` names a set of children (one per session); `killTree(group)` ends them and everything they started.
+ * `group` names a set of children (one per session); `killTree(group)` ends them and everything they started;
+ * `killTrees()` ends every group and resolves once the SIGTERM→SIGKILL escalation has run.
  */
 export function createProcessManager(deps: {
   os: Os;
   env: Env;
   kill: (pid: number, signal: NodeJS.Signals | 0) => void;
   termGraceMs: number;
-}): Pick<Platform, "spawn" | "killTree" | "sweep"> {
+}): Pick<Platform, "spawn" | "killTree" | "sweep"> & {
+  killTrees(): Promise<void>;
+} {
   const { os, env, kill, termGraceMs } = deps;
   const groups = new Map<string, Set<number>>();
+  let killingTrees: Promise<void> | undefined;
 
   function signalGroup(pid: number, signal: NodeJS.Signals | 0): boolean {
     try {
@@ -124,6 +128,20 @@ export function createProcessManager(deps: {
       if (members === undefined) return;
       groups.delete(group);
       await Promise.all([...members].map(killPid));
+    },
+
+    // A second call while one is in flight waits for that kill: two stop signals must not outrun the escalation.
+    killTrees() {
+      if (killingTrees === undefined) {
+        killingTrees = (async () => {
+          const all = [...groups.values()];
+          groups.clear();
+          await Promise.all(all.flatMap((members) => [...members].map(killPid)));
+        })().finally(() => {
+          killingTrees = undefined;
+        });
+      }
+      return killingTrees;
     },
   };
 }

@@ -9,6 +9,7 @@ import {
   nvidiaAdapter,
   scriptedModel,
   sequentialIds,
+  startScriptedServer,
   type TempProject,
   tempProject,
 } from "../../test/helpers/index.ts";
@@ -17,6 +18,8 @@ import {
   cacheWarning,
   ENDED_NOT_RUN,
   headerOf,
+  INTERRUPTED_NOT_RUN,
+  INTERRUPTED_TOOL_TEXT,
   modelRequestBody,
   REFUSAL_NOT_RUN,
   TRUNCATED_INSTRUCTION,
@@ -2852,4 +2855,610 @@ describe("output redaction", () => {
       await dir.dispose();
     }
   });
+});
+
+describe("interrupts", () => {
+  function inputFor(dir: TempProject, extra: Record<string, unknown>) {
+    return {
+      dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+      projectRoot: dir.root,
+      cwd: dir.root,
+      os: testOs(),
+      settings: settingsFor(),
+      env: TEST_ENV,
+      loadInput: loadInputFor(dir, TEST_ENV),
+      args: {
+        print: true,
+        output: "text",
+        offline: false,
+        noSessionPersistence: false,
+        continued: false,
+        repair: false,
+        allowedTools: [],
+        disallowedTools: [],
+      },
+      prompt: "go",
+      clock: { now: () => Date.UTC(2026, 9, 15) },
+      ids: sequentialIds("S"),
+      pid: 1,
+      host: "h",
+      platform: fakePlatform(),
+      ...extra,
+    } as unknown as Parameters<typeof runHeadless>[0];
+  }
+
+  // spec: AC-LOOP-02, AC-LOOP-14 (the tool.call is on disk before the tool runs, so an abnormal exit leaves it for crash recovery)
+  test("an abort while a tool runs leaves its tool.call on disk and ends the turn interrupted", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      const sessionId = sequentialIds("H").ulid();
+      const log = sessionPaths({ data, projectRoot: dir.root, os, session: sessionId }).log;
+      const controller = new AbortController();
+      let sawCallOnDisk = false;
+      let sawAbort = false;
+      const started = deferred();
+      const slow: ToolDefinition<unknown> = {
+        name: "Slow",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: async (_input, ctx) => {
+          started.resolve();
+          const deadline = Date.now() + 5_000;
+          for (;;) {
+            if ((await readFile(log, "utf8").catch(() => "")).includes('"tool.call"')) break;
+            if (Date.now() > deadline) throw new Error("the tool started before its tool.call reached the log");
+            await Bun.sleep(25);
+          }
+          sawCallOnDisk = true;
+          await new Promise<void>((resolve) => {
+            if (ctx.signal.aborted) resolve();
+            else ctx.signal.addEventListener("abort", () => resolve(), { once: true });
+          });
+          sawAbort = true;
+          return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
+        },
+      } as ToolDefinition<unknown>;
+      const run = runHeadless(
+        inputFor(dir, {
+          ids: sequentialIds("H"),
+          signal: controller.signal,
+          adapter: adapterFor([{ toolCall: { id: "s1", name: "Slow", input: {} } }, { text: "done" }]),
+          toolDefs: [slow],
+        }),
+      );
+      await started.promise;
+      const deadline = Date.now() + 5_000;
+      while (!sawCallOnDisk) {
+        if (Date.now() > deadline) throw new Error("the tool never saw its tool.call on disk");
+        await Bun.sleep(10);
+      }
+      controller.abort();
+      const out = await run;
+      expect(sawAbort).toBe(true);
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      expect(out.result).toBe("");
+      expect(out.sessionId).toBe(sessionId);
+      const read = await readSession({ data, projectRoot: dir.root, os, session: out.sessionId });
+      const types = read.events.map((e) => e.type);
+      expect(types.indexOf("tool.call")).toBeGreaterThan(-1);
+      expect(types.indexOf("tool.result")).toBeGreaterThan(types.indexOf("tool.call"));
+      const results = read.events
+        .filter((e) => e.type === "tool.result")
+        .map((e) => e.data as { status: string; output: string });
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe("interrupted");
+      expect(results[0]?.output).toBe(INTERRUPTED_TOOL_TEXT);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+    } finally {
+      await dir.dispose();
+    }
+  }, 30_000);
+
+  // spec: AC-LOOP-02 (an abort during a retry backoff ends the turn cancelled, never as a run error)
+  test("an abort during a retry backoff ends the turn cancelled instead of waiting", async () => {
+    const dir = await tempProject({});
+    try {
+      const server = startScriptedServer([
+        {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "30" },
+          steps: [{ send: JSON.stringify({ error: { message: "Too many requests" } }) }, { wait: 150 }],
+        },
+      ]);
+      try {
+        const controller = new AbortController();
+        const run = runHeadless(inputFor(dir, { adapter: nvidiaAdapter(server.baseURL), signal: controller.signal }));
+        const deadline = Date.now() + 5_000;
+        while (server.received.length === 0) {
+          if (Date.now() > deadline) throw new Error("the provider was never called");
+          await Bun.sleep(10);
+        }
+        await Bun.sleep(400); // let the 429 land and the 30 s backoff start
+        const abortedAt = Date.now();
+        controller.abort();
+        const out = await run;
+        expect(Date.now() - abortedAt).toBeLessThan(5_000);
+        expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+        expect(out.stopReason).toBe("interrupted");
+        const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+        const read = await readSession(loc);
+        const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+        expect(ends.at(-1)?.reason).toBe("cancelled");
+        expect(read.events.some((e) => e.type === "system.injected")).toBe(false);
+        expect(read.events.some((e) => e.type === "model.response")).toBe(false);
+      } finally {
+        server.stop();
+      }
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
+
+  // spec: AC-LOOP-07 (reasoning-only output appends nothing and leaves the turn `interrupted`, never `cancelled`)
+  test("an abort after reasoning-only output appends nothing and ends the turn interrupted", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [{ role: "user", content: "x" }],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          yield { type: "reasoning.delta", blockIndex: 0, text: "thinking" };
+          yield {
+            type: "aborted",
+            completed: {
+              provider: "nvidia",
+              protocol: "openai-chat",
+              package: "x",
+              packageVersion: "1",
+              modelId: "m",
+              parts: [{ kind: "reasoning" }],
+              usage: {},
+              finishReason: null,
+            },
+          };
+        },
+      } as never;
+      const out = await runHeadless(inputFor(dir, { adapter }));
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      const loc = { data, projectRoot: dir.root, os, session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+      expect(read.events.filter((e) => e.type === "system.injected")).toHaveLength(0);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+      // Not `cancelled`: the turn stays in the transcript, so the next request still carries its user message.
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      const nextTurn = [
+        ...read.events,
+        {
+          v: 1,
+          id: "n".repeat(26),
+          ts: "2026-10-15T00:00:01.000Z",
+          session: out.sessionId,
+          epoch: 0,
+          turn: 2,
+          type: "user.message",
+          core: true,
+          data: { text: "continue" },
+        },
+      ] as never;
+      const built = buildRequest(nextTurn, {
+        header: headerOf(epochStart.data as never),
+        params: { maxTokens: 4096 },
+        cache: { breakpoints: "auto", ttl: "auto" },
+      });
+      const userTexts = built.transcript.flatMap((t) =>
+        t.kind === "user" ? t.parts.flatMap((p) => (p.kind === "text" ? [p.text] : [])) : [],
+      );
+      expect(userTexts).toContain("go");
+      expect(userTexts).toContain("continue");
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
+
+  // spec: AC-LOOP-07 (a partially streamed text block appends nothing and still leaves the turn `interrupted`)
+  test("an abort after a partially streamed text block ends the turn interrupted", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [{ role: "user", content: "x" }],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          yield { type: "text.delta", blockIndex: 0, text: "half" };
+          yield { type: "aborted", completed: null };
+        },
+      } as never;
+      const out = await runHeadless(inputFor(dir, { adapter }));
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      const loc = { data, projectRoot: dir.root, os, session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(0);
+      expect(read.events.filter((e) => e.type === "system.injected")).toHaveLength(0);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+      // Not `cancelled`: the turn stays in the transcript, so the next request still carries its user message.
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      const nextTurn = [
+        ...read.events,
+        {
+          v: 1,
+          id: "n".repeat(26),
+          ts: "2026-10-15T00:00:01.000Z",
+          session: out.sessionId,
+          epoch: 0,
+          turn: 2,
+          type: "user.message",
+          core: true,
+          data: { text: "continue" },
+        },
+      ] as never;
+      const built = buildRequest(nextTurn, {
+        header: headerOf(epochStart.data as never),
+        params: { maxTokens: 4096 },
+        cache: { breakpoints: "auto", ttl: "auto" },
+      });
+      const userTexts = built.transcript.flatMap((t) =>
+        t.kind === "user" ? t.parts.flatMap((p) => (p.kind === "text" ? [p.text] : [])) : [],
+      );
+      expect(userTexts).toContain("go");
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
+
+  // spec: AC-LOOP-07 (a mid-stream abort keeps completed blocks; their tool calls are answered "Not run")
+  test("an abort mid-stream keeps completed blocks and answers their tool calls Not-run", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [{ role: "user", content: "x" }],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          yield {
+            type: "aborted",
+            completed: {
+              provider: "nvidia",
+              protocol: "openai-chat",
+              package: "x",
+              packageVersion: "1",
+              modelId: "m",
+              parts: [
+                { kind: "text", text: "kept text" },
+                { kind: "tool_call", id: "k1", name: "Read", inputJson: JSON.stringify({ file_path: "a.txt" }) },
+              ],
+              usage: {},
+              finishReason: "tool_calls",
+            },
+          };
+        },
+      } as never;
+      let handle: { shutdown(): Promise<void>; eventTypes(): readonly string[] } | undefined;
+      const out = await runHeadless(
+        inputFor(dir, {
+          adapter,
+          onSession: (h: { shutdown(): Promise<void>; eventTypes(): readonly string[] }) => {
+            handle = h;
+          },
+        }),
+      );
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      expect(out.result).toBe("");
+      const loc = { data, projectRoot: dir.root, os, session: out.sessionId };
+      const read = await readSession(loc);
+      expect(handle?.eventTypes()).toEqual(read.events.map((e) => e.type));
+      const responses = read.events.filter((e) => e.type === "model.response");
+      expect(responses).toHaveLength(1);
+      const kept = responses[0]?.data as { parts: Array<{ kind: string }> };
+      expect(kept.parts.map((p) => p.kind)).toEqual(["text", "tool_call"]);
+      expect(read.events.filter((e) => e.type === "tool.call").map((e) => e.data)).toEqual([
+        { callId: "k1", name: "Read", raw: { file_path: "a.txt" }, input: { file_path: "a.txt" } },
+      ]);
+      expect(read.events.filter((e) => e.type === "tool.result").map((e) => e.data)).toEqual([
+        { callId: "k1", status: "interrupted", output: INTERRUPTED_NOT_RUN },
+      ]);
+      expect(read.events.filter((e) => e.type === "system.injected").map((e) => e.data)).toEqual([
+        {
+          text: "The user interrupted your response. Blocks that finished are kept above; the rest was discarded.",
+          reason: "interrupt-note",
+          delivery: "reminder-block",
+        },
+      ]);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      // The next request (a resume's new prompt) carries the note logged by the abort.
+      const nextTurn = [
+        ...read.events,
+        {
+          v: 1,
+          id: "n".repeat(26),
+          ts: "2026-10-15T00:00:01.000Z",
+          session: out.sessionId,
+          epoch: 0,
+          turn: 2,
+          type: "user.message",
+          core: true,
+          data: { text: "continue" },
+        },
+      ] as never;
+      const built = buildRequest(nextTurn, {
+        header: headerOf(epochStart.data as never),
+        params: { maxTokens: 4096 },
+        cache: { breakpoints: "auto", ttl: "auto" },
+      });
+      const call = createSdkAdapter({
+        endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      }).render(built);
+      const messages = JSON.stringify(call.messages);
+      expect(messages).toContain("kept text");
+      expect(messages).toContain(INTERRUPTED_NOT_RUN);
+      expect(messages).toContain("The user interrupted your response.");
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
+
+  // spec: AC-LOOP-02 (an abort on a follow-up request keeps the turn's finished request-1 work: interrupted, never cancelled)
+  test("an abort on a follow-up request keeps the turn interrupted with its work in the transcript", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      let step = 0;
+      let runs = 0;
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [{ role: "user", content: "x" }],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          step += 1;
+          if (step === 1) {
+            yield { type: "tool_call.start", blockIndex: 0, id: "c1", name: "Step" };
+            yield { type: "tool_call.delta", blockIndex: 0, partialJson: "{}" };
+            yield { type: "block.done", blockIndex: 0, kind: "tool_call" };
+            yield {
+              type: "done",
+              stopReason: "tool_use",
+              stored: {
+                provider: "nvidia",
+                protocol: "openai-chat",
+                package: "x",
+                packageVersion: "1",
+                modelId: "m",
+                parts: [{ kind: "tool_call", id: "c1", name: "Step", inputJson: "{}" }],
+                usage: {},
+                finishReason: "tool_calls",
+              },
+            };
+            return;
+          }
+          yield { type: "aborted", completed: null };
+        },
+      } as never;
+      const stepTool: ToolDefinition<unknown> = {
+        name: "Step",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          runs += 1;
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "ran" }] });
+        },
+      } as ToolDefinition<unknown>;
+      const out = await runHeadless(inputFor(dir, { adapter, toolDefs: [stepTool] }));
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      expect(runs).toBe(1);
+      const loc = { data, projectRoot: dir.root, os, session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(1);
+      expect(
+        read.events.filter((e) => e.type === "tool.result").map((e) => (e.data as { status: string }).status),
+      ).toEqual(["ok"]);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+      // A `cancelled` turn contributes nothing to a replay; this one keeps its first request's work.
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      const nextTurn = [
+        ...read.events,
+        {
+          v: 1,
+          id: "n".repeat(26),
+          ts: "2026-10-15T00:00:01.000Z",
+          session: out.sessionId,
+          epoch: 0,
+          turn: 2,
+          type: "user.message",
+          core: true,
+          data: { text: "continue" },
+        },
+      ] as never;
+      const built = buildRequest(nextTurn, {
+        header: headerOf(epochStart.data as never),
+        params: { maxTokens: 4096 },
+        cache: { breakpoints: "auto", ttl: "auto" },
+      });
+      const userTexts = built.transcript.flatMap((t) =>
+        t.kind === "user" ? t.parts.flatMap((p) => (p.kind === "text" ? [p.text] : [])) : [],
+      );
+      expect(userTexts).toContain("go");
+      const call = createSdkAdapter({
+        endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      }).render(built);
+      const toolMessage = (call.messages as Array<{ role: string; content: unknown[] }>).find((m) => m.role === "tool");
+      expect(toolMessage?.content[0]).toEqual({
+        type: "tool-result",
+        toolCallId: "c1",
+        toolName: "Step",
+        output: { type: "text", value: "ran" },
+      });
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
+
+  // spec: AC-LOOP-02 (a done-only response is output too: a follow-up abort stays interrupted and keeps the turn's work)
+  test("an abort on a follow-up request after a done-only response keeps the turn interrupted", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const os = testOs();
+      let step = 0;
+      let runs = 0;
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [{ role: "user", content: "x" }],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          step += 1;
+          if (step === 1) {
+            yield {
+              type: "done",
+              stopReason: "tool_use",
+              stored: {
+                provider: "nvidia",
+                protocol: "openai-chat",
+                package: "x",
+                packageVersion: "1",
+                modelId: "m",
+                parts: [{ kind: "tool_call", id: "c1", name: "Step", inputJson: "{}" }],
+                usage: {},
+                finishReason: "tool_calls",
+              },
+            };
+            return;
+          }
+          yield { type: "aborted", completed: null };
+        },
+      } as never;
+      const stepTool: ToolDefinition<unknown> = {
+        name: "Step",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          runs += 1;
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "ran" }] });
+        },
+      } as ToolDefinition<unknown>;
+      const out = await runHeadless(inputFor(dir, { adapter, toolDefs: [stepTool] }));
+      expect(out.exit).toEqual({ kind: "signal", signal: "SIGINT" });
+      expect(out.stopReason).toBe("interrupted");
+      expect(runs).toBe(1);
+      const loc = { data, projectRoot: dir.root, os, session: out.sessionId };
+      const read = await readSession(loc);
+      expect(read.events.filter((e) => e.type === "model.response")).toHaveLength(1);
+      expect(
+        read.events.filter((e) => e.type === "tool.result").map((e) => (e.data as { status: string }).status),
+      ).toEqual(["ok"]);
+      const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+      expect(ends.at(-1)?.reason).toBe("interrupted");
+      // A `cancelled` turn contributes nothing to a replay; this one keeps its first request's work.
+      const epochStart = read.events.find((e) => e.type === "epoch.start");
+      if (epochStart === undefined) throw new Error("no epoch.start event");
+      const nextTurn = [
+        ...read.events,
+        {
+          v: 1,
+          id: "n".repeat(26),
+          ts: "2026-10-15T00:00:01.000Z",
+          session: out.sessionId,
+          epoch: 0,
+          turn: 2,
+          type: "user.message",
+          core: true,
+          data: { text: "continue" },
+        },
+      ] as never;
+      const built = buildRequest(nextTurn, {
+        header: headerOf(epochStart.data as never),
+        params: { maxTokens: 4096 },
+        cache: { breakpoints: "auto", ttl: "auto" },
+      });
+      const userTexts = built.transcript.flatMap((t) =>
+        t.kind === "user" ? t.parts.flatMap((p) => (p.kind === "text" ? [p.text] : [])) : [],
+      );
+      expect(userTexts).toContain("go");
+      const call = createSdkAdapter({
+        endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      }).render(built);
+      const toolMessage = (call.messages as Array<{ role: string; content: unknown[] }>).find((m) => m.role === "tool");
+      expect(toolMessage?.content[0]).toEqual({
+        type: "tool-result",
+        toolCallId: "c1",
+        toolName: "Step",
+        output: { type: "text", value: "ran" },
+      });
+    } finally {
+      await dir.dispose();
+    }
+  }, 15_000);
 });

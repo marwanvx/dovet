@@ -125,6 +125,43 @@ describe("two sessions in one process", () => {
     }
   });
 
+  // spec: AC-LOOP-05
+  test("submit keeps stored attachments with the queued message and warns about the rest", async () => {
+    const runtime = createRuntime(deps());
+    try {
+      const s = (await runtime.openSession({ cwd: "/tmp" as never, interactive: true, overrides: {} })) as SessionImpl;
+      const it = s.events()[Symbol.asyncIterator]();
+      expect((await it.next()).value).toEqual({ type: "status", state: "idle" });
+      const notice = it.next();
+      await Bun.sleep(0);
+      s.submit({
+        text: "look at these",
+        attachments: [
+          { kind: "image", path: "/tmp/a.png", blob: { store: "blob", id: "a".repeat(64) } },
+          { kind: "file", path: "/tmp/b.pdf", blob: { store: "blob", id: "b".repeat(64) } },
+          { kind: "image", path: "/tmp/c.png" },
+        ],
+      });
+      expect((await notice).value).toEqual({
+        type: "notice",
+        level: "warn",
+        text: 'Attachment "/tmp/c.png" was not attached (only stored files ride with a queued message); the message text still queued.',
+      });
+      // spec: AC-LOOP-05 (Esc moves the queue back into the input box; never auto-sent, never lost)
+      const pulled = s.interrupt();
+      expect(pulled).toHaveLength(1);
+      expect(pulled[0]?.text).toBe("look at these");
+      expect(pulled[0]?.attachments).toEqual([
+        { kind: "image", blob: { store: "blob", id: "a".repeat(64) }, mediaType: "image/png" },
+        { kind: "document", blob: { store: "blob", id: "b".repeat(64) }, mediaType: "application/pdf" },
+      ]);
+      expect(s.interrupt()).toEqual([]);
+      await s.close();
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test("/plan shows the written plan and open returns its path", async () => {
     const { mkdtemp, mkdir, rm, writeFile } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

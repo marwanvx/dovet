@@ -9,6 +9,8 @@ import {
   executeTools,
   GuardTracker,
   historyRepairOffer,
+  INTERRUPT_INSTRUCTION,
+  INTERRUPTED_NOT_RUN,
   isEarlyEligible,
   MAX_REQUESTS_PER_TURN,
   modelRequestBody,
@@ -24,8 +26,10 @@ import {
   sessionDate,
   shellToolFor,
   shellToolName,
+  shouldAppendInterrupted,
   shouldDiscardEarly,
   startEpoch,
+  streamInterruptResults,
   TRUNCATED_NOT_RUN,
 } from "../agent/index.ts";
 import {
@@ -51,7 +55,7 @@ import {
   ruleSetFromSettings,
   secretsFromEnv,
 } from "../policy/index.ts";
-import type { AbsPath, EventEnvelope } from "../schema/index.ts";
+import type { AbsPath, EventEnvelope, StoredResponse } from "../schema/index.ts";
 import { PermissionMode } from "../schema/index.ts";
 import {
   createCredentials,
@@ -112,6 +116,10 @@ export type HeadlessRunInput = {
   platform: Platform;
   adapter?: HeadlessAdapter;
   toolDefs?: readonly ToolDefinition<unknown>[];
+  /** The turn's abort signal (SIGINT); an abort ends the turn interrupted with exit 130, never as an error. */
+  signal?: AbortSignal;
+  /** The open writer, so the CLI's signal handling can flush it before the process exits. */
+  onSession?(handle: { shutdown(): Promise<void>; eventTypes(): readonly string[] }): void;
 };
 
 export type HeadlessRunOutput = {
@@ -339,17 +347,30 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   if (opened.mode !== "write")
     return errOut(sessionId, `session ${sessionId} is read-only (${opened.reason})`, { kind: "error" }, warnings);
   const writer = opened.writer;
+  // Attached before readSession: the lock exists now, so a signal during the read can still flush and close.
+  const events: EventEnvelope[] = [];
+  let shuttingDown = false;
+  input.onSession?.({
+    // A stop signal closes the log before it aborts the turn: the writes the abort still unwinds with are dropped.
+    shutdown: () => {
+      shuttingDown = true;
+      return writer.close();
+    },
+    eventTypes: () => events.map((e) => e.type),
+  });
   try {
     const prior = (await readSession(loc)).events;
-    const events: EventEnvelope[] = [...prior];
+    for (const e of prior) events.push(e);
     const push = (
       type: Parameters<typeof writer.append>[0]["type"],
       epoch: number,
       turn: number | null,
       data: unknown,
     ): void => {
+      if (shuttingDown) return;
       events.push(writer.append({ type, epoch, turn, data }));
     };
+    const flushLog = (): Promise<void> => (shuttingDown ? Promise.resolve() : writer.flush());
     const isNew = resumed.lines === 0;
     const shellChoice = await input.platform.resolveShell(input.settings.settings.shell);
     const defs = input.toolDefs ?? headlessToolDefs({ shell: shellChoice, tmpDir: `${input.dirs.data}/tmp` });
@@ -459,13 +480,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       warnings.push(...compiled.warnings.map((w) => w.message));
     } catch (err) {
       const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
-      writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-      await writer.flush();
+      push("turn.end", epochNum, turn, { reason: "error" });
+      await flushLog();
       return errOut(sessionId, `invalid settings: ${problems}`, { kind: "usage" }, warnings);
     }
     let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
-    const baseSignal = new AbortController().signal;
+    const baseSignal = input.signal ?? new AbortController().signal;
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
@@ -596,6 +617,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         return { status: "error", content: [{ kind: "text", text: err instanceof Error ? err.message : String(err) }] };
       }
     };
+    // Turn-scoped: `cancelled` means no output anywhere in the turn — an abort on a follow-up request does not relabel it.
+    let sawOutput = false;
 
     for (;;) {
       await pollAndApply();
@@ -629,8 +652,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const pairing = checkTranscriptPairing(built.transcript);
         if (pairing !== null) throw new Error(`InvariantViolation: ${pairing}. Repair: ${REPAIR_HINT}`);
       } catch (err) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: err instanceof Error ? err.message : String(err),
@@ -648,8 +671,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const messageCount = (call.messages as unknown[]).length;
       const pre = guards.beforeRequest(modelRequestBody(call), false, maxRequests);
       if ("doomed" in pre && pre.doomed) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: "Not sending a request identical to one that just failed without retry.",
@@ -663,8 +686,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       if ("pause" in pre) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: pre.pause.message,
@@ -680,22 +703,31 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       let done: Extract<StreamEvent, { type: "done" }> | undefined;
       let failed: Extract<StreamEvent, { type: "error" }> | undefined;
       let aborted = false;
+      let abortedCompleted: StoredResponse | null = null;
       let sawRequest = false;
       const early = new Map<string, Promise<ToolOutput>>();
       const earlyBlocks = new Map<number, { id: string; name: string; json: string }>();
       const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
-        new Promise((resolve, reject) => {
-          const t = setTimeout(resolve, ms);
-          signal.addEventListener("abort", () => {
+        new Promise((resolve) => {
+          const done = (): void => {
             clearTimeout(t);
-            reject(new Error("aborted"));
-          });
+            resolve();
+          };
+          const t = setTimeout(done, ms);
+          signal.addEventListener("abort", done, { once: true });
         });
       for await (const e of callModel(
         { header, params, transcript: built.transcript, cache },
         { adapter, sleep, random: () => 0 },
         { signal: baseSignal },
       )) {
+        if (
+          e.type === "text.delta" ||
+          e.type === "reasoning.delta" ||
+          e.type === "tool_call.start" ||
+          e.type === "tool_call.delta"
+        )
+          sawOutput = true;
         if (e.type === "request") {
           sawRequest = true;
           push(
@@ -719,6 +751,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           failed = { type: "error", error: e.error, completed: null };
         } else if (e.type === "aborted") {
           aborted = true;
+          abortedCompleted = e.completed;
         } else if (e.type === "usage") {
           usage = jsonSafeUsage(e.usage as Record<string, unknown>);
           const read = cacheReadOf(usage);
@@ -772,8 +805,44 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         guards.noteRequestSent(synthetic);
       }
       if (aborted) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "interrupted" } });
-        await writer.flush();
+        // STREAM abort keeps the blocks that completed, answers their tool calls "Not run" and stays in the transcript;
+        // `cancelled` is reserved for an abort before any model output (event-log "Event types").
+        const kept = abortedCompleted !== null && shouldAppendInterrupted(abortedCompleted) ? abortedCompleted : null;
+        if (kept !== null) {
+          push("model.response", epochNum, turn, kept);
+          const keptCalls = parseToolCalls(kept.parts);
+          for (const c of keptCalls) {
+            const raw = (() => {
+              try {
+                return JSON.parse(c.rawJson);
+              } catch {
+                return c.rawJson;
+              }
+            })();
+            const prep = registry.prepare(c.name, raw);
+            push("tool.call", epochNum, turn, {
+              callId: c.id,
+              name: c.name,
+              raw,
+              input: prep.ok ? prep.normalized : raw,
+            });
+          }
+          for (const r of streamInterruptResults(keptCalls))
+            push("tool.result", epochNum, turn, {
+              callId: r.callId,
+              status: "interrupted",
+              output: INTERRUPTED_NOT_RUN,
+            });
+          // The next user message starts with this instruction (agent-loop "Interrupts" STREAM row): logged here,
+          // where the kept blocks are, so a resume's next request carries it.
+          push("system.injected", epochNum, turn, {
+            text: INTERRUPT_INSTRUCTION,
+            reason: "interrupt-note",
+            delivery: "reminder-block",
+          });
+        }
+        push("turn.end", epochNum, turn, { reason: kept !== null || sawOutput ? "interrupted" : "cancelled" });
+        await flushLog();
         return {
           sessionId,
           result: "",
@@ -790,8 +859,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         guards.noteError(failed.error.retryable);
         if (isHistoryRelated(failed.error)) {
           const offer = historyRepairOffer(failed.error);
-          writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-          await writer.flush();
+          push("turn.end", epochNum, turn, { reason: "error" });
+          await flushLog();
           const hint = offer !== null ? ` ${offer.hint}` : "";
           return {
             sessionId,
@@ -805,8 +874,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             warnings,
           };
         }
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: failed.error.message,
@@ -820,8 +889,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       if (done === undefined) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: "the model returned no answer",
@@ -889,7 +958,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const action = decideStopAction(stopInput);
       // A response with no text and no tool call is not appended (agent-loop "Stop-reason handling"), so an
       // empty or thinking-only retry sees a clean transcript and the log never holds a reasoning-only turn.
-      if (hasText || calls.length > 0) push("model.response", epochNum, turn, done.stored);
+      if (hasText || calls.length > 0) {
+        push("model.response", epochNum, turn, done.stored);
+        // A buffered adapter may skip deltas and deliver the block only in `done`; the appended response is output.
+        sawOutput = true;
+      }
       const recordNotRun = (text: (c: ParsedCall) => string): void => {
         for (const c of calls) {
           const raw = (() => {
@@ -911,8 +984,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       };
       if (malformedPause !== null) {
         recordNotRun((c) => (truncated ? TRUNCATED_NOT_RUN : (invalidOf(c) ?? "invalid tool call")));
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: malformedPause.message,
@@ -938,8 +1011,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           .join("");
         if (action.reason === "refusal") {
           if (calls.length > 0) recordNotRun(() => REFUSAL_NOT_RUN);
-          writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "refusal" } });
-          await writer.flush();
+          push("turn.end", epochNum, turn, { reason: "refusal" });
+          await flushLog();
           return {
             sessionId,
             result: text,
@@ -955,8 +1028,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         // Every tool_use needs exactly one tool_result (agent-loop "Stop-reason handling"), so a call the
         // finalize skipped is logged as not run instead of leaving the turn unpaired.
         if (calls.length > 0) recordNotRun(() => ENDED_NOT_RUN);
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "end_turn" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "end_turn" });
+        await flushLog();
         return {
           sessionId,
           result: text === "" ? (action.note ?? text) : text,
@@ -979,8 +1052,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         continue;
       }
       if (action.kind === "compact-retry") {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return {
           sessionId,
           result: "context exceeded",
@@ -999,24 +1072,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         if (pending !== undefined) earlyResults.set(c.id, await pending);
       }
       early.clear();
-      const { results, stopped } = await executeTools(calls, {
-        registry,
-        decide: decideFn,
-        prompt: () => Promise.resolve({ allow: false, dontAskAgain: false }),
-        run: runTool,
-        makeContext: () => ctx,
-        beforeBatch: async () => {
-          await pollAndApply();
-          ctx = buildCtx();
-        },
-        offloadDir: `${input.dirs.data}/tmp`,
-        headless: true,
-        capBytes: requestCapFor(provider),
-        earlyResults,
-        secrets: outputSecrets,
-      });
-      const byId = new Map(results.map((r) => [r.callId, r]));
-      const recordCalls = (): void => {
+      // The tool.call goes to the log before the tool runs: an abnormal exit leaves it for resume's crash recovery.
+      const recordCallEvents = (): void => {
         for (const c of calls) {
           const raw = (() => {
             try {
@@ -1033,6 +1090,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             input: prep.ok ? prep.normalized : raw,
           });
         }
+      };
+      const recordResultEvents = (): void => {
         for (const r of results) {
           const text = r.output.content.map((x) => (x.kind === "text" ? x.text : "")).join("");
           const status = r.output.status === "ok" ? "ok" : r.output.status === "interrupted" ? "interrupted" : "error";
@@ -1040,6 +1099,41 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
         }
       };
+      recordCallEvents();
+      const { results, stopped } = await executeTools(calls, {
+        registry,
+        decide: decideFn,
+        prompt: () => Promise.resolve({ allow: false, dontAskAgain: false }),
+        run: runTool,
+        makeContext: () => ctx,
+        beforeBatch: async () => {
+          await pollAndApply();
+          ctx = buildCtx();
+        },
+        offloadDir: `${input.dirs.data}/tmp`,
+        headless: true,
+        capBytes: requestCapFor(provider),
+        earlyResults,
+        secrets: outputSecrets,
+        signal: baseSignal,
+      });
+      const byId = new Map(results.map((r) => [r.callId, r]));
+      if (baseSignal.aborted) {
+        recordResultEvents();
+        push("turn.end", epochNum, turn, { reason: "interrupted" });
+        await flushLog();
+        return {
+          sessionId,
+          result: "",
+          stopReason: "interrupted",
+          incomplete: false,
+          usage,
+          cost: null,
+          receipt: {},
+          exit: { kind: "signal", signal: "SIGINT" },
+          warnings,
+        };
+      }
       const guardExit = (message: string): HeadlessRunOutput => ({
         sessionId,
         result: message,
@@ -1067,9 +1161,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         }
         const pause = guards.noteIdenticalFail(key, text);
         if (pause !== null) {
-          recordCalls();
-          writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-          await writer.flush();
+          recordResultEvents();
+          push("turn.end", epochNum, turn, { reason: "error" });
+          await flushLog();
           return guardExit(pause.message);
         }
       }
@@ -1082,15 +1176,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         });
       const progressPause = guards.noteProgress(progressed);
       if (progressPause !== null) {
-        recordCalls();
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "error" } });
-        await writer.flush();
+        recordResultEvents();
+        push("turn.end", epochNum, turn, { reason: "error" });
+        await flushLog();
         return guardExit(progressPause.message);
       }
-      recordCalls();
+      recordResultEvents();
       if (stopped) {
-        writer.append({ type: "turn.end", epoch: epochNum, turn, data: { reason: "end_turn" } });
-        await writer.flush();
+        push("turn.end", epochNum, turn, { reason: "end_turn" });
+        await flushLog();
         const text = results
           .map((r) => r.output.content.map((x) => (x.kind === "text" ? x.text : "")).join(""))
           .join("\n");

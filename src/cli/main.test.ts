@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pkg from "../../package.json";
-import { sseBody, startFixtureServer, tempProject } from "../../test/helpers/index.ts";
+import { sseBody, startFixtureServer, startScriptedServer, tempProject } from "../../test/helpers/index.ts";
+import { INTERRUPTED_TOOL_TEXT } from "../agent/index.ts";
 import type { Os } from "../platform/index.ts";
-import { listSessions, readSession } from "../store/index.ts";
+import { CRASH_TOOL_TEXT, listSessions, readSession, resumeSession, sessionPaths } from "../store/index.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -408,4 +410,296 @@ describe("dovet -p headless", () => {
       await dir.dispose();
     }
   });
+});
+
+describe("dovet -p signals", () => {
+  const servers: Array<{ stop(): void }> = [];
+  afterEach(() => {
+    for (const s of servers.splice(0)) s.stop();
+  });
+
+  const testOs = (): Os =>
+    process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
+
+  const PID_FILE = "dovet-child.pid";
+  const LONG_COMMAND = `echo $$ > ${PID_FILE}; sleep 30`;
+  const TRAP_COMMAND = `trap '' TERM; echo $$ > ${PID_FILE}; sleep 30`;
+
+  function toolCallExchange(call: { id: string; name: string; args: unknown }) {
+    const delta = (d: unknown, finish: string | null = null) => ({
+      id: "c",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "test/model",
+      choices: [{ index: 0, delta: d, finish_reason: finish }],
+    });
+    return {
+      request: { path: "", body: "" },
+      response: {
+        status: 200,
+        contentType: "text/event-stream",
+        body: sseBody([
+          delta({
+            role: "assistant",
+            tool_calls: [
+              {
+                index: 0,
+                id: call.id,
+                type: "function",
+                function: { name: call.name, arguments: JSON.stringify(call.args) },
+              },
+            ],
+          }),
+          delta({}, "tool_calls"),
+        ]),
+      },
+    };
+  }
+
+  function spawnHeadless(dir: { root: string }, args: string[]) {
+    const proc = Bun.spawn([process.execPath, MAIN, ...args], {
+      cwd: dir.root,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...process.env,
+        DOVET_CONFIG_DIR: join(dir.root, "config"),
+        DOVET_DATA_DIR: join(dir.root, "data"),
+        NVIDIA_API_KEY: "nvapi-FAKE-SIGNAL-KEY",
+      },
+    });
+    proc.stdin.end();
+    return proc;
+  }
+
+  async function until(cond: () => boolean | Promise<boolean>, what: string, ms = 15_000): Promise<void> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (await cond()) return;
+      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      await Bun.sleep(25);
+    }
+  }
+
+  function childAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function lastSessionLoc(dir: { root: string }) {
+    const os = testOs();
+    const sessions = await listSessions({ data: join(dir.root, "data"), projectRoot: dir.root, os });
+    const last = sessions[sessions.length - 1];
+    if (last === undefined) throw new Error("no session was saved");
+    return { data: join(dir.root, "data"), projectRoot: dir.root, os, session: last.id };
+  }
+
+  // spec: AC-LOOP-09
+  test.skipIf(process.platform === "win32")(
+    "SIGTERM during a running tool kills the child, flushes the log and exits 143",
+    async () => {
+      const server = startFixtureServer([
+        toolCallExchange({ id: "call_1", name: "Bash", args: { command: LONG_COMMAND } }),
+      ]);
+      servers.push(server);
+      const dir = await tempProject({
+        "config/settings.json": JSON.stringify({
+          provider: "nvidia",
+          model: "test/model",
+          providers: { nvidia: { baseUrl: server.baseURL } },
+        }),
+      });
+      try {
+        const proc = spawnHeadless(dir, ["-p", "run it", "--permission-mode", "bypassPermissions"]);
+        const pidPath = join(dir.root, PID_FILE);
+        await until(
+          async () =>
+            Number(
+              (
+                await Bun.file(pidPath)
+                  .text()
+                  .catch(() => "")
+              ).trim(),
+            ) > 0,
+          "the tool child to write its pid",
+        );
+        const childPid = Number((await Bun.file(pidPath).text()).trim());
+        expect(childPid).toBeGreaterThan(0);
+        process.kill(proc.pid, "SIGTERM");
+        const [, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        expect(code).toBe(143);
+        expect(err).not.toContain("the session log is closed");
+        await until(() => !childAlive(childPid), "the tool child to die");
+        const loc = await lastSessionLoc(dir);
+        const lines = (await readFile(sessionPaths(loc).log, "utf8"))
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l) as { type: string });
+        const calls = lines.filter((l) => l.type === "tool.call");
+        expect(calls).toHaveLength(1);
+        expect(lines.some((l) => l.type === "tool.result")).toBe(false);
+        expect(lines.some((l) => l.type === "turn.end")).toBe(false);
+        expect(await Bun.file(sessionPaths(loc).lock).exists()).toBe(false);
+        const resumed = await resumeSession(loc);
+        expect(resumed.readOnly).toBeUndefined();
+        const repaired = resumed.repairs.find(
+          (r) => r.type === "tool.result" && (r.data as { callId?: string }).callId === "call_1",
+        );
+        expect(repaired?.data).toMatchObject({ status: "interrupted", output: CRASH_TOOL_TEXT });
+        expect(resumed.repairs.at(-2)?.data).toMatchObject({ reason: "crashed" });
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-LOOP-09
+  test.skipIf(process.platform === "win32")(
+    "SIGTERM still ends a child that ignores SIGTERM before exiting 143",
+    async () => {
+      const server = startFixtureServer([
+        toolCallExchange({ id: "call_trap", name: "Bash", args: { command: TRAP_COMMAND } }),
+      ]);
+      servers.push(server);
+      const dir = await tempProject({
+        "config/settings.json": JSON.stringify({
+          provider: "nvidia",
+          model: "test/model",
+          providers: { nvidia: { baseUrl: server.baseURL } },
+        }),
+      });
+      try {
+        const proc = spawnHeadless(dir, ["-p", "run it", "--permission-mode", "bypassPermissions"]);
+        const pidPath = join(dir.root, PID_FILE);
+        await until(
+          async () =>
+            Number(
+              (
+                await Bun.file(pidPath)
+                  .text()
+                  .catch(() => "")
+              ).trim(),
+            ) > 0,
+          "the tool child to write its pid",
+        );
+        const childPid = Number((await Bun.file(pidPath).text()).trim());
+        expect(childPid).toBeGreaterThan(0);
+        process.kill(proc.pid, "SIGTERM");
+        const [, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        expect(code).toBe(143);
+        expect(err).not.toContain("the session log is closed");
+        await until(() => !childAlive(childPid), "the SIGTERM-ignoring child to be killed");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-LOOP-02
+  test.skipIf(process.platform === "win32")(
+    "SIGINT aborts the running tool, warns about a second press, and exits 130 with the turn interrupted",
+    async () => {
+      const server = startFixtureServer([
+        toolCallExchange({ id: "call_2", name: "Bash", args: { command: LONG_COMMAND } }),
+      ]);
+      servers.push(server);
+      const dir = await tempProject({
+        "config/settings.json": JSON.stringify({
+          provider: "nvidia",
+          model: "test/model",
+          providers: { nvidia: { baseUrl: server.baseURL } },
+        }),
+      });
+      try {
+        const proc = spawnHeadless(dir, ["-p", "run it", "--permission-mode", "bypassPermissions"]);
+        await until(() => Bun.file(join(dir.root, PID_FILE)).exists(), "the tool child to start");
+        process.kill(proc.pid, "SIGINT");
+        const [out, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        expect(code).toBe(130);
+        expect(err).toContain("press Ctrl+C again");
+        expect(err).not.toContain("dovet: aborted");
+        expect(err).not.toMatch(/^dovet: *$/m);
+        expect(out).toBe("");
+        const read = await readSession(await lastSessionLoc(dir));
+        const calls = read.events.filter((e) => e.type === "tool.call").map((e) => e.data as { callId: string });
+        expect(calls).toHaveLength(1);
+        const results = read.events
+          .filter((e) => e.type === "tool.result")
+          .map((e) => e.data as { callId: string; status: string; output: string });
+        expect(results).toHaveLength(1);
+        expect(results[0]?.callId).toBe(calls[0]?.callId);
+        expect(results[0]?.status).toBe("interrupted");
+        expect(results[0]?.output).toContain(INTERRUPTED_TOOL_TEXT);
+        const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+        expect(ends.at(-1)?.reason).toBe("interrupted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-LOOP-02 (the second-press window: a SIGINT during the retry backoff must not wait it out)
+  test.skipIf(process.platform === "win32")(
+    "SIGINT during a retry backoff exits 130 without waiting the backoff out",
+    async () => {
+      const server = startScriptedServer([
+        {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "30" },
+          steps: [{ send: JSON.stringify({ error: { message: "Too many requests" } }) }, { wait: 150 }],
+        },
+      ]);
+      servers.push(server);
+      const dir = await tempProject({
+        "config/settings.json": JSON.stringify({
+          provider: "nvidia",
+          model: "test/model",
+          providers: { nvidia: { baseUrl: server.baseURL } },
+        }),
+      });
+      try {
+        const started = Date.now();
+        const proc = spawnHeadless(dir, ["-p", "hi"]);
+        await until(() => server.received.length === 1, "the provider request");
+        await Bun.sleep(400); // let the 429 land and the 30 s backoff start
+        process.kill(proc.pid, "SIGINT");
+        const [, err, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ]);
+        expect(code).toBe(130);
+        expect(err).toContain("press Ctrl+C again");
+        expect(err).not.toContain("dovet: aborted");
+        expect(err).not.toMatch(/^dovet: *$/m);
+        expect(Date.now() - started).toBeLessThan(20_000);
+        const read = await readSession(await lastSessionLoc(dir));
+        const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
+        expect(ends.at(-1)?.reason).toBe("cancelled");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
 });

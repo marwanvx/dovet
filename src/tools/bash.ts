@@ -20,7 +20,13 @@ import {
 } from "./shell-command.ts";
 import { commandEnv, parseEnvFile, type ShellSnapshot } from "./shell-env.ts";
 import { headAndTail, sanitizeOutput } from "./shell-output.ts";
-import type { SessionEffect, ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
+import {
+  INTERRUPTED_TOOL_TEXT,
+  type SessionEffect,
+  type ToolContext,
+  type ToolDefinition,
+  type ToolOutput,
+} from "./types.ts";
 
 const BashInput = z.strictObject({
   command: z.string().min(1),
@@ -246,8 +252,7 @@ export function createBashTool(opts: {
     if (gone !== undefined) return gone;
     const shell = await findShell(ctx);
     const snapshot = (await raceAbort(opts.snapshot?.ready(), ctx.signal)) ?? { env: null };
-    if (ctx.signal.aborted)
-      return { status: "interrupted", content: [{ kind: "text", text: "Interrupted by the user" }] };
+    if (ctx.signal.aborted) return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
     const notes: string[] = [];
     if (shell.warning) notes.push(shell.warning);
     if (snapshot.note !== undefined && !noteShown) {
@@ -367,7 +372,7 @@ export function createBashTool(opts: {
             {
               kind: "text",
               text: ctx.signal.aborted
-                ? "Interrupted by the user"
+                ? INTERRUPTED_TOOL_TEXT
                 : `Command timed out after ${Math.round(timeoutMs / 1000)}s`,
             },
           ],
@@ -489,7 +494,7 @@ export function createBashTool(opts: {
       if (ctx.signal.aborted)
         return {
           status: "interrupted",
-          content: body(`Interrupted by the user\n${headAndTail(text, FAILURE_EXCERPT)}`),
+          content: body(`${INTERRUPTED_TOOL_TEXT}\n${headAndTail(text, FAILURE_EXCERPT)}`),
           meta,
         };
       const benign = out.code === 1 && exitOneIsBenign(input.command);

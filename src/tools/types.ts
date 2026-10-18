@@ -9,6 +9,9 @@ import type { ReadStateStore } from "./read-state.ts";
 
 export type { Effects } from "../policy/index.ts";
 
+/** The one wording for a tool still running when the user interrupted (agent-loop TOOLS interrupt row). */
+export const INTERRUPTED_TOOL_TEXT = "Interrupted by the user before this tool finished.";
+
 export type SessionEffect =
   | { kind: "set-mode"; mode: PermissionMode }
   | { kind: "taint"; source: string }

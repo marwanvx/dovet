@@ -11,7 +11,7 @@ import {
   type SessionEffect,
   type ToolContext,
 } from "../tools/index.ts";
-import { InputQueue } from "./interrupts.ts";
+import { attachmentParts, InputQueue, type QueuedMessage } from "./interrupts.ts";
 
 async function readPlanFile(path: AbsPath): Promise<string> {
   return readFile(path, "utf8");
@@ -175,7 +175,9 @@ export class SessionImpl implements Session {
     const input = UserInputSchema.parse(raw);
     const text = this.shellOutput !== "" ? `${this.shellOutput}\n${input.text}` : input.text;
     this.shellOutput = "";
-    this.queue.queue({ text, attachments: [] });
+    const { parts, notices } = attachmentParts(input.attachments);
+    for (const notice of notices) this.emit({ type: "notice", level: "warn", text: notice });
+    this.queue.queue({ text, attachments: parts });
     this.emit({ type: "queue", pending: this.queue.size });
   }
 
@@ -183,12 +185,13 @@ export class SessionImpl implements Session {
     if (this.queue.size > 0) this.emit({ type: "queue", pending: this.queue.size });
   }
 
-  interrupt(): void {
-    this.queue.takeAll();
+  interrupt(): QueuedMessage[] {
+    const pulled = this.queue.pullBackForEdit();
     this.aborter.abort();
     this.aborter = new AbortController();
     this.emit({ type: "queue", pending: 0 });
     this.emit({ type: "status", state: "idle" });
+    return pulled;
   }
 
   answerPermission(requestId: Ulid, raw: PermissionAnswer): void {

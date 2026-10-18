@@ -4,7 +4,7 @@ import { basename, dirname, posix, win32 } from "node:path";
 import { isErrno, isWithin } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { sensitiveGlobs } from "./sensitive-files.ts";
-import type { ToolContext, ToolOutput } from "./types.ts";
+import { INTERRUPTED_TOOL_TEXT, type ToolContext, type ToolOutput } from "./types.ts";
 
 export type RgLimits = { timeoutMs: number; maxBytes: number };
 export const DEFAULT_LIMITS: RgLimits = { timeoutMs: 20_000, maxBytes: 20 * 1024 * 1024 };
@@ -143,7 +143,7 @@ export function stderrReport(stderr: string): { unreadable: number; fatal: strin
 
 /** An error output when the run failed, so a failure is never reported as "no matches". */
 export function runFailure(run: RgRun): ToolOutput | undefined {
-  if (run.interrupted) return { status: "interrupted", content: [{ kind: "text", text: "Search interrupted." }] };
+  if (run.interrupted) return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
   if (run.timedOut || run.capped) return undefined;
   const { fatal } = stderrReport(run.stderr);
   if (run.exitCode === 2 && fatal !== undefined) return fail(`ripgrep failed:\n${fatal}`);
