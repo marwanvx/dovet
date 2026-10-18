@@ -54,7 +54,7 @@ export type {
   ToolPolicyState,
   ToolProgressEvent,
 } from "./types.ts";
-export { NoUserAvailable } from "./types.ts";
+export { INTERRUPTED_TOOL_TEXT, NoUserAvailable } from "./types.ts";
 export { createWriteTool, writeTool } from "./write.ts";
 
 import { editTool } from "./edit.ts";

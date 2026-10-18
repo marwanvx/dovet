@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { fakeClock, nvidiaAdapter, SCENARIOS, sequentialIds } from "../../test/helpers/index.ts";
+import { fakeClock, SCENARIOS, sequentialIds } from "../../test/helpers/index.ts";
+import { createSdkAdapter, endpointOf, PROVIDER_AUTH, providerRecord, type SdkCall } from "../ai/index.ts";
 import { createPlatformCore, type Os } from "../platform/index.ts";
 import { Settings, type StoredResponse } from "../schema/index.ts";
 import { openSession, readSession } from "../store/index.ts";
@@ -16,6 +17,7 @@ import {
   type ToolOutput,
 } from "../tools/index.ts";
 import {
+  attachmentParts,
   attachQueuedAfterResults,
   buildCrashReport,
   cancelBeforeOutput,
@@ -88,9 +90,20 @@ const epoch: BuildEpoch = {
   cache: { breakpoints: "auto", ttl: "auto" },
 };
 
-function renders(events: Parameters<typeof buildRequest>[0]): void {
-  const adapter = nvidiaAdapter("http://unused");
-  adapter.render(buildRequest(events, epoch));
+/** Renders through every bundled provider record's adapter, so a record added in M4 is covered without edits. */
+function renders(events: Parameters<typeof buildRequest>[0]): Array<{ provider: string; call: SdkCall }> {
+  const ids = Object.keys(PROVIDER_AUTH);
+  expect(ids.length).toBeGreaterThan(0);
+  return ids.map((id) => {
+    const adapter = createSdkAdapter({
+      endpoint: () => ({ ...endpointOf(providerRecord(id)), baseURL: "http://unused" }),
+    });
+    try {
+      return { provider: id, call: adapter.render(buildRequest(events, epoch)) };
+    } catch (err) {
+      throw new Error(`render for provider "${id}": ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }
 
 let counter = 0;
@@ -268,17 +281,22 @@ describe("interrupts per state", () => {
   });
 
   // spec: AC-LOOP-02
-  test("interrupt and shutdown result helpers use the spec wording", () => {
+  test("interrupt result helpers use the spec wording", () => {
     const interrupted = interruptResults([{ id: "a", name: "Bash", rawJson: "{}" }]);
     expect(interrupted).toHaveLength(1);
     expect(interrupted[0]?.output.status).toBe("interrupted");
     const text = interrupted[0]?.output.content[0];
     expect(text !== undefined && text.kind === "text" ? text.text : "").toBe(INTERRUPTED_TOOL_TEXT);
+  });
+
+  // spec: AC-LOOP-14
+  test("the shutdown path writes no synthetic tool results", () => {
     expect(shutdownResults()).toEqual([]);
   });
 
   // spec: AC-LOOP-07
   test("mid-stream text plus tool call are kept with Not-run results", () => {
+    expect(INTERRUPTED_NOT_RUN).toBe("Not run: the user interrupted.");
     const completed = stored([
       { kind: "text", text: "done block" },
       { kind: "tool_call", id: "t1", name: "read", inputJson: '{"path":"a"}' },
@@ -300,10 +318,8 @@ describe("interrupts per state", () => {
       ev("tool.result", { callId: "t1", status: "interrupted", output: INTERRUPTED_NOT_RUN }, 1),
       ev("system.injected", { text: INTERRUPT_INSTRUCTION, reason: "interrupt-note", delivery: "reminder-block" }, 1),
     ];
-    renders(events);
-    const adapter = nvidiaAdapter("http://unused");
-    const call = adapter.render(buildRequest(events, epoch));
-    expect((call.messages as unknown[]).length).toBeGreaterThan(2);
+    for (const { provider, call } of renders(events))
+      expect((call.messages as unknown[]).length, provider).toBeGreaterThan(2);
   });
 });
 
@@ -406,8 +422,33 @@ describe("queued input", () => {
     ).toEqual(["image"]);
   });
 
+  // spec: AC-LOOP-05
+  test("only stored attachments ride with a queued message; the rest warn and keep the text", () => {
+    const blob = (c: string) => ({ store: "blob" as const, id: c.repeat(64) });
+    const out = attachmentParts([
+      { kind: "image", path: "/tmp/a.PNG", blob: blob("a") },
+      { kind: "file", path: "C:\\tmp\\b.pdf", blob: blob("b") },
+      { kind: "image", path: "/tmp/c.png" },
+      { kind: "file", path: "/tmp/d.txt", blob: blob("d") },
+      { kind: "image", blob: blob("e") },
+    ]);
+    expect(out.parts).toEqual([
+      { kind: "image", blob: blob("a"), mediaType: "image/png" },
+      { kind: "document", blob: blob("b"), mediaType: "application/pdf" },
+    ]);
+    expect(out.notices).toHaveLength(3);
+    expect(out.notices[0]).toBe(
+      'Attachment "/tmp/c.png" was not attached (only stored files ride with a queued message); the message text still queued.',
+    );
+    expect(out.notices[1]).toBe(
+      'Attachment "/tmp/d.txt" was not attached (unsupported file type); the message text still queued.',
+    );
+    expect(out.notices[2]).toContain('Attachment "(unnamed)" was not attached');
+  });
+
   // spec: AC-LOOP-02
   test("TOOLS keeps finished results and marks only the rest interrupted", () => {
+    expect(INTERRUPTED_TOOL_TEXT).toBe("Interrupted by the user before this tool finished.");
     const finished = [
       {
         callId: "a",

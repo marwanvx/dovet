@@ -8,7 +8,10 @@ import { fileExists, resolveShell } from "./shell.ts";
 import type { Os, Platform } from "./types.ts";
 
 /** What exists so far; `shells()` and `clipboard` join in the tasks that build them (M1-20, M3). */
-export type PlatformCore = Omit<Platform, "shells" | "clipboard">;
+export type PlatformCore = Omit<Platform, "shells" | "clipboard"> & {
+  /** AC-LOOP-09: ends every child tree and resolves once the SIGTERM→SIGKILL escalation has run (QUESTIONS Q64: core-only). */
+  killTrees(): Promise<void>;
+};
 
 export function createPlatformCore(deps: {
   os: Os;
@@ -36,6 +39,7 @@ export function createPlatformCore(deps: {
     canonicalize: (p, cwd) => canonicalizePath(p, cwd, os),
     spawn: processes.spawn,
     killTree: processes.killTree,
+    killTrees: processes.killTrees,
     sweep: processes.sweep,
     libexec: (name) => libexecPath(execPath, os, name),
     // ASSUMPTION (QUESTIONS Q18): Platform.resolve

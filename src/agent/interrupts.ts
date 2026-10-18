@@ -1,5 +1,5 @@
 // Interrupt, queue, harness and signal decisions (agent-loop "Interrupts (Esc in the TUI, SIGINT in headless)", "Harness messages during a turn", "Process signals and crashes").
-import type { DocumentPart, ImagePart, Part, StoredResponse } from "../schema/index.ts";
+import type { BlobRef, DocumentPart, ImagePart, Part, StoredResponse } from "../schema/index.ts";
 import { type ExecutedResult, INTERRUPTED_NOT_RUN, INTERRUPTED_TOOL_TEXT, type ParsedCall } from "./loop.ts";
 
 export const INTERRUPT_INSTRUCTION =
@@ -66,6 +66,45 @@ export function secondPressExits(lastMs: number, nowMs: number): boolean {
 
 export type QueuedAttachment = ImagePart | DocumentPart;
 export type QueuedMessage = { text: string; attachments: readonly QueuedAttachment[] };
+
+/** A submitted attachment as the schema parses it: stored blobs ride along, bare paths can't (M1 keeps the blob store). */
+export type AttachmentInput = { kind: "image" | "file"; path?: string | undefined; blob?: BlobRef | undefined };
+
+const IMAGE_MEDIA_TYPES: Readonly<Record<string, ImagePart["mediaType"]>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+/** Converts a submit's attachments to parts a queued message can carry; anything else warns instead of vanishing. */
+export function attachmentParts(attachments: readonly AttachmentInput[]): {
+  parts: QueuedAttachment[];
+  notices: string[];
+} {
+  const parts: QueuedAttachment[] = [];
+  const notices: string[] = [];
+  for (const a of attachments) {
+    const name = a.path ?? "(unnamed)";
+    if (a.blob === undefined) {
+      notices.push(
+        `Attachment "${name}" was not attached (only stored files ride with a queued message); the message text still queued.`,
+      );
+      continue;
+    }
+    const extension = (a.path ?? "").toLowerCase().match(/\.([a-z0-9]+)$/)?.[1];
+    const imageType = extension === undefined ? undefined : IMAGE_MEDIA_TYPES[extension];
+    if (a.kind === "image" && imageType !== undefined) {
+      parts.push({ kind: "image", blob: a.blob, mediaType: imageType });
+    } else if (a.kind === "file" && extension === "pdf") {
+      parts.push({ kind: "document", blob: a.blob, mediaType: "application/pdf" });
+    } else {
+      notices.push(`Attachment "${name}" was not attached (unsupported file type); the message text still queued.`);
+    }
+  }
+  return { parts, notices };
+}
 
 export class InputQueue {
   private items: QueuedMessage[] = [];

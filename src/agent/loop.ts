@@ -8,7 +8,16 @@ import type { EventEnvelope, PrefixFingerprint, StoredResponse } from "../schema
 import type { LoadedSettings } from "../store/index.ts";
 import { findProjectRoot, isHistoryRelated, REPAIR_HINT } from "../store/index.ts";
 import type { ToolContext, ToolDefinition, ToolOutput, ToolRegistry } from "../tools/index.ts";
-import { buildReadResultsIndex, createBashTool, limitOutput, stripHidden } from "../tools/index.ts";
+import {
+  buildReadResultsIndex,
+  createBashTool,
+  INTERRUPTED_TOOL_TEXT,
+  limitOutput,
+  stripHidden,
+} from "../tools/index.ts";
+
+export { INTERRUPTED_TOOL_TEXT } from "../tools/index.ts";
+
 import { cacheWarning, prefixFingerprint } from "./transcript/index.ts";
 
 export type LoopState = "IDLE" | "PREPARE" | "REQUEST" | "STREAM" | "TOOLS" | "FINALIZE" | "INTERRUPTING";
@@ -738,7 +747,6 @@ export function shellStatusLine(input: {
   return `shell: ${shell}${note}, ${fallback}${language}`;
 }
 
-export const INTERRUPTED_TOOL_TEXT = "Interrupted by the user before this tool finished.";
 export const INTERRUPTED_NOT_RUN = "Not run: the user interrupted.";
 
 export function interruptResults(calls: readonly ParsedCall[]): ExecutedResult[] {
