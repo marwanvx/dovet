@@ -150,6 +150,40 @@ export function checkPairing(callIds: readonly string[], resultIds: readonly str
   return null;
 }
 
+/** The transcript-level invariant (agent-loop "Stop-reason handling"): every assistant turn with tool calls is
+ * followed by exactly those `tool_result` parts, in emitted order. A violation is an InvariantViolation. */
+export function checkTranscriptPairing(
+  items: readonly { kind: string; parts?: readonly unknown[]; stored?: { parts: readonly unknown[] } }[],
+): string | null {
+  const field = (p: unknown, key: "id" | "callId"): string | undefined => {
+    if (typeof p !== "object" || p === null) return undefined;
+    const value = (p as Record<string, unknown>)[key];
+    return typeof value === "string" ? value : undefined;
+  };
+  const kindOf = (p: unknown): unknown =>
+    typeof p === "object" && p !== null ? (p as Record<string, unknown>).kind : undefined;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (item?.kind !== "assistant") continue;
+    const callIds = (item.stored?.parts ?? []).flatMap((p) => {
+      const id = kindOf(p) === "tool_call" ? field(p, "id") : undefined;
+      return id === undefined ? [] : [id];
+    });
+    if (callIds.length === 0) continue;
+    const next = items[i + 1];
+    const resultIds =
+      next?.kind === "user"
+        ? (next.parts ?? []).flatMap((p) => {
+            const callId = kindOf(p) === "tool_result" ? field(p, "callId") : undefined;
+            return callId === undefined ? [] : [callId];
+          })
+        : [];
+    const issue = checkPairing(callIds, resultIds);
+    if (issue !== null) return `tool_use/tool_result pairing: ${issue}`;
+  }
+  return null;
+}
+
 export type GuardPause =
   | { guard: "max-requests"; message: string }
   | { guard: "identical-failing"; message: string }
@@ -308,6 +342,7 @@ export type ExecuteToolsDeps = {
 export type ExecutedResult = { callId: string; name: string; output: ToolOutput; invalid: boolean };
 
 export const NOT_RUN_STOPPED = "Not run: the user stopped this turn";
+export const TRUNCATED_NOT_RUN = "Not run: the response was cut off at the output limit.";
 export const UNKNOWN_TOOL_PREFIX = "Unknown tool";
 
 function normalizeKey(name: string, input: unknown): string {
@@ -389,18 +424,13 @@ export async function executeTools(
     return bytes > capBytes * REQUEST_GUARD_RATIO ? sizeGuardText(bytes) : text;
   };
 
-  const finishOne = async (
+  const finalizeOutput = async (
+    raw: ToolOutput,
     tool: ToolDefinition<unknown>,
-    input: unknown,
     callId: string,
     name: string,
   ): Promise<ToolOutput> => {
-    const early = deps.earlyResults?.get(callId);
-    if (early !== undefined && deps.signal?.aborted !== true) return guardOutput(early, name, secrets);
-    if (deps.signal?.aborted === true)
-      return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
-    const out = await deps.run(tool, input, deps.makeContext());
-    const guarded = guardOutput(out, name, secrets);
+    const guarded = guardOutput(raw, name, secrets);
     let text = guarded.content.map((c) => (c.kind === "text" ? c.text : "")).join("");
     const capped = applySizeGuard(text);
     if (capped !== text) {
@@ -420,6 +450,25 @@ export async function executeTools(
       };
     }
     return guarded;
+  };
+
+  const finishOne = async (
+    tool: ToolDefinition<unknown>,
+    input: unknown,
+    callId: string,
+    name: string,
+  ): Promise<ToolOutput> => {
+    if (deps.signal?.aborted === true)
+      return { status: "interrupted", content: [{ kind: "text", text: INTERRUPTED_TOOL_TEXT }] };
+    const early = deps.earlyResults?.get(callId);
+    if (early !== undefined) return finalizeOutput(early, tool, callId, name);
+    let out: ToolOutput;
+    try {
+      out = await deps.run(tool, input, deps.makeContext());
+    } catch (err) {
+      out = { status: "error", content: [{ kind: "text", text: err instanceof Error ? err.message : String(err) }] };
+    }
+    return finalizeOutput(out, tool, callId, name);
   };
 
   for (const batch of batches) {
@@ -509,6 +558,7 @@ export async function executeTools(
     const running = new Map<string, Promise<ToolOutput>>();
     for (const v of allowNow) running.set(v.call.id, finishOne(v.tool, v.input, v.call.id, v.call.name));
     for (const v of askQueue) {
+      if (results.has(v.call.id) || running.has(v.call.id)) continue;
       if (stopped) {
         results.set(v.call.id, {
           callId: v.call.id,
@@ -664,6 +714,13 @@ export function shellToolFor(choice: ShellChoice | undefined, tmpDir: string): T
     return createBashTool({ tmpDir, powershell: { edition: choice.edition ?? "pwsh" } }) as ToolDefinition<unknown>;
   if (choice?.kind === "git-bash") return createBashTool({ tmpDir, gitBash: true }) as ToolDefinition<unknown>;
   return createBashTool({ tmpDir }) as ToolDefinition<unknown>;
+}
+
+/** The shell tool's name as the system prompt states it (`prompts/system.md` env facts). */
+export function shellToolName(choice: ShellChoice | undefined): string {
+  if (choice?.kind === "powershell") return choice.edition === "windows" ? "Windows PowerShell 5.1" : "PowerShell 7";
+  if (choice?.kind === "git-bash") return "Git Bash";
+  return "Bash";
 }
 
 export function shellStatusLine(input: {
