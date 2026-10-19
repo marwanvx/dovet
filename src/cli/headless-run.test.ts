@@ -1843,7 +1843,7 @@ describe("runHeadless", () => {
           dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
           projectRoot: dir.root,
           cwd: dir.root,
-          os: "linux",
+          os: testOs(),
           settings,
           env: { ...TEST_ENV, SHELL: "/usr/bin/zsh" },
           loadInput: loadInputFor(dir, TEST_ENV),
@@ -1883,7 +1883,10 @@ describe("runHeadless", () => {
     };
     const on = await run(undefined);
     expect(on.spawned).toEqual([
-      { argv: ["/usr/bin/zsh", "-l", "-i", "-c", "env -0"], group: `snapshot:${on.sessionId}` },
+      {
+        argv: [process.platform === "win32" ? "/bin/bash" : "/usr/bin/zsh", "-l", "-i", "-c", "env -0"],
+        group: `snapshot:${on.sessionId}`,
+      },
     ]);
     expect(new Set(on.killed)).toEqual(new Set([`snapshot:${on.sessionId}`]));
     expect((await run(false)).spawned).toEqual([]);
@@ -1904,7 +1907,7 @@ describe("runHeadless", () => {
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
         cwd: dir.root,
-        os: "linux",
+        os: testOs(),
         settings: settingsFor(),
         env: { ...TEST_ENV, SHELL: "/usr/bin/zsh" },
         loadInput: loadInputFor(dir, TEST_ENV),
