@@ -588,3 +588,9 @@ Done: the runner runs Sonnet at high effort on quick and standard tasks; Opus (d
 Review: quick.
 Learned: effort settings are the owner's call: Sonnet high, Opus medium, reviewer low, security reviewer medium.
 Next: F2, then M2-05.
+
+## 2026-10-20 — Workflow: wiring check, and review tiers set from evidence
+Done: `bun run wiring` (in `bun run check`) requires every export that only tests call to name its owner in `scripts/wiring.json`, and fails once the owner is done. Its first run found F5: a project's settings `env` (LD_PRELOAD, PATH) reaches Bash. Review tiers are now no model reviewer for docs, one for normal tasks, two for risky ones. PR: #157 (merged).
+Review: quick (workflow script with 3 tests, plus docs).
+Learned: of ~51 serious escaped bugs, 15 were "built and tested, never called"; promises like "M1-25 wires it" were forgotten. Write such a promise as a `scripts/wiring.json` owner instead. The scope lens found no blocker in 15 tasks; spec found 3 blockers and 28 majors.
+Next: F5 (blocker), then F2, then M2-05.
