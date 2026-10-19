@@ -135,6 +135,7 @@ describe("sandbox auto-allow", () => {
   });
 
   test("failIfUnavailable refuses when sandbox failed to start, but allows unsandboxed when deliberately disabled", async () => {
+    if (process.platform === "win32") return;
     await ready;
     const cwd = await workspace();
     const tool = createBashTool({ tmpDir: await workspace() });

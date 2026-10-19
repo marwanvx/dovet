@@ -170,15 +170,16 @@ export function worktreeCommonDenies(commonDir: string): string[] {
 export async function expandProtectedSymlinks(paths: readonly string[]): Promise<string[]> {
   const out = new Set<string>();
   for (const p of paths) {
-    const posix = p.replace(/\\/g, "/");
-    out.add(posix);
+    out.add(p);
+    out.add(p.replace(/\\/g, "/"));
     try {
       const st = await lstat(p);
       if (st.isSymbolicLink()) {
         // Native fs semantics: resolve the target the same way the OS does so the
         // returned string matches what callers passed in on every platform.
-        const target = nativeResolve(nativeDirname(p), await readlink(p)).replace(/\\/g, "/");
+        const target = nativeResolve(nativeDirname(p), await readlink(p));
         out.add(target);
+        out.add(target.replace(/\\/g, "/"));
       }
     } catch {}
   }
