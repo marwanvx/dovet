@@ -346,6 +346,7 @@ export type ExecuteToolsDeps = {
   /** Re-stat hook run before each batch that executes (cli-config "Live settings reload");
    * the caller decides what a change re-applies (rules, context, events). */
   beforeBatch?: () => Promise<void>;
+  onResult?: (result: ExecutedResult) => void;
 };
 
 export type ExecutedResult = { callId: string; name: string; output: ToolOutput; invalid: boolean };
@@ -413,10 +414,16 @@ export async function executeTools(
     return { call, invalid: "invalid", input: undefined };
   });
 
+  const secrets = deps.secrets?.() ?? [];
   const results = new Map<string, ExecutedResult>();
+  const setResult = (id: string, result: ExecutedResult): void => {
+    const guarded = { ...result, output: guardOutput(result.output, result.name, secrets) };
+    results.set(id, guarded);
+    deps.onResult?.(guarded);
+  };
   for (const p of prepared) {
     if (p.invalid !== undefined) {
-      results.set(p.call.id, {
+      setResult(p.call.id, {
         callId: p.call.id,
         name: p.call.name,
         output: { status: "error", content: [{ kind: "text", text: p.invalid }] },
@@ -434,7 +441,6 @@ export async function executeTools(
   let prompted = 0;
 
   const capBytes = deps.capBytes ?? REQUEST_CAP_BYTES;
-  const secrets = deps.secrets?.() ?? [];
 
   const applySizeGuard = (text: string): string => {
     const bytes = Buffer.byteLength(text, "utf8");
@@ -493,7 +499,7 @@ export async function executeTools(
       for (const idx of batch) {
         const v = valid[idx];
         if (v === undefined || results.has(v.call.id)) continue;
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: NOT_RUN_STOPPED }] },
@@ -513,9 +519,9 @@ export async function executeTools(
       const decision = deps.decide(v.call.name, v.input);
       if (decision.behavior === "allow") {
         const out = await finishOne(v.tool, v.input, v.call.id, v.call.name);
-        results.set(v.call.id, { callId: v.call.id, name: v.call.name, output: out, invalid: false });
+        setResult(v.call.id, { callId: v.call.id, name: v.call.name, output: out, invalid: false });
       } else if (decision.behavior === "deny") {
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: `Permission denied: ${decision.reason}` }] },
@@ -523,7 +529,7 @@ export async function executeTools(
         });
       } else {
         if (deps.headless === true) {
-          results.set(v.call.id, {
+          setResult(v.call.id, {
             callId: v.call.id,
             name: v.call.name,
             output: { status: "error", content: [{ kind: "text", text: `Permission denied: ${decision.reason}` }] },
@@ -533,7 +539,7 @@ export async function executeTools(
           prompted += 1;
           const answer = await deps.prompt({ id: v.call.id, name: v.call.name, input: v.input });
           if (answer.dismissed === true || (answer.allow === false && answer.comment === undefined)) {
-            results.set(v.call.id, {
+            setResult(v.call.id, {
               callId: v.call.id,
               name: v.call.name,
               output: { status: "error", content: [{ kind: "text", text: NOT_RUN_STOPPED }] },
@@ -542,9 +548,9 @@ export async function executeTools(
             stopped = true;
           } else if (answer.allow) {
             const out = await finishOne(v.tool, v.input, v.call.id, v.call.name);
-            results.set(v.call.id, { callId: v.call.id, name: v.call.name, output: out, invalid: false });
+            setResult(v.call.id, { callId: v.call.id, name: v.call.name, output: out, invalid: false });
           } else {
-            results.set(v.call.id, {
+            setResult(v.call.id, {
               callId: v.call.id,
               name: v.call.name,
               output: {
@@ -564,7 +570,7 @@ export async function executeTools(
       const decision = deps.decide(v.call.name, v.input);
       if (decision.behavior === "allow") allowNow.push(v);
       else if (decision.behavior === "deny")
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: `Permission denied: ${decision.reason}` }] },
@@ -577,7 +583,7 @@ export async function executeTools(
     for (const v of askQueue) {
       if (results.has(v.call.id) || running.has(v.call.id)) continue;
       if (stopped) {
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: NOT_RUN_STOPPED }] },
@@ -586,7 +592,7 @@ export async function executeTools(
         continue;
       }
       if (deps.headless === true) {
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: "Permission denied (headless never prompts)" }] },
@@ -597,7 +603,7 @@ export async function executeTools(
       prompted += 1;
       const answer = await deps.prompt({ id: v.call.id, name: v.call.name, input: v.input });
       if (answer.dismissed === true || (answer.allow === false && answer.comment === undefined)) {
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: { status: "error", content: [{ kind: "text", text: NOT_RUN_STOPPED }] },
@@ -610,14 +616,14 @@ export async function executeTools(
         const re = deps.decide(v.call.name, v.input);
         if (re.behavior === "allow") running.set(v.call.id, finishOne(v.tool, v.input, v.call.id, v.call.name));
         else
-          results.set(v.call.id, {
+          setResult(v.call.id, {
             callId: v.call.id,
             name: v.call.name,
             output: { status: "error", content: [{ kind: "text", text: `Permission denied: ${re.reason}` }] },
             invalid: false,
           });
       } else {
-        results.set(v.call.id, {
+        setResult(v.call.id, {
           callId: v.call.id,
           name: v.call.name,
           output: {
@@ -643,13 +649,12 @@ export async function executeTools(
     const settled = await Promise.all([...running].map(async ([id, p]) => ({ id, out: await p })));
     for (const { id, out } of settled) {
       const v = pending.find((p) => p.call.id === id);
-      if (v !== undefined) results.set(id, { callId: id, name: v.call.name, output: out, invalid: false });
+      if (v !== undefined) setResult(id, { callId: id, name: v.call.name, output: out, invalid: false });
     }
   }
 
   const ordered = calls.map((c) => results.get(c.id)).filter((r): r is ExecutedResult => r !== undefined);
-  // Denied, invalid and stopped results echo model-controlled text too, so every result passes the guard.
-  return { results: ordered.map((r) => ({ ...r, output: guardOutput(r.output, r.name, secrets) })), stopped, prompted };
+  return { results: ordered, stopped, prompted };
 }
 
 export function modelRequestBody(call: { messages: unknown; tools: unknown }): string {

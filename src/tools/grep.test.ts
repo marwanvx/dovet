@@ -116,6 +116,7 @@ describe("Grep: modes and paging", () => {
     );
   });
 
+  // spec: AC-PERM-26
   test("hidden instruction characters are removed from results and taint the session", async () => {
     const cwd = await workspace();
     await files(cwd, { "a.txt": `ok\u{E0041}\u{E0042}end\n` });

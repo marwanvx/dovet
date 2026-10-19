@@ -6,6 +6,7 @@ import {
   checkTranscriptPairing,
   decideStopAction,
   ENDED_NOT_RUN,
+  type ExecutedResult,
   executeTools,
   GuardTracker,
   historyRepairOffer,
@@ -54,6 +55,7 @@ import {
   type NamedSecret,
   type RuleSet,
   ruleSetFromSettings,
+  type State,
   secretsFromEnv,
 } from "../policy/index.ts";
 import type { AbsPath, EventEnvelope, StoredResponse } from "../schema/index.ts";
@@ -591,13 +593,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = input.signal ?? new AbortController().signal;
+    const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
         cwd: input.cwd as AbsPath,
         workingDirs: [input.projectRoot as AbsPath],
         mode,
-        taint: resumed.lines > 0 ? [...resumed.state.taint] : [],
+        taint: sessionTaint,
         interactive: false,
       },
       settings: effectiveSettings,
@@ -667,13 +670,17 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (input.args.allowedTools.includes(name)) return { behavior: "allow", reason: "allowed by --allowedTools" };
       const prep = registry.prepare(name, value);
       if (!prep.ok) return { behavior: "deny", reason: prep.message };
+      const decideState = (): State => ({
+        mode,
+        rules,
+        env: policyEnv,
+        tainted: sessionTaint.length > 0,
+        ...(sessionTaint.length > 0 ? { taintSource: sessionTaint[0] } : {}),
+      });
       try {
         const desc = prep.tool.describeAction(prep.input as never, ctx);
         if (desc.kind === "read" || desc.kind === "edit") {
-          const d = decide(
-            { tool: name, action: { kind: desc.kind, paths: [...desc.paths] } },
-            { mode, rules, env: policyEnv },
-          );
+          const d = decide({ tool: name, action: { kind: desc.kind, paths: [...desc.paths] } }, decideState());
           return d.behavior === "allow"
             ? { behavior: "allow", reason: d.reason }
             : d.behavior === "deny"
@@ -695,7 +702,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
               action: { kind: "shell", analysis, sandboxed: desc.sandboxed },
               input: { command: desc.command, dangerouslyDisableSandbox: desc.unsandboxedRetry },
             },
-            { mode, rules, env: policyEnv },
+            decideState(),
           );
           return d.behavior === "allow"
             ? { behavior: "allow", reason: d.reason }
@@ -713,10 +720,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                   : `${name} is disabled in --offline mode; only model requests leave the machine.`,
             };
           }
-          const d = decide(
-            { tool: name, action: { kind: "network", host: desc.host } },
-            { mode, rules, env: policyEnv },
-          );
+          const d = decide({ tool: name, action: { kind: "network", host: desc.host } }, decideState());
           return d.behavior === "allow"
             ? { behavior: "allow", reason: d.reason }
             : d.behavior === "deny"
@@ -1245,6 +1249,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           });
         }
       };
+      const applyResultTaint = (r: ExecutedResult): void => {
+        for (const eff of r.output.meta?.effects ?? []) {
+          if (eff.kind === "taint") {
+            if (!sessionTaint.includes(eff.source)) {
+              sessionTaint.push(eff.source);
+              push("taint.change", epochNum, turn, { source: eff.source, tainted: true });
+            }
+          }
+        }
+      };
       const recordResultEvents = (): void => {
         for (const r of results) {
           const text = r.output.content.map((x) => (x.kind === "text" ? x.text : "")).join("");
@@ -1260,6 +1274,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                     : "error";
           push("tool.result", epochNum, turn, { callId: r.callId, status, output: text });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
+          applyResultTaint(r);
         }
       };
       recordCallEvents();
@@ -1273,6 +1288,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           await pollAndApply();
           ctx = buildCtx();
         },
+        onResult: applyResultTaint,
         offloadDir: `${input.dirs.data}/tmp`,
         headless: true,
         capBytes: requestCapFor(provider),

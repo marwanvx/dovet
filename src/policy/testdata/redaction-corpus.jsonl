@@ -27,3 +27,6 @@
 {"id":"emoji-zwj-unchanged","secrets":{},"input":"family 👨‍👩‍👧‍👦 stays","expected":"family 👨‍👩‍👧‍👦 stays"}
 {"id":"longest-secret-first","secrets":{"SHORT":"example-1","LONG":"xx-example-1-yy"},"input":"saw xx-example-1-yy today","expected":"saw [REDACTED:LONG] today"}
 {"id":"short-value-not-redacted","secrets":{"API_TOKEN":"abc123"},"input":"token abc123 here","expected":"token abc123 here"}
+{"id":"emoji-before-env-value","secrets":{"STRIPE_SECRET_KEY":"rk-live-example-0001-fakevalue"},"input":"charge 🦊 rk-live-example-0001-fakevalue now","expected":"charge 🦊 [REDACTED:STRIPE_SECRET_KEY] now"}
+{"id":"emoji-before-key-format","secrets":{},"input":"key=🦊sk-ant-example-fake-key-000004 tail","expected":"key=🦊[REDACTED:ANTHROPIC_KEY] tail"}
+{"id":"emoji-before-url-password","secrets":{},"input":"fetch 🦊 https://deploy:s3cr)t@example.com/data tail","expected":"fetch 🦊 https://deploy:[REDACTED:URL_PASSWORD]@example.com/data tail"}
