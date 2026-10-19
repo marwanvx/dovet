@@ -540,3 +540,9 @@ Done: build loop step 7 now picks a review tier from the diff (quick / standard 
 Review: quick (workflow docs and runner prompts; next.ts change has its own tests).
 Learned: the unbounded "review again until nothing above minor" rule is what made free-model runs take 1–2 hours; a round cap plus diff-only later rounds is the fix. `build-loop.md`, `AGENTS.md`, `playbook.md`, `biome.json` and `.gitignore` carry skip-worktree locally (OpenCode/Antigravity wording); commit their shared parts by staging a blob, never by clearing the flag.
 Next: the next M2 task; then score the reviewer against the M1-32…M2-04 re-review findings as an eval set.
+
+## 2026-10-19 — Workflow audit: one PR per task, one blocking CI wait
+Done: audited the last 20 tasks from raw session logs and GitHub history (`docs/background/workflow-audit-2026-10-19.md`). The status line and progress entry now ride in the task's own PR, and CI is awaited with one foreground `wait-ci.ts` call. The one-off re-review and fix runners were removed locally; their reports in `.opencode/review-backlog/` and `.agents/review-backlog/` are kept as the reviewer eval set. PR: #147 (merged).
+Review: quick (docs and Markdown only).
+Learned: the biggest time cost on free models is waiting for the first token on every message, so cut round trips first. Baseline: median 70 min and 22.5 M tokens per task, 0.55 fix-up PRs and 1.7 bookkeeping PRs per task, `main` red 22.1 h. The audit scripts live in `~/.local/share/dovet-audit/` (README there).
+Next: F1 (Windows instruction-file test flake), then M2-05; recheck the baseline after 5 tasks.
