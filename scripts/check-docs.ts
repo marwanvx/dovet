@@ -6,6 +6,7 @@
 // 4. Every criterion (except struck-through ones) is in exactly one task's "Done when" line.
 // 5. Every task's dependencies exist, and its "Read" links resolve to real sections (scripts/next.ts).
 // 6. Every answered question names where its answer is written (a `- **Spec:**` line).
+// 7. The always-loaded instruction files and every task's `bun run next` output stay under their token ceilings.
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { updateBoxes } from "./docs-context.ts";
@@ -36,6 +37,36 @@ export function answersWithoutSpec(questions: string): string[] {
     .split(/^(?=### Q\d+)/m)
     .filter((block) => /^### Q\d+/.test(block) && !/^- \*\*Spec:\*\* /m.test(block))
     .map((block) => /^### (Q\d+)/.exec(block)?.[1] ?? "");
+}
+
+// Ceilings in tokens (about 4 characters each), just above the sizes on 2026-10-20; lower them when the text shrinks.
+// Every session loads these and resends them on every turn (docs/background/workflow-audit-2026-10-19.md).
+export const CONTEXT_BUDGET = { "instruction files": 7500, "bun run next": 15000 } as const;
+const INSTRUCTION_FILES = [
+  "AGENTS.md",
+  "CLAUDE.md",
+  "REVIEW.md",
+  "docs/workflow/build-loop.md",
+  ".claude/agents/reviewer.md",
+  ".claude/skills/ship-task/SKILL.md",
+];
+
+export function overBudget(sizes: Record<string, number>, budgets: Record<string, number>): string[] {
+  return Object.entries(sizes).flatMap(([source, tokens]) => {
+    const ceiling = budgets[source] ?? (source.startsWith("bun run next") ? budgets["bun run next"] : undefined);
+    return ceiling !== undefined && tokens > ceiling
+      ? [`${source}: about ${tokens} tokens, over its ceiling of ${ceiling}`]
+      : [];
+  });
+}
+
+function contextSizes(root: string, taskIds: Iterable<string>): Record<string, number> {
+  const tokens = (text: string): number => Math.round(text.length / 4);
+  const sizes: Record<string, number> = {
+    "instruction files": INSTRUCTION_FILES.reduce((sum, f) => sum + tokens(readFileSync(join(root, f), "utf8")), 0),
+  };
+  for (const id of taskIds) sizes[`bun run next ${id}`] = tokens(report(id));
+  return sizes;
 }
 
 function markdownFiles(root: string): string[] {
@@ -87,6 +118,8 @@ export function checkDocs(): string[] {
   for (const id of [...taskIds].sort()) {
     if (report(id).includes(NOT_FOUND)) problems.push(`task ${id}: a Read link names a section that doesn't exist`);
   }
+
+  for (const p of overBudget(contextSizes(ROOT, taskIds), CONTEXT_BUDGET)) problems.push(`context budget: ${p}`);
 
   const questions = readFileSync(join(ROOT, "docs", "plan", "tasks", "QUESTIONS.md"), "utf8");
   for (const q of answersWithoutSpec(questions)) {

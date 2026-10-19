@@ -1,7 +1,7 @@
 // Build Dovet unattended: one fresh `claude -p` session per task, as the Claude Code docs recommend.
 //
-//     bun run auto                    # 3 tasks, Sonnet builds (the reviewer agent stays on Opus), $20 cap per run
-//     bun run auto 5 --model opus --budget 30
+//     bun run auto                    # 3 tasks, model and effort picked per task from its risk tier, $10 cap per run
+//     bun run auto 5 --model opus --budget 15
 //
 // The terminal shows each step as it happens (files read and edited, commands, helper agents, plan usage).
 // Ctrl+C once: stop after the current task. Twice: stop now.
@@ -23,12 +23,14 @@ const IDENTITY = {
 };
 const MAX_LIMIT_WAITS = 12;
 
-export type Options = { tasks: number; model: string; budgetUsd: number };
+export type Options = { tasks: number; model?: string; budgetUsd: number };
+export type Tier = "quick" | "standard" | "deep";
+export type Pick = { model: string; effort: string };
 export type RunResult = { isError: boolean; subtype: string; result: string; costUsd: number; sessionId: string };
 export type Decision = { action: "next" } | { action: "wait" | "stop"; reason: string };
 
 export function parseArgs(argv: readonly string[]): Options {
-  const opts: Options = { tasks: 3, model: "sonnet", budgetUsd: 20 };
+  const opts: Options = { tasks: 3, budgetUsd: 10 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--model") opts.model = argv[++i] ?? "";
@@ -47,13 +49,52 @@ const PROMPT = [
   "Continue building Dovet.",
   "This run is unattended: nobody can answer questions or approve prompts.",
   "Follow AGENTS.md and docs/workflow/build-loop.md for exactly one task: build it, review it, ship it, write the progress entry, then stop.",
-  "Use the reviewer agent for step 7 and the plan-checker agent for step 4 when the build loop calls for them; the owner asks for both. Pick the review tier from the diff and follow step 7's rounds rule: confirm each finding before fixing it, log pre-existing ones to FOLLOWUPS.md, later rounds review only the new diff, at most three rounds.",
+  "Use the reviewer agent for step 7 (the security-reviewer agent for the deep tier's security lens) and the plan-checker agent for step 4 when the build loop calls for them; the owner asks for both. Pick the review tier from the diff and follow step 7's rounds rule: confirm each finding before fixing it, log pre-existing ones to FOLLOWUPS.md, later rounds review only the new diff, at most three rounds.",
   "Never set git config user.name or user.email; the environment already carries the commit identity.",
   "Check library APIs with the installed types, Context7 or DeepWiki, never from memory.",
   "If the next step needs the owner, write that in the progress entry's Next line and stop.",
 ].join(" ");
 
-export function claudeArgs(opts: Options): string[] {
+/** The path prefixes REVIEW.md "High-risk paths" lists (`src/policy/**` → `src/policy/`). */
+export function highRiskPaths(review: string): string[] {
+  const section = review.split("## High-risk paths")[1]?.split(/^## /m)[0] ?? "";
+  return [...section.matchAll(/`([^`]+)`/g)]
+    .map((m) => (m[1] ?? "").replace(/\*\*$/, ""))
+    .filter((p) => p.includes("/"));
+}
+
+/** The review tier of the session's work: an open follow-up if `bun run next` lists one, else the next task. */
+export function tierFor(nextOutput: string, risk: readonly string[]): Tier {
+  const followups = nextOutput.split("## Follow-ups to fix first")[1]?.split(/^## /m)[0] ?? "";
+  const work = followups.includes("### F") ? followups : (nextOutput.split(/^## Task /m)[1]?.split(/^## /m)[0] ?? "");
+  const paths = [...work.matchAll(/`([^`\s]+\/[^`\s]*)`/g)].map((m) => m[1] ?? "");
+  if (paths.some((p) => risk.some((r) => p.startsWith(r)))) return "deep";
+  if (/nothing in `src\/`/.test(work) || (paths.length > 0 && paths.every((p) => p.startsWith("docs/"))))
+    return "quick";
+  return "standard";
+}
+
+// Sonnet suits a clear spec plus tests; unattended security work gets Opus at high effort.
+export function modelFor(tier: Tier, model?: string): Pick {
+  const picked: Record<Tier, Pick> = {
+    quick: { model: "sonnet", effort: "low" },
+    standard: { model: "sonnet", effort: "medium" },
+    deep: { model: "opus", effort: "high" },
+  };
+  return model === undefined ? picked[tier] : { model, effort: picked[tier].effort };
+}
+
+/** The progress entry is written before the merge, so "merged" is only trusted once GitHub agrees. */
+export function mergeCheck(entry: string, prState: (pr: number) => string): Decision | undefined {
+  const pr = /PR: #(\d+) \(merged/.exec(entry)?.[1];
+  if (pr === undefined) return undefined;
+  const state = prState(Number(pr));
+  return state === "MERGED"
+    ? undefined
+    : { action: "stop", reason: `the progress entry says PR #${pr} merged, but GitHub says it is ${state}` };
+}
+
+export function claudeArgs(opts: Options, pick: Pick): string[] {
   return [
     "claude",
     "-p",
@@ -63,7 +104,9 @@ export function claudeArgs(opts: Options): string[] {
     "--permission-prompts",
     "none",
     "--model",
-    opts.model,
+    pick.model,
+    "--effort",
+    pick.effort,
     "--max-budget-usd",
     String(opts.budgetUsd),
     "--output-format",
@@ -291,6 +334,22 @@ async function mainProgress(): Promise<{ count: number; text: string }> {
   return lastEntry((await run(["git", "show", "origin/main:docs/plan/tasks/PROGRESS.md"])).stdout);
 }
 
+function prStateOf(pr: number): string {
+  const r = Bun.spawnSync(["gh", "pr", "view", String(pr), "--json", "state", "--jq", ".state"], { cwd: ROOT });
+  return r.exitCode === 0 ? r.stdout.toString().trim() : `unknown (gh exited ${r.exitCode})`;
+}
+
+// An unattended run that stops silently looks like one still working; tell the owner.
+async function notify(text: string): Promise<void> {
+  const bin = Bun.which("notify-send");
+  if (bin === null) {
+    process.stdout.write("\x07");
+    return;
+  }
+  const code = await Bun.spawn([bin, "Dovet", text]).exited;
+  if (code !== 0) console.log(`${DIM}(notify-send exited ${code})${RESET}`);
+}
+
 function log(line: Record<string, unknown>): void {
   appendFileSync(LOG, `${JSON.stringify({ at: new Date().toISOString(), ...line })}\n`);
 }
@@ -319,20 +378,28 @@ async function main(): Promise<void> {
   for (let task = 1, waits = 0; task <= opts.tasks; ) {
     const before = (await mainProgress()).count;
     const started = Date.now();
+    const tier = tierFor(
+      (await run(["bun", "run", "next"])).stdout,
+      highRiskPaths(await Bun.file(join(ROOT, "REVIEW.md")).text()),
+    );
+    const pick = modelFor(tier, opts.model);
     console.log(
-      `\n${BOLD}[auto] task ${task} of ${opts.tasks}${RESET} · fresh session · ${opts.model} builds, Opus reviews`,
+      `\n${BOLD}[auto] task ${task} of ${opts.tasks}${RESET} · fresh session · ${tier} tier: ${pick.model} at ${pick.effort} effort`,
     );
     console.log(`${DIM}       Ctrl+C: stop after this task · twice: stop now${RESET}`);
-    const { code, resultLine } = await session(claudeArgs(opts), feed, control);
+    const { code, resultLine } = await session(claudeArgs(opts, pick), feed, control);
     const result = parseRun(resultLine === "" ? "(no result)" : resultLine);
     const after = await mainProgress();
-    const decision = decide({ exitCode: code, run: result, before, after });
+    const decided = decide({ exitCode: code, run: result, before, after });
+    const decision = decided.action === "next" ? (mergeCheck(after.text, (pr) => prStateOf(pr)) ?? decided) : decided;
     const cost = "unreadable" in result ? 0 : result.costUsd;
     total += cost;
     const minutes = Math.round((Date.now() - started) / 60000);
     log({
       task,
-      model: opts.model,
+      tier,
+      model: pick.model,
+      effort: pick.effort,
       exitCode: code,
       minutes,
       costUsd: cost,
@@ -344,6 +411,7 @@ async function main(): Promise<void> {
     );
     if (decision.action === "stop") {
       console.log(`${BOLD}[auto] stopped:${RESET} ${decision.reason}`);
+      await notify(`Dovet auto stopped: ${decision.reason}`);
       return;
     }
     if (decision.action === "wait") {
@@ -372,6 +440,7 @@ async function main(): Promise<void> {
   console.log(
     `\n${BOLD}[auto] finished ${opts.tasks} task(s)${RESET}; estimated total $${total.toFixed(2)}. Log: auto-runs.log`,
   );
+  await notify(`Dovet auto finished ${opts.tasks} task(s)`);
 }
 
 if (import.meta.main) await main();

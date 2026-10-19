@@ -4,19 +4,23 @@ import {
   decide,
   describeEvent,
   type Feed,
+  highRiskPaths,
   lastEntry,
   limitsLine,
+  mergeCheck,
+  modelFor,
   newFeed,
   parseArgs,
   parseRun,
   type RunResult,
+  tierFor,
 } from "./auto.ts";
 
 const ok: RunResult = { isError: false, subtype: "success", result: "Shipped M1-12.", costUsd: 4.2, sessionId: "s1" };
 
 describe("parseArgs", () => {
-  test("defaults: 3 tasks, Sonnet builds, a $20 cap per run", () => {
-    expect(parseArgs([])).toEqual({ tasks: 3, model: "sonnet", budgetUsd: 20 });
+  test("defaults: 3 tasks, the model picked per task, a $10 cap per run", () => {
+    expect(parseArgs([])).toEqual({ tasks: 3, budgetUsd: 10 });
   });
 
   test("reads the task count, --model and --budget", () => {
@@ -32,7 +36,7 @@ describe("parseArgs", () => {
 
 describe("claudeArgs", () => {
   test("uses the flags the Claude Code docs recommend for unattended runs", () => {
-    const args = claudeArgs({ tasks: 1, model: "sonnet", budgetUsd: 20 });
+    const args = claudeArgs({ tasks: 1, budgetUsd: 20 }, { model: "sonnet", effort: "medium" });
     expect(args.slice(0, 2)).toEqual(["claude", "-p"]);
     expect(args[2]).toContain("Continue building Dovet.");
     expect(args[2]).toContain("unattended");
@@ -52,6 +56,7 @@ describe("claudeArgs", () => {
       ]),
     );
     expect(args.join(" ")).toContain("--model sonnet");
+    expect(args.join(" ")).toContain("--effort medium");
     expect(args.join(" ")).toContain("--max-budget-usd 20");
   });
 });
@@ -215,5 +220,51 @@ describe("live feed", () => {
   test("unknown events are ignored, not guessed at", () => {
     expect(lines(newFeed(), { type: "something_new" })).toEqual([]);
     expect(lines(newFeed(), "not an object")).toEqual([]);
+  });
+});
+
+const review =
+  "## High-risk paths\n\nA diff touching any of these gets the `deep` tier: `src/policy/**`, `src/cli/update.ts`, `docs/prompts/**`.\n";
+const next = (followups: string, build: string) =>
+  `## Follow-ups to fix first (build loop step 2.4)\n${followups}\n\n## Task M2-05 Workspace trust\n\n- **Build:** ${build}\n`;
+
+describe("tierFor", () => {
+  test("a task touching a high-risk path is deep, plain code standard, docs-only quick", () => {
+    const risk = highRiskPaths(review);
+    expect(risk).toEqual(["src/policy/", "src/cli/update.ts", "docs/prompts/"]);
+    expect(tierFor(next("(none)", "the trust store in `src/policy/trust/` and `src/cli/main.ts`"), risk)).toBe("deep");
+    expect(tierFor(next("(none)", "`src/tools/web-fetch.ts` and its tests"), risk)).toBe("standard");
+    expect(tierFor(next("(none)", "nothing in `src/`. Re-run the audit scripts"), risk)).toBe("quick");
+  });
+
+  test("an open follow-up is the session's work, so its paths decide the tier", () => {
+    const risk = highRiskPaths(review);
+    const f = "### F2: usage\n- **Severity:** major · `src/cli/headless-run.ts:894`";
+    expect(tierFor(next(f, "the trust store in `src/policy/trust/`"), risk)).toBe("standard");
+  });
+});
+
+describe("modelFor", () => {
+  test("Sonnet for quick and standard work, Opus at high effort for deep work, an explicit --model wins", () => {
+    expect(modelFor("quick")).toEqual({ model: "sonnet", effort: "low" });
+    expect(modelFor("standard")).toEqual({ model: "sonnet", effort: "medium" });
+    expect(modelFor("deep")).toEqual({ model: "opus", effort: "high" });
+    expect(modelFor("quick", "opus")).toEqual({ model: "opus", effort: "low" });
+  });
+});
+
+describe("mergeCheck", () => {
+  test("a progress entry that says merged is checked against GitHub", () => {
+    const entry = "## 2026-10-20 — M2-05 Workspace trust\nDone: x. PR: #160 (merged).\nNext: M2-06.";
+    expect(mergeCheck(entry, () => "MERGED")).toBeUndefined();
+    expect(mergeCheck(entry, () => "OPEN")).toEqual({
+      action: "stop",
+      reason: "the progress entry says PR #160 merged, but GitHub says it is OPEN",
+    });
+  });
+
+  test("an entry that waits for the owner, or names no PR, isn't checked", () => {
+    expect(mergeCheck("Done: x. PR: #161 (waiting for owner).", () => "OPEN")).toBeUndefined();
+    expect(mergeCheck("Done: a docs fix.", () => "OPEN")).toBeUndefined();
   });
 });

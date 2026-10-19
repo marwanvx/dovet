@@ -57,6 +57,16 @@
             "onFailure": "block"
           }
         ]
+      },
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/spec-reads.ts\"",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "PostToolUse": [

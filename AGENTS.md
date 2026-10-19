@@ -2,7 +2,7 @@
 
 Dovet is a terminal coding agent for Windows, macOS and Linux, written in TypeScript on Bun, that works with any model provider. Its promise: the agent can't hide what it did, what it cost, or what it was told.
 
-**Current state:** planning is complete; building starts at milestone M0. The owner is not technical: never ask them to choose tasks, read code or run commands (except a task's listed "Owner step"); when something is undecided, **decide it yourself** (best answer, recorded in `docs/plan/tasks/QUESTIONS.md`); never stop to wait for the owner to answer.
+**Current state:** M0 and M1 are done; M2 is in progress (`bun run next` says where). The owner is not technical: never ask them to choose tasks, read code or run commands (except a task's listed "Owner step"); when something is undecided, **decide it yourself** (build loop step 6); never stop to wait for the owner to answer.
 
 ## Start every session with this
 
@@ -37,9 +37,10 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 
 - **Owner rules (2026-10-13).** Dovet is the owner's provider-neutral product. No vendor attribution anywhere: no `Co-Authored-By` trailers, "Generated with …" lines or session links in commits, PRs or GitHub comments. Commits use the owner's GitHub noreply identity (`Marwan <154838093+marwanvx@users.noreply.github.com>`, via `GIT_AUTHOR_*`/`GIT_COMMITTER_*`), never a personal email and never `git config user.*`: the repository is public. Tests use the `nvidia` provider or made-up names (`example`) as examples. NVIDIA is the first provider; Anthropic is not planned unless the owner adds it (QUESTIONS Q23, M4-12).
 
-- **Specs are the source of truth.** If two specs disagree, or a spec is unclear or missing something, don't guess and don't search for an answer that isn't there: answer it yourself: pick the best answer, write the question and your answer in `docs/plan/tasks/QUESTIONS.md` under "Answered", fix the spec through the spec-change rules, and keep going (build loop step 6). The owner can override an answer later; don't wait for them.
+- **Specs are the source of truth.** A spec that is unclear, incomplete or contradicts another: decide the best answer, record it and write it into the spec in the same PR (build loop step 6).
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
-- **Never use a library or provider API from memory.** Verify against the installed package's types first, then current docs: the Context7 MCP (`resolve-library-id`, then `query-docs`) for library docs, DeepWiki (`ask_wiki_question`) for how an open-source repo works, and the TypeScript LSP to jump to definitions instead of reading whole files.
+- **Never use a library or provider API from memory.** Verify against the installed package's types first, then current docs (Context7 `resolve-library-id` + `query-docs`; DeepWiki for how an open-source repo works). Check the traps table below first.
+- **Every turn resends the whole conversation.** Make independent reads and searches in one turn; search, then read only the lines you need; pipe long output through `tail -n 60`; never read a whole spec (a hook refuses it: `bun run next` printed your sections with their line ranges).
 - **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
 - **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).
 - TypeScript strict; no `any`; zod-parse every external input; no floating promises; no catch-and-ignore.
@@ -47,7 +48,22 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 - **Provider-neutral:** provider differences are registry data or a provider module (`docs/specs/providers.md`), never branches in core logic.
 - A new user-visible feature updates `docs/product/user-journeys.md`.
 - Copied code keeps its license notice (e.g. vendored pi-tui; listed in `THIRD_PARTY_NOTICES`) and the PR says so.
-- **Few comments.** Comments only where the code can't say it: a non-obvious *why*, a workaround, a security-critical line, a `// spec:` tag. Never restate the code, narrate steps, or repeat what a name or type says; a file header is one line at most. Comments cost tokens in every later session (owner rule).
+- **Few comments** (owner rule): only a non-obvious *why*, a workaround, a security-critical line or a `// spec:` tag; never restate the code; a file header is one line at most.
 - No abstraction until three real uses exist. PRs under ~400 changed lines (tests excluded). One task per session.
 - `bun run check` must pass before you report done. On the owner's Linux machine, `test/platform/sandbox` fails on `main` too (an AppArmor user-namespace restriction), and so do the SPIKE-5 file-fallback and ripgrep download tests; don't chase those, CI on three OSes decides.
-- Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question you decided yourself (with your answer).
+- Report in plain words: what changed, which acceptance criteria now pass, what's not done, and any question you decided yourself (with your answer). Show a check's output instead of saying it passed; a check you couldn't run is reported as not run.
+
+## Traps already hit (what you remember → what's true here)
+
+| Remembered | True in this repo |
+|---|---|
+| `bun test` type-checks | It doesn't: run `bun run check` (or `bunx tsc --noEmit -p .`) |
+| `Bun.spawnSync` is fine in tests | It blocks the event loop and deadlocks the in-process fixture server: spawn async |
+| `stat().ino` is a usable number | 64-bit Windows file IDs lose bits as doubles: `stat(p, { bigint: true })` |
+| Bun's `toMatchObject` only reads | It mutates the received object: assert fields directly |
+| A `stop`/`end_turn` finish has no tool calls | Providers emit tool calls under it: handle the calls whatever the finish reason |
+| Same-millisecond ULIDs sort in order | Their random tails sort backwards half the time: use the monotonic generator |
+| Invisible Unicode can be typed into a test | Editing tools mangle it: write `\u{…}` escapes |
+| A test can assert a spec string via its constant | That can't catch a mutation: pin the literal text |
+| `dovet -p --output-format json` | The flag is `--output json`; with no settings, pass `--model` |
+| sandbox-runtime takes `allowWrite` on Windows | It throws: leave `allowWrite` undefined there |

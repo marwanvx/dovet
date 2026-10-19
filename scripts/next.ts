@@ -55,14 +55,15 @@ function depsDone(task: Task, byId: Map<string, Task>): boolean {
   });
 }
 
-/** The parts of a markdown doc whose headings match the wanted § numbers or quoted titles. */
-function sections(doc: string, wanted: string[]): string[] {
+/** The parts of a markdown doc whose headings match the wanted § numbers or quoted titles, with their 1-based line range. */
+export function sections(doc: string, wanted: string[]): { text: string; from: number; to: number }[] {
   const heads = [...doc.matchAll(/^(#{2,4}) (.+)$/gm)].map((m) => ({
     pos: m.index,
     level: m[1]?.length ?? 0,
     title: (m[2] ?? "").trim(),
   }));
-  const out: string[] = [];
+  const lineAt = (pos: number): number => doc.slice(0, pos).split("\n").length;
+  const out: { text: string; from: number; to: number }[] = [];
   const covered: [number, number][] = [];
   heads.forEach(({ pos, level, title }, i) => {
     if (covered.some(([a, b]) => a <= pos && pos < b)) return; // already inside a printed section
@@ -73,7 +74,9 @@ function sections(doc: string, wanted: string[]): string[] {
     if (!hit) return;
     const end = heads.slice(i + 1).find((h) => h.level <= level)?.pos ?? doc.length;
     covered.push([pos, end]);
-    out.push(doc.slice(pos, end).trimEnd());
+    const text = doc.slice(pos, end).trimEnd();
+    const from = lineAt(pos);
+    out.push({ text, from, to: from + text.split("\n").length - 1 });
   });
   return out;
 }
@@ -93,12 +96,12 @@ function readingFor(task: Task): Reading[] {
     const path = normalize(join(TASKS, target));
     if (!existsSync(path) || !statSync(path).isFile()) continue;
     const text = read(path);
+    const rel = relative(ROOT, path).split(sep).join("/");
     const wanted = [
       ...[...label.matchAll(/§\s*(\d+[a-z]?(?:\.\d+)?)/g)].map((m) => m[1] ?? ""),
       ...[...label.matchAll(/"([^"]+)"/g)].map((m) => m[1] ?? ""),
     ];
-    const rel = relative(ROOT, path).split(sep).join("/");
-    const parts = wanted.length ? sections(text, wanted) : [];
+    const parts = wanted.length ? sections(text, wanted).map((p) => `(${rel} lines ${p.from}–${p.to})\n${p.text}`) : [];
     for (const [, n] of label.matchAll(/SPIKE-(\d+)/g)) {
       // a spike reference prints its table row
       parts.push(...[...text.matchAll(new RegExp(`^\\| SPIKE-${n} \\|.*$`, "gm"))].map((m) => m[0]));
