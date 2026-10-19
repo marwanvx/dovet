@@ -5,6 +5,7 @@
 // 3. Acceptance-criterion IDs are unique, and every reference names an existing criterion.
 // 4. Every criterion (except struck-through ones) is in exactly one task's "Done when" line.
 // 5. Every task's dependencies exist, and its "Read" links resolve to real sections (scripts/next.ts).
+// 6. Every answered question names where its answer is written (a `- **Spec:**` line).
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { updateBoxes } from "./docs-context.ts";
@@ -26,6 +27,15 @@ export function criteria(root = ROOT): { defined: Map<string, number>; struck: S
   );
   const referenced = new Set(texts.flatMap((t) => [...t.matchAll(/AC-[A-Z]+-\d+/g)].map((m) => m[0])));
   return { defined, struck, referenced };
+}
+
+/** Answered questions with no `- **Spec:**` line: their answer may live only in QUESTIONS.md. */
+export function answersWithoutSpec(questions: string): string[] {
+  const answered = questions.split("## Answered")[1] ?? "";
+  return answered
+    .split(/^(?=### Q\d+)/m)
+    .filter((block) => /^### Q\d+/.test(block) && !/^- \*\*Spec:\*\* /m.test(block))
+    .map((block) => /^### (Q\d+)/.exec(block)?.[1] ?? "");
 }
 
 function markdownFiles(root: string): string[] {
@@ -76,6 +86,11 @@ export function checkDocs(): string[] {
 
   for (const id of [...taskIds].sort()) {
     if (report(id).includes(NOT_FOUND)) problems.push(`task ${id}: a Read link names a section that doesn't exist`);
+  }
+
+  const questions = readFileSync(join(ROOT, "docs", "plan", "tasks", "QUESTIONS.md"), "utf8");
+  for (const q of answersWithoutSpec(questions)) {
+    problems.push(`QUESTIONS ${q}: no "- **Spec:**" line naming where the answer is written (build loop step 6)`);
   }
   return problems;
 }

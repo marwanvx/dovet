@@ -210,6 +210,8 @@ Before each user turn and each tool batch, Dovet **re-stats** every settings fil
 - Env and flags are frozen session overrides re-applied on every reload, so `--add-dir` and flag grants survive a file removal. An invalid file keeps the previous settings and rules, warning once per edit with file, line and key.
 - `SettingsChangeData {key, old, new, source}` with `source: "file"`; one applied top-level key is one event, and the notice is one line naming the changed files and keys. `LoadInput.projectTrusted: false` skips the repo-supplied project files at load and in the watch list.
 
+**Decided while building (QUESTIONS Q61):** a reloaded `permissions.defaultMode` doesn't change the running session's mode: the mode stays what the session started with (settings, then `--permission-mode`) and changes only at the next session start, through `/mode`, or at a confirmed epoch boundary. The reload still logs `settings.change`, shows the notice, and every other policy key applies from the next tool batch. A file edit must not silently re-tier every later decision mid-session.
+
 ## Settings migration
 
 Settings files carry an optional `"$version": <int>`. When a release renames or removes a key, it ships a migration step: Dovet shows the exact change ("`ui.fullscreen` → `ui.renderer: \"fullscreen\"`"), asks once to rewrite the file (keeping comments via `jsonc-parser` edits), and otherwise applies the mapping in memory with a startup warning. Removed keys produce a warning, never a silent ignore. Each migration has a test with a before/after fixture.

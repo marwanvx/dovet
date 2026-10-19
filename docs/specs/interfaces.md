@@ -187,6 +187,8 @@ type CommandResult = { ok: true; output?: string } | { ok: false; error: string 
 - `canonicalize` throws `PathRefused` (its message names the rule) for UNC, device and unmappable Git Bash paths; tools turn it into a `ToolError`. File tools and policy refuse UNC input before any file access, because a link chain that reaches a share is only caught after Windows has touched it.
 - Children are process-group leaders (`detached`) on Linux and macOS only; on Windows `detached` would leave console grandchildren without a console, and `taskkill /T` kills the tree anyway.
 
+**Decided while building (QUESTIONS Q54):** `SandboxService.wrap` is async (`Promise<SandboxWrapped>`), because it calls the sandbox library; `ready` is a health promise and `violations(since)` reads the in-memory store synchronously.
+
 ## 3. Provider adapter (one generic implementation over the AI SDK, ADR-30)
 
 ```ts
@@ -404,6 +406,8 @@ type AgentEvent =                           // all structured-clone-safe
 ```
 
 **Decided while building (QUESTIONS Q48):** a late `events()` subscriber gets `{type: "status", state: "idle"}` first, then only new events. `runUserShell` spawns the platform's bash (fallback `/bin/sh`) in the session's process group, emits `user.shell` and caps the output at 30,000 characters for the next submit. Pending answers are keyed by an emitted request id (`status awaiting-user`) and answered through `answerQuestion`/`answerPlan`/`answerPermission`, zod-validated; `applyEffects` applies `set-mode`, `taint` and `cwd` in order. Headless sessions don't declare AskUserQuestion.
+
+**Decided while building (QUESTIONS Q62):** `interrupt()` returns the pulled-back `QueuedMessage[]` for editing. `submit` turns blob-carrying attachments into `ImagePart`/`DocumentPart` (png, jpg, jpeg, gif, webp, pdf) and warns about anything else (bare paths, other types) while the text still queues: never silently dropped.
 
 ## 6b. Receipt (persisted in `receipt` events; included in headless JSON)
 
