@@ -552,3 +552,9 @@ Done: the instruction loader and settings reload identify files by exact bigint 
 Review: standard (two source files, one test; the class of bug checked across `src/`: `read.ts`, `write-file.ts` and the snapshotter already used bigint).
 Learned: on Windows, never compare `stat().ino` as a number; use `{ bigint: true }`. Linux can't reproduce this (small inode numbers); proof was 30 consecutive Windows runs of the test file (1 020 pass, 0 fail) from a temporary CI step, reverted before merge.
 Next: merge #147 once its CI is green, then M2-05.
+
+## 2026-10-19 — First live test of `dovet -p` on real coding jobs
+Done: three headless jobs on `nvidia/nemotron-3.5-super-vl-120b-a12b` in a throwaway project. Job 1 fixed two real bugs correctly in 76 s, and said plainly it couldn't run the tests. Job 2 added a function with tests in 198 s (4 pass). Job 3 answered a read-only question in 92 s and changed nothing. The event logs recorded every request, tool call and file change. Findings logged as F2 (usage under-reported about 8–10x, receipt empty), F3 (no default model) and F4 (Bash retried after a sandbox refusal). PR: #149 (merged).
+Review: quick (docs only).
+Learned: the M1 exit evidence's "10 real tasks" ran on recorded fixtures; this was the first live run. The key lives in `~/.bashrc` after its non-interactive early return, so load it with `eval "$(grep -E '^export NVIDIA_API_KEY=' ~/.bashrc)"`, never by printing it. Use `--output json`, not `--output-format`.
+Next: F2, then M2-05.
