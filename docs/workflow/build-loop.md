@@ -78,12 +78,16 @@ Every reviewer snapshots `git status --porcelain` and `git diff` before it mutat
 Without subagents: open the PR and leave the review to the next session (step 2.3).
 
 ### 8. Ship
-Open the PR (template filled: task, spec sections, criteria, assumptions). When CI is green on all three OSes and the review passed, **merge it** unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step; those wait for the owner (say so in the progress entry). Set the task's `Status:` to `done (#PR)`.
+One task, one PR: the status line and the progress entry ride in the task's own PR, never in a PR of their own.
+1. Open the PR (template filled: task, spec sections, criteria, assumptions).
+2. On the same branch, set the task's `Status:` to `done (#PR)` and append the step 9 progress entry; commit and push.
+3. Wait for CI with **one blocking call**: `bun .claude/skills/ship-task/scripts/wait-ci.ts <PR>` in the foreground, with a 60-minute timeout. Don't poll with `sleep` or repeated `gh run view`: every poll is another model round trip. On a failure, read `gh run view <run id> --log-failed`, fix, push, and wait again.
+4. Green on all three OSes and the review passed → **merge it**, unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step. Those wait for the owner: set `Status:` to `waiting for owner (#PR)` instead and say so in the progress entry.
 
 **Docs-only changes don't wait for CI** (owner rule, 2026-10-12): a commit or PR that touches only `docs/` and Markdown files (status lines, progress entries, questions, wording) is merged as soon as `bun run docs:check` and `bun run spec:coverage` pass locally. Anything that touches code, tests, scripts, workflows or `package.json` still waits for green CI.
 
 ### 9. Hand off
-Append to `PROGRESS.md`:
+The progress entry, appended to `PROGRESS.md` in step 8.2:
 ```
 ## <date> — <task id> <title>
 Done: <one or two lines>. PR: #<n> (merged | waiting for owner).
