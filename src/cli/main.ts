@@ -245,7 +245,11 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       }),
     );
   } else if (parsed.output === "stream-json") {
-    process.stdout.write(formatStreamJson([{ type: "text", text: out.result }]));
+    const streamEvents =
+      out.events !== undefined && out.events.length > 0
+        ? out.events.map((e) => ({ type: e.type, ...("data" in e ? { data: e.data } : {}) }))
+        : [{ type: "text", text: out.result }];
+    process.stdout.write(formatStreamJson(streamEvents));
   } else {
     process.stdout.write(`${out.result}\n`);
   }

@@ -27,6 +27,7 @@ import {
   shellToolFor,
   shellToolName,
   shouldAppendInterrupted,
+  shouldContinueForOpenTasks,
   shouldDiscardEarly,
   startEpoch,
   streamInterruptResults,
@@ -89,6 +90,7 @@ import {
 } from "../tools/index.ts";
 import type { HeadlessArgs } from "./args.ts";
 import type { HeadlessOutcome } from "./headless-output.ts";
+import { offlineRefusal } from "./startup.ts";
 
 export type HeadlessAdapter = {
   render(input: RenderInput): SdkCall;
@@ -132,6 +134,7 @@ export type HeadlessRunOutput = {
   receipt: Record<string, unknown>;
   exit: HeadlessOutcome;
   warnings: string[];
+  events?: readonly EventEnvelope[];
 };
 
 export function resolveHeadlessModel(
@@ -149,10 +152,16 @@ export function resolveHeadlessModel(
 export function headlessToolDefs(input: {
   shell?: ShellChoice | undefined;
   tmpDir: string;
+  offline?: boolean;
+  baseTools?: readonly ToolDefinition<unknown>[];
 }): ToolDefinition<unknown>[] {
-  const base = [...builtinTools];
+  const base = [...(input.baseTools ?? builtinTools)];
   return [
-    ...base.filter((t) => t.name !== "Bash" && t.name !== "PowerShell" && t.name !== "AskUserQuestion"),
+    ...base.filter((t) => {
+      if (t.name === "Bash" || t.name === "PowerShell" || t.name === "AskUserQuestion") return false;
+      if (input.offline && (t.name === "WebFetch" || t.name === "WebSearch")) return false;
+      return true;
+    }),
     shellToolFor(input.shell, input.tmpDir),
   ] as ToolDefinition<unknown>[];
 }
@@ -192,6 +201,35 @@ function jsonSafeUsage(value: Record<string, unknown>): Record<string, unknown> 
   } catch {
     return {};
   }
+}
+
+export function computeUsageCost(u: Record<string, unknown>): number {
+  if (typeof u.cost === "number" && Number.isFinite(u.cost)) return u.cost;
+  const inTok =
+    typeof (u.inputTokens as { total?: unknown })?.total === "number"
+      ? Number((u.inputTokens as { total?: unknown }).total)
+      : Number(u.promptTokens ?? u.prompt_tokens) || 0;
+  const outTok =
+    typeof (u.outputTokens as { total?: unknown })?.total === "number"
+      ? Number((u.outputTokens as { total?: unknown }).total)
+      : Number(u.completionTokens ?? u.completion_tokens) || 0;
+  if (inTok > 0 || outTok > 0) {
+    return inTok * 0.000002 + outTok * 0.000006;
+  }
+  return 0.001;
+}
+
+export function openTasksFromEvents(events: readonly EventEnvelope[]): number {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e?.type === "tool.call" && (e.data as { name?: string })?.name === "TodoWrite") {
+      const data = e.data as { raw?: unknown; input?: unknown };
+      const raw = (data.input ?? data.raw) as { todos?: readonly { status?: string }[] } | undefined;
+      const todos = Array.isArray(raw?.todos) ? raw.todos : [];
+      return todos.filter((t) => t.status === "pending" || t.status === "in_progress").length;
+    }
+  }
+  return 0;
 }
 
 export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunOutput> {
@@ -373,7 +411,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const flushLog = (): Promise<void> => (shuttingDown ? Promise.resolve() : writer.flush());
     const isNew = resumed.lines === 0;
     const shellChoice = await input.platform.resolveShell(input.settings.settings.shell);
-    const defs = input.toolDefs ?? headlessToolDefs({ shell: shellChoice, tmpDir: `${input.dirs.data}/tmp` });
+    const defs =
+      input.toolDefs ??
+      headlessToolDefs({
+        shell: shellChoice,
+        tmpDir: `${input.dirs.data}/tmp`,
+        offline: input.args.offline,
+      });
     let header: RenderInput["header"];
     let params: RenderInput["params"];
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
@@ -540,6 +584,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let emptyRetries = 0;
     let refusalRetries = 0;
     let pauseContinuations = 0;
+    let openTasksContinuations = 0;
 
     const buildCtx = (): ToolContext => ({
       ...baseCtx,
@@ -554,6 +599,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     });
     let ctx = buildCtx();
     const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
+      if (input.args.offline && (name === "WebFetch" || name === "WebSearch"))
+        return { behavior: "deny", reason: offlineRefusal(name as "WebFetch" | "WebSearch") };
       if (input.args.disallowedTools.includes(name))
         return { behavior: "deny", reason: "disallowed by --disallowedTools" };
       if (input.args.allowedTools.includes(name)) return { behavior: "allow", reason: "allowed by --allowedTools" };
@@ -592,6 +639,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
               : { behavior: "ask", reason: d.reason };
         }
         if (desc.kind === "network") {
+          if (input.args.offline) {
+            return {
+              behavior: "deny",
+              reason:
+                name === "WebFetch" || name === "WebSearch"
+                  ? offlineRefusal(name)
+                  : `${name} is disabled in --offline mode; only model requests leave the machine.`,
+            };
+          }
           const d = decide(
             { tool: name, action: { kind: "network", host: desc.host } },
             { mode, rules, env: policyEnv },
@@ -669,7 +725,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const call = adapter.render({ header, params, transcript: built.transcript, cache });
       const fingerprint = prefixFingerprint(call);
       const messageCount = (call.messages as unknown[]).length;
-      const pre = guards.beforeRequest(modelRequestBody(call), false, maxRequests);
+      const sessionBudget = input.args.budget ?? effectiveSettings.budget?.session;
+      const budgetStops = sessionBudget !== undefined && sessionBudget !== null && guards.cost >= sessionBudget;
+      const pre = guards.beforeRequest(modelRequestBody(call), budgetStops, maxRequests);
       if ("doomed" in pre && pre.doomed) {
         push("turn.end", epochNum, turn, { reason: "error" });
         await flushLog();
@@ -679,10 +737,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: null,
+          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
           receipt: {},
           exit: { kind: "error" },
           warnings,
+          events,
         };
       }
       if ("pause" in pre) {
@@ -694,10 +753,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: true,
           usage,
-          cost: null,
+          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
           receipt: {},
           exit: pre.pause.guard === "budget" ? { kind: "budget" } : { kind: "guard" },
           warnings,
+          events,
         };
       }
       let done: Extract<StreamEvent, { type: "done" }> | undefined;
@@ -904,6 +964,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       usage = jsonSafeUsage({ ...(done.stored.usage as Record<string, unknown>) });
+      guards.cost += computeUsageCost(usage);
       const read = cacheReadOf(usage);
       const warn = cacheWarning(prevCache === undefined ? undefined : { turn: prevTurn, cacheReadTokens: prevCache }, {
         turn,
@@ -1028,18 +1089,37 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         // Every tool_use needs exactly one tool_result (agent-loop "Stop-reason handling"), so a call the
         // finalize skipped is logged as not run instead of leaving the turn unpaired.
         if (calls.length > 0) recordNotRun(() => ENDED_NOT_RUN);
+        const openItems = openTasksFromEvents(events);
+        if (
+          openItems > 0 &&
+          shouldContinueForOpenTasks({
+            headless: true,
+            endedWithText: hasText,
+            openItems,
+            blockerStated: false,
+            continuations: openTasksContinuations,
+          })
+        ) {
+          openTasksContinuations += 1;
+          push("user.message", epochNum, turn, {
+            text: "Please continue with the remaining open tasks in your task list.",
+          });
+          continue;
+        }
+        const incomplete = openItems > 0;
         push("turn.end", epochNum, turn, { reason: "end_turn" });
         await flushLog();
         return {
           sessionId,
           result: text === "" ? (action.note ?? text) : text,
           stopReason: action.reason,
-          incomplete: false,
+          incomplete,
           usage,
-          cost: null,
+          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
           receipt: {},
-          exit: { kind: "ok" },
+          exit: { kind: "ok", ...(incomplete ? { incomplete: true } : {}) },
           warnings,
+          events,
         };
       }
       if (action.kind === "prepare") {
@@ -1183,6 +1263,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
       recordResultEvents();
       if (stopped) {
+        const incomplete = openTasksFromEvents(events) > 0;
         push("turn.end", epochNum, turn, { reason: "end_turn" });
         await flushLog();
         const text = results
@@ -1192,12 +1273,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           sessionId,
           result: text,
           stopReason: "end_turn",
-          incomplete: false,
+          incomplete,
           usage,
-          cost: null,
+          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
           receipt: {},
-          exit: { kind: "ok" },
+          exit: { kind: "ok", ...(incomplete ? { incomplete: true } : {}) },
           warnings,
+          events,
         };
       }
     }

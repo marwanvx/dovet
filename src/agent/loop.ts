@@ -400,6 +400,12 @@ export async function executeTools(
     if (!parsed.ok) return { call, invalid: parsed.message as string, input: undefined };
     const prep = deps.registry.prepare(call.name, parsed.value);
     if (!prep.ok) {
+      if (deps.decide !== undefined) {
+        const decision = deps.decide(call.name, parsed.ok ? parsed.value : {});
+        if (decision.behavior === "deny") {
+          return { call, invalid: `Permission denied: ${decision.reason}`, input: undefined, unknown: false };
+        }
+      }
       const unknown = prep.message.startsWith(UNKNOWN_TOOL_PREFIX);
       return { call, invalid: prep.message, input: undefined, unknown };
     }

@@ -273,6 +273,39 @@ describe("headlessToolDefs", () => {
     });
     expect(windows.find((d) => d.name === "PowerShell")?.descriptionFile).toBe("tools/PowerShell51.md");
   });
+
+  // spec: AC-CLI-19
+  test("offline filters out WebFetch and WebSearch if present", () => {
+    const fakeWebFetch = {
+      name: "WebFetch",
+      descriptionFile: "tools/Bash.md",
+      inputSchema: z.object({}),
+      execute: async () => ({ kind: "ok", output: "" }),
+    } as unknown as ToolDefinition<unknown>;
+    const fakeWebSearch = {
+      name: "WebSearch",
+      descriptionFile: "tools/Bash.md",
+      inputSchema: z.object({}),
+      execute: async () => ({ kind: "ok", output: "" }),
+    } as unknown as ToolDefinition<unknown>;
+    const onlineDefs = headlessToolDefs({
+      shell: undefined,
+      tmpDir: "/tmp",
+      offline: false,
+      baseTools: [fakeWebFetch, fakeWebSearch],
+    });
+    expect(onlineDefs.map((d) => d.name)).toContain("WebFetch");
+    expect(onlineDefs.map((d) => d.name)).toContain("WebSearch");
+
+    const offlineDefs = headlessToolDefs({
+      shell: undefined,
+      tmpDir: "/tmp",
+      offline: true,
+      baseTools: [fakeWebFetch, fakeWebSearch],
+    });
+    expect(offlineDefs.map((d) => d.name)).not.toContain("WebFetch");
+    expect(offlineDefs.map((d) => d.name)).not.toContain("WebSearch");
+  });
 });
 
 describe("runHeadless", () => {
@@ -2779,6 +2812,219 @@ describe("runHeadless", () => {
       await dir.dispose();
     }
   });
+
+  // spec: AC-TUI-05
+  test("--budget 0 stops the turn before sending any request, exiting with kind: budget", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          budget: 0,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "hi",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("A"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([{ stop: "end_turn", text: "should not be reached" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "budget" });
+      expect(exitCodeFor(out.exit)).toBe(4);
+      expect(out.incomplete).toBe(true);
+      expect(out.result).toContain("Budget stops");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TUI-05
+  test("--budget stops a multi-turn session when accumulated cost exceeds the limit", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          budget: 0.0001,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "echo something",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("B"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          { stop: "tool_use", calls: [{ id: "c1", name: "echo", input: { text: "first" } }] },
+          { stop: "end_turn", text: "done" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "budget" });
+      expect(exitCodeFor(out.exit)).toBe(4);
+      expect(out.incomplete).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TUI-05
+  test("open task list items report incomplete: true and exit ok with incomplete: true", async () => {
+    const { createTodoWriteTool } = await import("../tools/index.ts");
+    const todoTool = createTodoWriteTool();
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "track items",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            calls: [
+              {
+                id: "t1",
+                name: "TodoWrite",
+                input: {
+                  todos: [
+                    { content: "done task", activeForm: "doing", status: "completed" },
+                    { content: "open task", activeForm: "doing", status: "pending" },
+                  ],
+                },
+              },
+            ],
+          },
+          // Model finalizes without finishing the open task
+          { stop: "end_turn", text: "I finished the first item." },
+          { stop: "end_turn", text: "Stopping now with items left." },
+          { stop: "end_turn", text: "Final summary with items remaining." },
+        ]),
+        toolDefs: [todoTool],
+      });
+      expect(out.exit).toEqual({ kind: "ok", incomplete: true });
+      expect(exitCodeFor(out.exit)).toBe(0);
+      expect(out.incomplete).toBe(true);
+      expect(out.stopReason).toBe("end_turn");
+      expect(out.result).toBe("Final summary with items remaining.");
+      const read = await readSession({
+        data: join(dir.root, "data"),
+        projectRoot: dir.root,
+        os: testOs(),
+        session: out.sessionId,
+      });
+      const continuationMessages = read.events.filter(
+        (e) =>
+          e.type === "user.message" &&
+          (e.data as { text?: string } | undefined)?.text?.includes("remaining open tasks"),
+      );
+      expect(continuationMessages.length).toBe(2);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CLI-19
+  test.each(["WebFetch", "WebSearch"] as const)(
+    "--offline refuses %s with offlineRefusal message and logs paired error result",
+    async (toolName) => {
+      const { offlineRefusal } = await import("./startup.ts");
+      const dir = await tempProject({});
+      try {
+        const out = await runHeadless({
+          dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+          projectRoot: dir.root,
+          cwd: dir.root,
+          os: testOs(),
+          settings: settingsFor(),
+          env: TEST_ENV,
+          loadInput: loadInputFor(dir, TEST_ENV),
+          args: {
+            print: true,
+            output: "text",
+            offline: true,
+            noSessionPersistence: false,
+            continued: false,
+            repair: false,
+            allowedTools: [],
+            disallowedTools: [],
+          },
+          prompt: "fetch docs",
+          clock: { now: () => Date.UTC(2026, 9, 15) },
+          ids: sequentialIds("D"),
+          pid: 1,
+          host: "h",
+          platform: fakePlatform(),
+          adapter: stubAdapter([
+            { stop: "tool_use", calls: [{ id: "f1", name: toolName, input: { query: "https://example.com" } }] },
+            { stop: "end_turn", text: "offline refusal noted" },
+          ]),
+          toolDefs: [echoTool()],
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        const read = await readSession({
+          data: join(dir.root, "data"),
+          projectRoot: dir.root,
+          os: testOs(),
+          session: out.sessionId,
+        });
+        const toolResult = read.events.find((e) => e.type === "tool.result");
+        expect(toolResult).toBeDefined();
+        if (!toolResult) throw new Error("tool.result event not found");
+        expect((toolResult.data as { output: string }).output).toContain(offlineRefusal(toolName));
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
 });
 
 describe("output redaction", () => {
