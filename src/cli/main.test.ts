@@ -410,6 +410,144 @@ describe("dovet -p headless", () => {
       await dir.dispose();
     }
   });
+
+  // spec: AC-TUI-05
+  test("--budget stops a session with exit code 4 when budget is exceeded", async () => {
+    const { dir, ...r } = await headless(["-p", "hi", "--budget", "0"]);
+    try {
+      expect(r.code).toBe(4);
+      expect(r.err).toContain("Budget stops the turn before the next request.");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TUI-05
+  test("stream-json output validates against stream schema", async () => {
+    const { StreamJson } = await import("./headless-output.ts");
+    const { dir, ...r } = await headless(["-p", "hi", "--output", "stream-json"]);
+    try {
+      expect(r.code).toBe(0);
+      const lines = r.out
+        .trim()
+        .split("\n")
+        .filter((l) => l.trim() !== "");
+      expect(lines.length).toBeGreaterThan(1);
+      const types = lines.map((l) => (JSON.parse(l) as { type: string }).type);
+      expect(types).toContain("session.start");
+      expect(types).toContain("turn.end");
+      for (const line of lines) {
+        const parsed = JSON.parse(line);
+        expect(StreamJson.safeParse(parsed).success).toBe(true);
+      }
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CLI-19
+  test("--offline refuses WebFetch and WebSearch with offlineRefusal message and keeps network blackholed", async () => {
+    const { offlineRefusal } = await import("./startup.ts");
+    const delta = (d: unknown, finish: string | null = null) => ({
+      id: "c",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "test/model",
+      choices: [{ index: 0, delta: d, finish_reason: finish }],
+    });
+    let modelHits = 0;
+    let nonModelHits = 0;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        if (req.url.includes("chat/completions")) {
+          modelHits += 1;
+          const stream = new ReadableStream({
+            start(controller) {
+              const enc = new TextEncoder();
+              if (modelHits === 1) {
+                // Return tool calls for WebFetch and WebSearch
+                const chunk = delta({
+                  role: "assistant",
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: "wf1",
+                      type: "function",
+                      function: { name: "WebFetch", arguments: JSON.stringify({ url: "https://example.com" }) },
+                    },
+                    {
+                      index: 1,
+                      id: "ws1",
+                      type: "function",
+                      function: { name: "WebSearch", arguments: JSON.stringify({ query: "example" }) },
+                    },
+                  ],
+                });
+                controller.enqueue(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+                controller.enqueue(enc.encode(`data: ${JSON.stringify(delta({}, "tool_calls"))}\n\n`));
+              } else {
+                controller.enqueue(
+                  enc.encode(`data: ${JSON.stringify(delta({ role: "assistant", content: "done" }))}\n\n`),
+                );
+                controller.enqueue(enc.encode(`data: ${JSON.stringify(delta({}, "stop"))}\n\n`));
+              }
+              controller.enqueue(enc.encode("data: [DONE]\n\n"));
+              controller.close();
+            },
+          });
+          return new Response(stream, { headers: { "content-type": "text/event-stream" } });
+        }
+        nonModelHits += 1;
+        return new Response("blocked", { status: 500 });
+      },
+    });
+    servers.push(server);
+    const dir = await tempProject({
+      "config/settings.json": JSON.stringify({
+        provider: "nvidia",
+        model: "test/model",
+        providers: { nvidia: { baseUrl: `http://127.0.0.1:${server.port}/v1` } },
+      }),
+    });
+    try {
+      const proc = Bun.spawn([process.execPath, MAIN, "-p", "fetch doc", "--offline"], {
+        cwd: dir.root,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          DOVET_CONFIG_DIR: join(dir.root, "config"),
+          DOVET_DATA_DIR: join(dir.root, "data"),
+          NVIDIA_API_KEY: "nvapi-FAKE-HEADLESS-KEY",
+        },
+      });
+      proc.stdin.end();
+      const [out, err, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      expect(code).toBe(0);
+      expect(err).toContain("offline mode");
+      expect(out).toContain("done");
+      expect(nonModelHits).toBe(0);
+      const os = testOs();
+      const sessions = await listSessions({ data: join(dir.root, "data"), projectRoot: dir.root, os });
+      const last = sessions[sessions.length - 1];
+      if (last === undefined) throw new Error("no session was saved");
+      const read = await readSession({ data: join(dir.root, "data"), projectRoot: dir.root, os, session: last.id });
+      const toolResults = read.events.filter((e) => e.type === "tool.result");
+      expect(toolResults.length).toBe(2);
+      const outputs = toolResults.map((r) => (r.data as { output: string }).output);
+      expect(outputs.some((o) => o.includes(offlineRefusal("WebFetch")))).toBe(true);
+      expect(outputs.some((o) => o.includes(offlineRefusal("WebSearch")))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
 });
 
 describe("dovet -p signals", () => {
