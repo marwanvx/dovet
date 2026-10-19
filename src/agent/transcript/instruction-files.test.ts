@@ -8,6 +8,7 @@ import { externalImportApprovals } from "../../store/index.ts";
 import {
   discoverInstructions,
   type EnvironmentFacts,
+  fileIdentityKey,
   type InstructionContext,
   type PromptState,
   renderSystemPrompt,
@@ -405,6 +406,17 @@ describe("AC-CTX-17: lazy triggers and escaping", () => {
       expect(text).not.toContain("<dovet-");
     }
   });
+});
+
+// spec: AC-CTX-15
+test("files whose 64-bit file IDs differ only in the low bits are two files, not one", () => {
+  // NTFS keeps a sequence number in the top 16 bits; from 32 up, the ID no longer fits a double.
+  const seq = 40n << 48n;
+  const a = fileIdentityKey({ dev: 7n, ino: seq | 1000n });
+  const b = fileIdentityKey({ dev: 7n, ino: seq | 1001n });
+  expect(a).toBeDefined();
+  expect(a).not.toBe(b);
+  expect(fileIdentityKey({ dev: 7n, ino: 0n })).toBeUndefined();
 });
 
 describe("resume, home, approvals and network paths", () => {

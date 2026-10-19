@@ -540,3 +540,9 @@ Done: build loop step 7 now picks a review tier from the diff (quick / standard 
 Review: quick (workflow docs and runner prompts; next.ts change has its own tests).
 Learned: the unbounded "review again until nothing above minor" rule is what made free-model runs take 1–2 hours; a round cap plus diff-only later rounds is the fix. `build-loop.md`, `AGENTS.md`, `playbook.md`, `biome.json` and `.gitignore` carry skip-worktree locally (OpenCode/Antigravity wording); commit their shared parts by staging a blob, never by clearing the flag.
 Next: the next M2 task; then score the reviewer against the M1-32…M2-04 re-review findings as an eval set.
+
+## 2026-10-19 — Fix F1: Windows file IDs lost precision in the instruction loader
+Done: the instruction loader and settings reload identify files by exact bigint file IDs (`fileIdentityKey`), so neighbouring Windows files no longer share a dedupe key. This was the cause of 29 of the 64 Windows CI failures; the other Windows failures were bursts on PR branches that got fixed before merging, or dependency-update PRs. PR: #148 (merged).
+Review: standard (two source files, one test; the class of bug checked across `src/`: `read.ts`, `write-file.ts` and the snapshotter already used bigint).
+Learned: on Windows, never compare `stat().ino` as a number; use `{ bigint: true }`. Linux can't reproduce this (small inode numbers); proof was 30 consecutive Windows runs of the test file (1 020 pass, 0 fail) from a temporary CI step, reverted before merge.
+Next: merge #147 once its CI is green, then M2-05.
