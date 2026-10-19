@@ -1,10 +1,10 @@
 # Dovet — Plan & Specifications
 
-> **Status: planning. Nothing is implemented yet.** Work starts at milestone M0 ([roadmap](plan/roadmap.md)).
+> **Status: in development.** M0 and M1 are done (headless `dovet -p` works on NVIDIA); M2 (safety and recoverability) is in progress. The task lists in [plan/tasks/](plan/tasks/) hold each task's status ([roadmap](plan/roadmap.md)).
 > **Name:** Dovet (command `dovet`). It was planned under the codename "Glass"; the "glass box" (nothing hidden) remains the product's core idea.
 > **License:** MIT (ADR-29).
 
-Dovet is a terminal coding agent (a "harness"). It runs on Windows, macOS and Linux, works with any model provider (Anthropic, OpenAI, Google, Chinese platforms such as DeepSeek, Qwen, Kimi, GLM and MiniMax, gateways, and local models), and is written in TypeScript on Bun.
+Dovet is a terminal coding agent (a "harness"). It runs on Windows, macOS and Linux, works with any model provider (NVIDIA first; then OpenAI, Google, Chinese platforms such as DeepSeek, Qwen, Kimi, GLM and MiniMax, gateways, and local models), and is written in TypeScript on Bun.
 
 Its promise is **trust through transparency**: the agent cannot hide what it did, what it cost, or what it was told ([vision](product/vision.md)).
 
@@ -14,7 +14,7 @@ Its promise is **trust through transparency**: the agent cannot hide what it did
 
 These specs are written to be **built from by an AI coding agent** and reviewed by a human.
 
-1. **Specs are the source of truth.** If code and spec disagree, the code is wrong, or the spec is changed first (an ADR in [decisions](plan/decisions.md) for decisions). If a spec is unclear or two specs disagree, stop and ask; don't guess.
+1. **Specs are the source of truth.** If code and spec disagree, the code is wrong, or the spec is changed first (an ADR in [decisions](plan/decisions.md) for decisions). If a spec is unclear or two specs disagree, the agent decides the best answer, records it in [QUESTIONS](plan/tasks/QUESTIONS.md) and writes it into the spec in the same PR; the owner can override it later.
 2. **Every feature has acceptance criteria** (`AC-<SPEC>-<n>`, e.g. `AC-TOOLS-04`). A feature is done when each criterion has a passing automated test tagged with its ID (or a documented manual check where automation is impossible).
 3. **Nothing is guessed.** External facts are marked `[VERIFIED date]`. Anything unverified is a **spike** in [open-questions](plan/open-questions.md): resolve it before building the feature that depends on it.
 4. **Build in milestone order** ([roadmap](plan/roadmap.md)). v0.2 items are described so v0.1 leaves room for them; don't build them early.
@@ -33,11 +33,11 @@ These specs are written to be **built from by an AI coding agent** and reviewed 
 
 ## Feature status
 
-Nothing is implemented. "Milestone" is where each v0.1 feature is built ([roadmap](plan/roadmap.md)).
+"Milestone" is where each v0.1 feature is built ([roadmap](plan/roadmap.md)); the task lists say what is done.
 
 | Area | v0.1 (milestone) | Later | Not supported |
 |---|---|---|---|
-| Providers (through the AI SDK's provider packages, ADR-30) | Anthropic (M1); OpenAI Responses, Open Responses servers, every models.dev provider (226) through the provider registry, incl. Chinese platforms, coding plans, Gemini and local servers (M4) | Bedrock/Vertex/Foundry for Claude (v0.2) | Unofficial or unpermitted logins (e.g. Claude subscription, Google AI Pro/Ultra) |
+| Providers (through the AI SDK's provider packages, ADR-30) | NVIDIA through `@ai-sdk/openai-compatible` (M1, QUESTIONS Q23); OpenAI Responses, Open Responses servers, every models.dev provider (226) through the provider registry, incl. Chinese platforms, coding plans, Gemini and local servers (M4) | Anthropic and Bedrock/Vertex/Foundry only if the owner adds them (Q23) | Unofficial or unpermitted logins (e.g. Claude subscription, Google AI Pro/Ultra) |
 | Login | API keys, local servers (M1/M3); `/login` + first-run wizard (M3); Sign in with ChatGPT (M4) | Copilot/xAI/OpenRouter account logins once terms are confirmed | Reusing other tools' stored credentials |
 | Tools | Read, Write, Edit, Bash/PowerShell, Grep, Glob, AskUserQuestion, TodoWrite, plan mode (M1); WebFetch, WebSearch (M2); the same tools for every model | NotebookEdit, LSP, background tasks, Monitor (v0.2) | Interactive TTY programs; long-running servers started by the agent (v0.1) |
 | Safety | Permission rules and modes (M1); sandbox, taint, trust, secret redaction (M2) | Auto mode with a model reviewer (v0.2) | Autonomous push/publish without the user's say-so |
@@ -104,3 +104,4 @@ Research and history behind the decisions. Useful for understanding *why*; never
 | [Feature research log](background/feature-research.md) | Per-feature evidence: sources checked, scenarios, decisions |
 | [Design review 2026-10-11](background/design-review-2026-10-11.md) | A dated audit of the plan; parts describe earlier states |
 | [Sources](background/sources.md) | Research sources |
+| [Workflow audit 2026-10-19](background/workflow-audit-2026-10-19.md) | Baseline numbers for how the build workflow performs, and the cuts made |
