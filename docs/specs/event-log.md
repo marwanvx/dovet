@@ -88,6 +88,14 @@ type EventEnvelope = {
 6. **File permissions.** Logs, blobs, offload files, snapshots and the budget ledger contain code and command output. On POSIX, `<data>` and everything under it are created with mode `0700` (dirs) / `0600` (files); Dovet warns at startup if they are group/world-readable. On Windows, data lives under `%LOCALAPPDATA%`, which inherits the user-only profile ACL; Dovet doesn't loosen it.
 7. **Disk-write budget test.** A CI test runs a scripted 50-turn session and asserts total bytes written (log + blobs + sidecars) stay under a fixed budget (initially 20 MB) and that no file except the `.meta.json` sidecar is rewritten in place.
 
+**Decided while building (QUESTIONS Q22):**
+- Each event's `data` schema is added by the task that first writes that event; until then the envelope is validated and `data` is any JSON. Event types and their core/optional class live in `src/schema/events.ts`.
+- Redaction at write time: values of 8 or more characters from env vars whose names contain KEY, TOKEN, SECRET, PASSWORD, PASSWD, PASSPHRASE, CREDENTIAL or AUTH, plus every resolved credential; each occurrence in any string of an event becomes `[redacted]`, and a `Secret` object is written as `[redacted]`.
+- A data object with a `$blob` or `$lit` key is written wrapped as `{ "$lit": … }` and unwrapped on read, so model-written input can never make a session unreadable.
+- Torn last line: the writer appends `\n` and a `session.resume` event `{ reason: "crash-repair", tornLine: N }`. The reader accepts an unparseable line in the middle of the file only when the very next event is that repair naming its line, and reports it as a warning. Any other invalid event opens the session read-only.
+- The startup disk check covers `<data>`, `<data>/projects`, `<data>/blobs`, this project's session folder and the files directly in it, not a full walk of `<data>`.
+- The reader checks lines, types, versions and blobs; event-order invariants are checked by the transcript builder, which already walks events in order. `close()` fsyncs even without `session.end`.
+
 ## Blob store
 
 - Content-addressed by SHA-256 of the raw bytes; written as temp file + rename; never modified.
@@ -107,6 +115,8 @@ There is no database or second store (ADR-4): two stores that must stay in sync 
 - **Search** (v0.2): ripgrep over session files.
 - Session **title**: the first 60 chars of the first user message (no model call, principle 3). An optional `titles.model` setting can generate titles with a cheap model, shown and counted.
 - If listing ever exceeds 200 ms with real data, add a rebuildable index (ADR), never a second source of truth.
+
+**Session sidecar fields (QUESTIONS Q22):** `id`, `title` (first 60 characters of the first user message, trailing spaces removed), `created` and `updated` (first and last event times), `turns` (count of `turn.end`) and `bytes` (log size when written). A sidecar whose `bytes` differs from the log's size is rebuilt. Cost joins once receipts exist.
 
 ## Resume
 

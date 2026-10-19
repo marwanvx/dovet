@@ -215,6 +215,8 @@ The sandbox credential list (§7.2) only restricts **shell commands**. Dovet's b
 - **Nothing denied enters the transcript or the log:** the policy decision happens before any read; a denied/unapproved read produces only the error text.
 - **Values from workspace `.env*` files** (parsed with a dotenv parser at session start and when they change) join the redaction set (§8), so `cat .env` or a test that prints config in a shell command is redacted too. Honest limit: redaction is a mitigation, not a guarantee.
 
+**Decided while building (QUESTIONS Q36):** `.env.*` is excluded whole, templates included (the safe side); `permissions.sensitiveFiles.add/remove` apply. The home-directory credential list of §7.2 isn't added to Grep/Glob's exclusions: it lies outside the working directories, where reads already ask.
+
 ### 4.8 Remote actions (built-in ask) [ADR-28]
 
 The sandbox can't tell a read from a publish once a host is allowed (`github.com` approved for cloning also lets `git push` through). Remote actions are therefore recognized from the command and **asked** in `default`, `acceptEdits` and `plan`, **even when sandboxed** (vision non-goal: no autonomous push). The list is data with tests, like the read-only set (§4.6). Recognition uses the analyzer's argv and wrapper stripping, including `git -C <dir> push` and `git -c k=v push`:

@@ -108,6 +108,19 @@ These come from instruction files in this project and the user's config. Follow 
 
 **Auto memory [v0.2]** (an explicit error instead of silent truncation when `MEMORY.md` exceeds its read limit; last-modified timestamps in frontmatter are computed when written and never re-rendered per request; frontmatter values must not be cut at an inline `#`): a per-project memory directory `<data>/projects/<id>/memory/` with a `MEMORY.md` index (first 200 lines / 25 KB loaded at session start) and topic files the agent maintains with its normal file tools (no memory tool, no extra model calls). Off by default until evals show it helps; `memory.auto: true` enables it.
 
+**Decided while building (QUESTIONS Q30):**
+- An `@path` token is replaced by the imported file's text (comments stripped, its own imports expanded); a skipped import (missing, already loaded, a cycle, too deep, declined) leaves the token as written.
+- One part per file; `<dir>` in a lazy part is that file's display path (`Instructions for pkg/AGENTS.md (loaded because you worked with files there)`), the same for a rule.
+- `blockReadsOutsideWorkingDirectories` and the external-import approval apply to files reached from inside the working directories (project files, their imports, symlinked project files and rule folders), not to user-level files or the folders above the project. Read deny rules apply to every file.
+- `instructions.exclude`: a pattern without a slash matches a file name at any depth; with a slash it matches the path relative to the primary working directory; a leading slash anchors it there and is also tried against the absolute path; a folder match covers its contents; requested and canonical paths are both tried.
+- Per directory: if any CLAUDE.md-family file exists, that family loads; otherwise its AGENTS.md files.
+- External-import decisions: `<data>/projects/<projectId>/external-imports.json`, one per canonical path. The session-start dialog lists every undecided one together; one first met during a lazy load is asked on its own; a damaged file means asking again.
+- A rule's base directory is the folder that holds its `.claude`/`.dovet` folder; for user-level rules, the primary working directory.
+- An `--add-dir` inside the project is a working directory, so its files load at launch, deduplicated; outside the project, `instructions.fromAdditionalDirectories` decides and `/rules` lists the skipped files.
+- The brace-expansion limit counts the patterns `{a,b}` groups would produce (a product over groups, a sum over alternatives), totaled over the file, without expanding anything.
+- Resume: the epoch keeps its stored system prompt; a launch file whose content (or an import's) changed is sent as `instructions-updated`; a new launch file as a `lazy-instructions` part; files attached lazily in the resumed epoch aren't attached again.
+- Files are deduplicated by canonical path and by exact `dev:ino` file identity, read as bigint: 64-bit Windows file IDs lose their low bits as doubles (follow-up F1).
+
 ## 4. Mid-epoch instructions (append-only injection)
 
 Used for: instruction file changes, mode and sandbox changes, budget warnings shown to the model (optional, off by default), the interrupt note, subdirectory instruction files, and the other fixed texts in [prompts/instructions.md](../prompts/instructions.md).

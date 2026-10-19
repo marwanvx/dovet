@@ -55,6 +55,12 @@ Every built-in tool: its input, exact behavior, limits, errors and edge cases. *
 
 ---
 
+**Decided while building (QUESTIONS Q32):**
+- `toolInputSchema(def)` (`src/tools/schema.ts`) is the schema every adapter receives: `z.toJSONSchema(input, {io: "input"})` with limit keywords moved into the field's `description` ("(at least 1)"); zod's safe-integer bounds from `.int()` are dropped. `strictSubsetViolations` checks the result (every object `additionalProperties: false`, no limit keywords, no `$ref`) for every registered tool.
+- `tool.call {callId, name, raw, input}`: `raw` is what the model sent, `input` the normalized value that was validated. `ToolDefinition.normalize` holds `aliases`, `drop` and `rewrite`; `pathFields` get the null-byte check; a `description` field is dropped on any tool whose schema lacks one. Only properties typed `integer` coerce numeric strings.
+- Oversized output is saved as `<dir>/<id>.json` when it parses as a JSON object or array (pretty-printed), else `<id>.txt`; lines hard-wrapped at 2,000 characters without splitting a surrogate pair; directory 0700 and file 0600 on POSIX.
+- `ToolContext` grows with the tools that need each part (snapshots, sandbox, interact, model); `builtinTools` is the list every tool task appends to.
+
 ## 1. Read
 
 **Input:** `{ file_path: string; offset?: int ≥ 1; limit?: int ≥ 1; pages?: string; allow_large?: boolean }`
@@ -92,6 +98,12 @@ Every built-in tool: its input, exact behavior, limits, errors and edge cases. *
 9b. **Hidden-instruction characters** (Unicode tag characters and the variation-selector supplement, [permissions §10](permissions.md)) are removed from the returned view and replaced by a `⟨N hidden characters removed⟩` marker. The result says the file still contains them, and the session is tainted. Edit's "unchanged lines keep their original bytes" rule means editing nearby lines never strips them by accident; removing them on purpose is a shell task.
 10. Paths through symlinks: both the requested path and the target are permission-checked; read-state is keyed by the **resolved** path.
 
+**Decided while building (QUESTIONS Q33):**
+- Dedup: `ToolContext.readResults.lookup({file_path, offset, limit, pages})`, built by `buildReadResultsIndex(events, epoch)` from the epoch's calls and results minus cancelled turns, so a compaction or a rewind empties it. It keys on the path as the model wrote it plus the range ("two hits in a row" means the same path and range), and compares the sha256 of the stored result text, so an edited file, another range or a changed PARTIAL total returns content. A dedup notice is stored with `dedup: true`, so the next hit returns content again.
+- Read stats the canonical path, opens it, and compares `fstat` device and inode to that stat (bigint) before reading. A symlink gives the policy both the requested and the resolved path.
+- `partial` is true whenever the view isn't the whole file. Read is exempt from the generic 30,000-character output limit (`limitsOwnOutput`): its pages reach 87,500 characters. Its token budget comes from `ToolContext.contextFreeTokens`.
+- Hidden characters stripped also include U+2060–2064 and U+206A–206F.
+
 ## 2. Write
 
 **Input:** `{ file_path: string; content: string }`
@@ -116,6 +128,12 @@ Every built-in tool: its input, exact behavior, limits, errors and edge cases. *
 10. Snapshot/checkpoint ([checkpoints](checkpoints.md)), `file.change`, read-state update.
 11. Result: `Created <path> (N lines)` / `Updated <path> (+a −b lines)`.
 
+**Decided while building (QUESTIONS Q34):**
+- `ToolContext.recordWrite(path, before: Uint8Array | null)` is awaited before the file changes (the snapshotter's `recordToolWrite`); the result carries `meta.fileChanges` `{path, op, added, removed}`, from which the loop builds `file.change` with blob refs. `lineDelta` trims common head and tail lines and counts the rest (exact for one contiguous change, an over-count for scattered ones).
+- Line endings for a new file: the nearest matching `.editorconfig` section's `end_of_line` (later sections win, `root = true` stops the walk), else `.gitattributes` `eol=lf|crlf`, both walking up to the folder holding `.git`; else the first five text files in the folder by name, where CRLF wins only with more lines than LF.
+- A file that appears between the existence check and the link is not overwritten: Write says it appeared and must be read first. The placeholder error quotes the whole offending line.
+- In-place writes say why: `Written in place to keep its mount|its owner|its special mode bits|the hard link.`; on Windows after the retries: `Written in place because another program has the file open.`
+
 ## 3. Edit
 
 **Input:** `{ file_path: string; old_string: string; new_string: string; replace_all?: boolean = false }`
@@ -137,6 +155,12 @@ Every built-in tool: its input, exact behavior, limits, errors and edge cases. *
    - **Per-model quirk:** models flagged `quirks.doubleEscapedEdits` (some Gemini models emit `\\n`/`\\t` literally) get `\\n`, `\\t` and `\\r` (and only those; never `\\u…`) unescaped in `old_string`/`new_string` **only when** L0–L2 found nothing and the unescaped form matches exactly once.
 7. Write as in Write §2.4 (placeholder guard on `new_string`) and §2.7–2.10.
 8. Result: the edited region ±3 lines in Read format, plus `(+a −b)`.
+
+**Decided while building (QUESTIONS Q35):**
+- Indent matching (L2): a tab counts as 4, 2 or 8 spaces; each is tried and the union of distinct match positions counted (more than one place is the multiple-matches error). The offset must be equal on every non-blank line, and blank lines blank on both sides. New lines are re-indented by that offset in the file's indent characters (tabs if more lines start with a tab than a space); lines the model left unchanged keep the file's original bytes.
+- A stale file (hash differs) applies only an exact (L0) unique match; L1/L2, `replace_all` with several matches and "not found" give the "Read it again" error.
+- A file with both CRLF and LF is written with its dominant ending, and the result says so. `meta.fileChanges[].match` (`exact|prefix-strip|indent`) is copied into `file.change`.
+- Encoding guess for non-UTF-8: Windows-1252 when bytes 0x80–0x9F occur, else Latin-1. The closest-match search compares same-length line windows around lines sharing trimmed text with `old_string`: at most 500 windows, threshold 0.9 character similarity.
 
 ## 4. Asking the user: AskUserQuestion
 
@@ -209,6 +233,12 @@ The model asks the user a few multiple-choice questions when a decision is genui
 12. **Background (`&`, dev servers):** v0.1 has no background tasks: leftover processes are stopped when the command ends (step 5), and the tool description says long-running servers must not be started. v0.2 adds `run_in_background` with Bun's built-in PTY.
 13. Commands longer than 10,000 characters always need approval ([permissions §4.6](permissions.md)).
 
+**Decided while building (QUESTIONS Q37):**
+- `scopedSettingsEnv({user, project, projectTrusted})` (`src/tools/shell-env.ts`) applies the project refusal list and trust to settings `env`; `commandEnv` reports `ignored` keys (where the launch environment wins) for `/status`.
+- The secret scrub is literal: every secret-named variable not in `shell.passEnv` is removed, including ones from `env` and the env file; `passEnv` is the opt-in.
+- The script's first lines are `set +H` and `trap 'pwd -P > <file>' EXIT`, so `exit` still records the cwd; a command that sets its own EXIT trap loses the carry-over for that call.
+- Scratch files live in `<data>/tmp`; the shell snapshot is started by the composition root and skipped when `shell.snapshot` is false.
+
 ## 6. PowerShell (Windows without Git Bash, or `shell.windows: "powershell"`)
 
 Same contract as Bash (process group/tree, completion on exit, output sanitizing, limits, cwd carry-over, sandbox where available), except:
@@ -247,6 +277,11 @@ Same contract as Bash (process group/tree, completion on exit, output sanitizing
 - A missing `path` is reported **after** the permission decision, never probed before it.
 - No matches → `No matches found.` (not an error), plus `(N sensitive files skipped)` when applicable.
 - Permission: like Read on `path`; Read deny rules are applied to the searched directory (best effort).
+
+**Decided while building (QUESTIONS Q36):**
+- Content mode counts output lines (matches plus context lines); a file heading is not counted. Grep sorts by file path, because ripgrep's threaded order would make `offset` paging unstable; Glob sorts by modification time.
+- Whether a path is git-ignored is decided by running ripgrep with `--debug --files --max-depth 1` in each parent folder below the working directory and reading its "ignoring <name>" line; a change in ripgrep's debug format only loses the note and the `--no-ignore` retry.
+- The skipped-sensitive-files count comes from a second `rg --files` pass with the sensitive globs as the only whitelist, in parallel with the search (Grep honors `type` but not `glob` there). A timeout or output cap with nothing found says `Nothing found before the search stopped.`
 
 ## 8. Glob
 
