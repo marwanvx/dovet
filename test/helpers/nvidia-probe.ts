@@ -34,7 +34,11 @@ function skipReason(e: ProviderErrorInfo): string | undefined {
   return undefined;
 }
 
-export async function probeModel(model: string, opts: { baseURL: string; apiKey: Secret }): Promise<Probe> {
+export async function probeModel(
+  model: string,
+  opts: { baseURL: string; apiKey: Secret; timeoutMs?: number | undefined },
+): Promise<Probe> {
+  const timeoutMs = opts.timeoutMs ?? 60_000;
   const adapter = createSdkAdapter({
     endpoint: () => ({ ...endpointOf(providerRecord("nvidia")), baseURL: opts.baseURL, apiKey: opts.apiKey }),
   });
@@ -53,14 +57,20 @@ export async function probeModel(model: string, opts: { baseURL: string; apiKey:
       transcript: [{ kind: "user", parts: [{ kind: "text", text }] }],
       cache: { breakpoints: "auto", ttl: "auto" },
     });
-    for await (const e of adapter.stream(call, { signal: AbortSignal.timeout(180_000), onRequest: () => {} })) {
+    for await (const e of adapter.stream(call, { signal: AbortSignal.timeout(timeoutMs), onRequest: () => {} })) {
       if (e.type === "done") return e.stored;
       if (e.type === "error") {
         const skipped = skipReason(e.error);
         if (skipped === undefined) throw new Error(`probe of ${model}: ${e.error.kind}: ${e.error.message}`);
         return { skipped };
       }
-      if (e.type === "aborted") return { skipped: "outage: no answer within 3 minutes" };
+      if (e.type === "aborted") {
+        const durationDesc =
+          timeoutMs >= 60_000 && timeoutMs % 60_000 === 0
+            ? `${timeoutMs / 60_000} minute${timeoutMs === 60_000 ? "" : "s"}`
+            : `${timeoutMs < 1000 ? `${timeoutMs} ms` : `${Math.round(timeoutMs / 1000)} seconds`}`;
+        return { skipped: `outage: no answer within ${durationDesc}` };
+      }
     }
     throw new Error(`probe of ${model}: the stream ended without a result`);
   };
