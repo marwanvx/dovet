@@ -94,7 +94,7 @@ type Quirks = {                             // providers §6; defaults are the p
   reasoningTags: string | null;              // inline reasoning tag ("think") → extractReasoningMiddleware (providers)
   streaming: boolean;                       // false → simulateStreamingMiddleware (providers)
   doubleEscapedEdits: boolean;              // tools §3.6
-  reasoningReplay: "in-tool-loop" | "always" | "never";   // chat-protocol reasoning content (providers)
+  reasoningReplay?: "in-tool-loop" | "always" | "never";  // chat-protocol reasoning content (providers); default "always" (QUESTIONS Q25, Q27)
   usageFields?: { cachedInput?: string; cacheMiss?: string; reasoningOutput?: string };   // JSON paths into raw usage (providers, receipts-budgets)
   refusalErrorCodes?: string[];             // provider content-policy error codes → refusal (providers)
 };
@@ -181,6 +181,11 @@ type PersistedEvent = EventEnvelope;        // event-log; `data` narrowed per `t
 type SlashCommand = { name: string; args: string };          // parsed from `/name args`; unknown → CommandResult error
 type CommandResult = { ok: true; output?: string } | { ok: false; error: string };
 ```
+
+**Decided while building (QUESTIONS Q18):**
+- `Platform.resolve(program): Promise<AbsPath | undefined>` finds the programs Dovet spawns itself (`git`, `rg`, `pdftotext`, clipboard tools), skipping the project folder; the result, including "missing", is cached per session. `spawn` refuses a program that isn't an absolute path, so nothing reaches `CreateProcess` unresolved.
+- `canonicalize` throws `PathRefused` (its message names the rule) for UNC, device and unmappable Git Bash paths; tools turn it into a `ToolError`. File tools and policy refuse UNC input before any file access, because a link chain that reaches a share is only caught after Windows has touched it.
+- Children are process-group leaders (`detached`) on Linux and macOS only; on Windows `detached` would leave console grandchildren without a console, and `taskkill /T` kills the tree anyway.
 
 ## 3. Provider adapter (one generic implementation over the AI SDK, ADR-30)
 

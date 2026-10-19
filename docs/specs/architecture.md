@@ -106,7 +106,7 @@ dovet/
 │  ├─ tools/                  one file per tool (read.ts, edit.ts, bash.ts, …), registry.ts, output.ts
 │  ├─ ai/                     sdk-adapter.ts, registry.ts, providers.jsonc, providers/<record-id>.ts, catalog/, pricing-rules.jsonc, retry.ts
 │  ├─ agent/                  session.ts, loop.ts, transcript/, compaction/, receipts/, budgets/, guards.ts, session-api.ts
-│  ├─ tui/                    vendor/pi-tui/ (vendored, with its LICENSE), app/
+│  ├─ tui/                    vendor/pi-tui/ (vendored, with its LICENSE; its own tsconfig with upstream's `strict` only, Dovet's extra checks apply to Dovet's code, QUESTIONS Q7), app/
 │  └─ cli/                    main.ts (the only file touching process.*), args.ts, output/, doctor.ts
 ├─ test/
 │  ├─ integration/            cross-module tests (Session-API scripted client, multi-session)
@@ -203,6 +203,7 @@ Third-party GitHub Actions are pinned to full commit SHAs. **OS code signing:** 
   - **Which release is latest:** the newest `dovet-<version>-<target>.tar.gz` named in the *signed* `SHA256SUMS` of the `releases/latest/download/` assets, so the version is as trusted as the checksum. A version that isn't newer than the installed one is never installed (a replayed old release can't downgrade); `dovet update` then says it is up to date.
   - **Install:** the archive unpacks into a scratch directory under `versions/` (entries outside `dovet/` and links are refused), must hold the executable, and is renamed to `versions/<v>/`; `current` then switches (POSIX: a new symlink renamed over the old one; Windows: the junction is swapped). Any failure before the switch removes the scratch directory and leaves `current` and `versions/` as they were.
   - **Rollback:** the file `previous` in the install directory names the version `current` pointed at before the last switch; `dovet update --rollback` points `current` back and writes the version it left, so running it twice returns. After an update only the new and the previous version stay on disk.
+  - **Testing the update path (QUESTIONS Q17):** the shipped binary has no hook to change the trusted key or the update URL. A pull request's CI build compiles a throwaway public key and the loopback URL `http://127.0.0.1:47231` into its test binaries only (`define`), signs a release and a "next" release with that key, then on Linux, macOS and Windows installs the archive, runs `dovet update` against the loopback server and `--rollback` twice. A test checks that a normal build holds neither the URL nor a key.
 
 ## Acceptance criteria
 - [ ] **AC-ARCH-01** The compiled binary started in a directory containing `.env` (`X_TEST=1`) and `bunfig.toml` loads neither (`X_TEST` absent in child processes).

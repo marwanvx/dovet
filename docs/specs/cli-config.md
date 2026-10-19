@@ -46,6 +46,8 @@
 
 `DOVET_CONFIG_DIR` / `DOVET_DATA_DIR` env vars override (useful for tests and portable installs).
 
+**Decided while building (QUESTIONS Q18):** with `DOVET_DATA_DIR` set, the cache is `<DOVET_DATA_DIR>/cache`, so a test or portable install touches nothing outside it. A relative `DOVET_CONFIG_DIR` or `DOVET_DATA_DIR` is a startup error that names the variable.
+
 ## Config files and precedence
 
 Highest wins:
@@ -82,6 +84,14 @@ Merging: objects deep-merge; arrays of **rules** concatenate across sources (wit
 **`env` (subprocess environment):** `env: { "KEY": "value" }` in settings is added to the environment of **commands Dovet runs** (shell tools, v0.2 hooks/MCP), never to Dovet's own process. So `NO_COLOR` there doesn't change Dovet's UI. A variable already set in Dovet's launch environment wins, and `/status` lists the ignored keys. From **project** settings, `env` applies only in trusted folders, and these names are refused from project scope even when trusted: `PATH`, `LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_*`, `NODE_OPTIONS`, `BUN_OPTIONS`, `BASH_ENV`, `ENV`, `PROMPT_COMMAND`, `PYTHONSTARTUP`, `GIT_*`. Project settings never change anything outside that project (one project's setting must never disable a feature machine-wide).
 
 **State files** (`trusted-folders.json`, sidecars, the budget ledger index) are validated on read. A corrupt one is **backed up** (`.corrupt-<time>`) and rebuilt with a warning, never discarded unrecoverably. They are written atomically under a lock.
+
+**Decided while building (QUESTIONS Q20):**
+- Precedence, lowest to highest: defaults, `~/.claude/settings.json`, user, `.claude/settings.json`, project, `.claude/settings.local.json`, local, env, flags; each Claude Code file sits just below the Dovet file of the same scope.
+- From Claude Code files only the portable subset is read (`permissions.allow/ask/deny/additionalDirectories/defaultMode`, `sandbox`). Unknown keys in it are dropped silently; an invalid value or list entry is dropped with a warning naming file, line and key, never stopping startup; a Claude Code file with a syntax error is skipped with a warning.
+- `compat.claudeCodeSettings: false` in a project or local file turns off only that repo's `.claude/` files; `~/.claude/settings.json` follows only user settings, the environment and flags, so a cloned repo can't drop the user's deny rules.
+- A key written twice in one file: the later value wins and the repeat is reported (a startup error in a policy section, a warning elsewhere), so a repeated `permissions` block can't hide deny rules. `__proto__` is kept as plain data and reported as an unknown key.
+- `DOVET_BUDGET` sets `budget.session`: a plain non-negative number of US dollars (`1e2` is 100; `5abc`, `0x10` and `Infinity` stop startup).
+- Renamed keys: `src/store/config/migrate.ts` holds the mechanism with an empty `MIGRATIONS` list; the first release that renames a key adds its step.
 
 ## Data and privacy (what leaves the machine)
 
@@ -162,6 +172,14 @@ The example below shows the common keys; [interfaces §7](interfaces.md) is the 
 - **Plain-text keys in config files are rejected** with an error explaining `dovet auth login`.
 - Keychain: `Bun.secrets` (built into Bun; macOS Keychain, Windows Credential Manager with `persist: "local"`, Linux libsecret) [VERIFIED, Bun docs]. Service name `dovet`, entry name `<provider>`. If `Bun.secrets` fails a platform check in SPIKE-5, that platform uses `just-secrets` instead (same stores, through the OS's own `security`, `secret-tool` and PowerShell credential APIs; zero dependencies). Where no keychain exists at all (headless Linux without a Secret Service), credentials go to a file with mode 0600 in `<data>`; `/status` and `doctor` say so. Env-var keys work everywhere [SPIKE-5].
 - A provider that rejects requests carrying two of its credentials at once (a 401 when both env vars are set) lists them in its registry record; when both are set, Dovet tells the user which to unset.
+
+**Decided while building (QUESTIONS Q21):**
+- The 0600 file replaces the keychain only on Linux, and only when `Bun.secrets` reports `ERR_SECRETS_PLATFORM_ERROR` (no Secret Service, or no usable default collection). Every other keychain error is shown, and a denied or cancelled prompt is shown on every OS: a key never silently lands in a file. Reading checks the keychain first, then the file.
+- A reference that points at nothing (`env:VAR` unset, `keychain:<name>` absent) is an error naming the setting and the missing source, never a fall-through to the next source. An empty environment variable counts as unset.
+- `keychain:<name>` reads entry `<name>` of service `dovet`, where `dovet auth login` stores `<provider>`.
+- `dovet auth status` never runs a `cmd:` reference and never shows its command line (it can contain a secret): it shows "cmd: command (user settings)".
+- "Project settings" for refusing `cmd:` are `.dovet/settings.json` and `.dovet/settings.local.json`; a `cmd:` there stops startup like any invalid policy key.
+- Until the M4 registry exists, `src/ai/providers/auth.ts` holds the auth part of the provider records.
 
 ## Startup sequence (interactive)
 

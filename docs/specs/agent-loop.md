@@ -130,6 +130,13 @@ A text-only end of turn in an **interactive** session is the end of the turn; th
 - No wall-clock, randomness or environment reads inside the builder (lint rule: `agent/transcript/**` may not import `Date`, `crypto.random*` or `process.env`).
 - Turns that ended `cancelled` contribute nothing to the transcript (applied identically on every render and replay).
 
+**Decided while building (QUESTIONS Q31):**
+- `buildRequest(events, epoch)` returns the adapter's `RenderInput`; `adapter.render` gives the call and the transport the bytes, whose sha256 `model.request` stores. AC-LOG-02 rebuilds each request from the log and compares that hash.
+- Results and injected instructions after a model response form one user message, results in call order; a `model.request`, `model.response` or `user.message` closes the group, so a request already sent is never modified. Tool result text goes through `escapeReservedMarkers`; delivery of instructions is the adapter's decision, so the event's `delivery` field is ignored here.
+- Event data: `user.message {text}`, `tool.result {callId, status, output}`, `turn.end {reason}`, `model.request {provider, model, params, messageCount, bodySha256, fingerprint}` (`src/schema/event-data.ts`); `model.response` holds the `StoredResponse`.
+- Cache monitor: warn when a request reads under half the previous request's cache-read tokens. No warning when the provider reports no cache field, when the previous request read nothing, up to turn 3, or when the miss is expected (effort or thinking change, new epoch, or the previous request older than the cache TTL). `cacheWarning` returns `{text, invariant}`: the loop shows the text and logs the invariant.
+- The determinism lint rule (`scripts/lint/no-nondeterminism.grit`) covers `build.ts` and `fingerprint.ts`; the system prompt takes the session date as a clock value from the caller.
+
 ## Acceptance criteria
 
 - [ ] **AC-LOOP-01** For every stop reason, a recorded-stream test drives the loop and asserts the next action exactly as in the table.

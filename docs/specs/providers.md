@@ -85,6 +85,12 @@ Curated records win over generic ones; user settings win over both.
 
 ---
 
+**Decided while building (QUESTIONS Q25, Q27):**
+- The `nvidia` record is a curated record in `src/ai/providers.jsonc` (status `community`), parsed by `src/ai/registry.ts`; the provider auth list derives from it. The M4 registry adds the models.dev records next to it.
+- NVIDIA (live probes 2026-10-13) returns `reasoning_content`, accepts it in requests, and accepts `reasoning_effort` with `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. The record replays reasoning `always`; `in-tool-loop` stays for records whose vendor documents it (Kimi, DeepSeek thinking with tools).
+- A model accepts effort only when its catalog entry says it reasons: sending `reasoning_effort` to a non-reasoning model changes its behavior (`google/gemma-4-31b-it` starts thinking). Without a requested level the lowest supported one is sent; the level sent is in `SdkCall.effort` for the status bar and `/why`.
+- An end-of-life model answers HTTP 410 with an RFC 9457 problem body: 410 maps to `not_found` like 404, and the body's `detail` (the end-of-life date) is added to the message. A 200 stream ending in `ResourceExhausted: Worker local total request limit reached` is a rate limit.
+
 ## 1. Normalized message model and replay rule
 
 Types are defined in [interfaces §2](interfaces.md). Each `model.response` stores the step's output in **Dovet's own format**: the assistant `Part`s in order, each with its **replay data** (signatures, encrypted reasoning, item IDs, `phase`, `reasoning_content`) under the provider's own field names, plus the provider, package version and exact model ID (the raw response body is saved only with `--debug`, like request bodies, §6b). The adapter converts the AI SDK's response messages to these parts and back. **Why Dovet's format and not the SDK's:** logs are permanent (resume, rewind, forks), so the log must not depend on any library's internal message shape; replacing the AI SDK for one protocol later changes one adapter and no stored session (ADR-30).
@@ -146,6 +152,12 @@ The best fix for broken tool calls is to make them impossible. Where the endpoin
 - **Schema rules:** Dovet's built-in tool schemas stay inside the strict subset: `additionalProperties: false` on every object, no `minimum`/`maximum`/`minLength`/`maxLength`, no recursive schemas; such limits are checked by Dovet's own zod validation instead ([tools §0](tools.md)). The JSON Schema generated from a zod schema contains those keywords, so the strict renderer moves them into the field's description ("at least 1") before sending. A unit test sends every built-in schema through each strict endpoint's rules.
 - **What strict doesn't fix:** a call cut off by the output limit, and calls that are well-formed but wrong (an `old_string` that isn't in the file). Those still get a precise error and the loop guards ([agent-loop](agent-loop.md)).
 - If the provider rejects the strict schemas (a 400 such as "schema too complex"; this can only happen on the first request of an epoch, since the tool definitions don't change inside one), Dovet starts a new epoch whose tool definitions omit `strict` (epoch reason `repair`; nothing was cached yet, so it costs nothing) and keeps strict off for that endpoint and model for the session; the event is logged and `doctor` reports it.
+
+**Decided while building (QUESTIONS Q24):**
+- A refusal: the `done` event's `stopReason` is `"refusal"` and the raw reason (`content_filter`, `refusal`, `SAFETY`, …) is kept in `stored.finishReason`.
+- A tool call is stored with the model's raw argument text as `inputJson` (from the stream, not the SDK's `{}`); the SDK's synthetic tool-error message is not stored, because the loop answers the call with its own error.
+- Retryable network errors: a connection code (`ECONNRESET`, `ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`, `ETIMEDOUT`, `EPIPE`) or a `TypeError` saying the fetch or connection failed. Any other `TypeError` is a bug: `unknown`, not retried.
+- `streamText` gets a no-op `onError` (its default prints to the terminal); every error is reported as an `error` event with the endpoint's credential removed from the message.
 
 ## 3. Anthropic (`@ai-sdk/anthropic`) — first-class in v0.1
 
@@ -269,6 +281,13 @@ Providers with their own AI SDK package (DeepSeek, Qwen/Alibaba, Kimi/Moonshot, 
 
 ---
 
+**Decided while building (QUESTIONS Q28):**
+- Each attempt is a `model.request` and each failed attempt a `model.error`; `callModel` (`src/ai/retry.ts`) emits `request`, `attempt.error` and `retrying`, which the loop writes as those events and the status line.
+- Partial output on failure: a text or reasoning block is complete when a later block started after it or it ended before the failure; a tool call is complete when its arguments already form a JSON object; ends emitted at flush don't count. Only a retried failure keeps complete blocks and continues the turn; a non-retryable error (an in-stream policy error, quota) discards them. The `error` event carries `completed: StoredResponse | null`.
+- No bytes for `network.streamIdleTimeoutMs` (180 s), before the response starts or between chunks, aborts the attempt as a retryable `timeout`; that covers connecting too, so there is no separate connect timeout.
+- Classification: a body failing after a 2xx start is `network`; unparseable SSE data and a missing final event are retryable `server` errors with a plain message; an in-stream error object is classified by type, code and message (`overloaded…` overloaded, `rate_limit…`/`ResourceExhausted` rate_limit, `insufficient_quota` quota and fatal, `server_error`/`api_error` server, else unknown and not retried); a 429 whose body says `insufficient_quota` is fatal. In M1 a non-streamed response that ends early is retried within the budget.
+- Every delay is 1–60 s; `Retry-After` (seconds, or an HTTP date measured from the response's `date` header) is honored up to the 60 s cap.
+
 ## 8. Model catalog & pricing
 
 - **Source:** `https://models.dev/api.json` (an open model database) [VERIFIED 2026-10-10, README]. Fields used: `cost.input`, `cost.output`, `cost.cache_read`, `cost.cache_write`, `cost.reasoning` (USD per 1M tokens), `limit.context`, `limit.input`, `limit.output`, `tool_call`, `reasoning`, `attachment`, `modalities.input`, `interleaved`, `status`.
@@ -286,14 +305,14 @@ A per-model variant (a different tool shape or extra prompt text for one model f
 ## Acceptance criteria
 
 - [ ] **AC-PROV-01** Golden tests: for each protocol, a recorded multi-turn session (text, parallel tools, reasoning, an error result) renders byte-identical requests on replay.
-- [ ] **AC-PROV-02** Prefix property test: for each protocol, request N's serialized body (minus cache markers) is a strict prefix of request N+1's within an epoch.
+- [ ] **AC-PROV-02** Prefix property test: for each protocol, request N's serialized body (minus cache markers) is a strict prefix of request N+1's within an epoch. Measured as (QUESTIONS Q27): every field except the message list is byte-equal, and N+1's message list begins with N's messages, each byte-equal.
 - [ ] **AC-PROV-03** Anthropic CI integration test with `prefix_mismatch_behavior: "error"` passes a 10-turn tool-using session, including an injected mid-epoch instruction.
 - [ ] **AC-PROV-04** Gemini integration test (Interactions API, `store: false`): a 3-turn function-calling session succeeds (proves thought-signature replay).
 - [ ] **AC-PROV-05** OpenAI integration test: reasoning items and `phase` replayed over a 5-turn tool-using session with the shared tool set.
 - [ ] **AC-PROV-06** Ollama fixture tests: Open Responses stream (function call items) and Chat Completions stream (tool-call fragments across 3 chunks) both reassemble into valid JSON.
 - [ ] **AC-PROV-07** Gateway presets: requests carry the pinned routing option and the serving provider is recorded in `model.response`.
 - [ ] **AC-PROV-08** Switching model mid-session drops foreign reasoning and the next request succeeds on each protocol pair.
-- [ ] **AC-PROV-09** Retry: a mocked 529 followed by success yields one visible retry status, two `model.request`/`model.error` events, and a correct final result.
+- [ ] **AC-PROV-09** Retry: a mocked 529 followed by success yields one visible retry status, two `model.request` events and one `model.error` event (QUESTIONS Q28), and a correct final result.
 - [ ] **AC-PROV-10** Cost for a recorded Anthropic turn with cache reads and writes matches a hand-computed value to the cent.
 - [ ] **AC-PROV-11** An in-stream `event: error` (`overloaded_error`) after partial text is classified retryable, the partial output is discarded, and the retry succeeds (fixture).
 - [ ] **AC-PROV-12** Cache diagnosis: a fixture where request 5 changes one earlier message byte makes `/why --cache` name that message; an effort change is reported as an expected miss.
