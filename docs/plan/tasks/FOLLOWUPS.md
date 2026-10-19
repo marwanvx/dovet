@@ -14,10 +14,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
-- **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
-- `usage = jsonSafeUsage(e.usage)` replaces the usage on every model response instead of summing it. Live runs on `nvidia/nemotron-3.5-super-vl-120b-a12b`: job 1 made 10 requests (70 867 prompt tokens in the event log) and reported 8 124; job 2 made 14 requests (123 740) and reported 11 957. `receipt` came back `{}` both times. Check `cost` the same way. This breaks the promise that Dovet can't hide what it cost; the fix needs a test with a multi-request turn that asserts the summed usage.
-
 ### F3 (live test 2026-10-19): a fresh install refuses to run without a configured model
 - **Severity:** minor · `src/cli/headless-run.ts:149`
 - With an NVIDIA key and no settings file, `dovet -p "…"` exits 2 with "no model configured; set model in settings or --model". Pick a default NVIDIA model (the registry's) or name a working `--model` value in the message.
@@ -26,7 +22,20 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · Bash tool result when the sandbox is unavailable
 - On a machine where the sandbox can't start (Ubuntu AppArmor user namespaces), job 1 tried `bun test` 7 times, including with `dangerouslyDisableSandbox`, and every try errored. The result text should say plainly that this command can't run in this session, so the model stops.
 
+### F6 (task F2 review): `--output json` `cost` on a resumed session is the session total, `usage` is this turn only
+- **Severity:** minor · `src/cli/headless-run.ts:653` (`guards.cost` starts at the stored session cost)
+- The tui "Headless mode" spec says `usage` and `cost` cover every request of the turn. On `--resume`/`--continue` `cost` also includes earlier turns (it is what the session budget compares against; the budget test relies on it). Decide which one the JSON field means (turn or session), write it in the spec and make both fields use the same scope; a separate turn-cost counter keeps the budget guard session-wide. Pre-existing.
+
+### F7 (task F2 review): tokens of a request that fails or is aborted after its `usage` event are not counted
+- **Severity:** minor · `src/cli/headless-run.ts` (the `usage` event only feeds the cache warning; `done` is the accounting point)
+- A provider may bill a request that ended in an error or an abort; its `usage` event is dropped from `usage` and `cost`. Count the last `usage` event of a request that has no `done`, with a test. Pre-existing in cost, new in `usage`.
+
 ## Fixed
+
+### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
+- **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
+- `usage = jsonSafeUsage(e.usage)` replaces the usage on every model response instead of summing it. Live runs on `nvidia/nemotron-3.5-super-vl-120b-a12b`: job 1 made 10 requests (70 867 prompt tokens in the event log) and reported 8 124; job 2 made 14 requests (123 740) and reported 11 957. `receipt` came back `{}` both times. Check `cost` the same way. This breaks the promise that Dovet can't hide what it cost; the fix needs a test with a multi-request turn that asserts the summed usage.
+- **Fixed:** #160 (usage and cost add up every request of the turn; every exit of `runHeadless` reports the cost so far)
 
 ### F5 (wiring check 2026-10-20): a project's settings `env` reaches Bash, LD_PRELOAD and PATH included
 - **Severity:** blocker · `src/tools/bash.ts:291`, `src/tools/shell-env.ts` (`scopedSettingsEnv`, `startShellSnapshot`)

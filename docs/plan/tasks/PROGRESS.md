@@ -600,3 +600,9 @@ Done: `loadSettings` drops PATH, LD_PRELOAD, GIT_* and the other refused names f
 Review: standard, 1 round, 3 fixed (local-file bypass, untested cleanup, 10 s wait on abort), 0 dropped, 0 logged to FOLLOWUPS.
 Learned: the wiring check's promise held: a test that loads a real project settings file and runs Bash caught the bug the pure-function test missed. Dropping the local file's whole `env` while untrusted (tracked by git) is still M2-05's job; the TUI session boot (M3) must also start the snapshot.
 Next: F2 (usage summed across requests in `dovet -p` JSON output), then M2-05.
+
+## 2026-10-20 — F2 `dovet -p` JSON usage and cost cover every request
+Done: `usage` in `--output json` is now the sum of every request of the turn (nested token objects added field by field) and every exit path reports the cost so far instead of `null`. PR: #160 (merged).
+Review: standard, 1 round, 1 fixed (guard-exit test), 1 dropped (SIGINT-exit test; same helper as the guard test), 2 logged to FOLLOWUPS (F6, F7).
+Learned: `receipt` still comes back `{}` in JSON output; nothing builds it yet, so check the receipts task before calling M1 output complete. On a resumed session `cost` is the session total while `usage` is this turn only (F6).
+Next: M2-05 (workspace trust).

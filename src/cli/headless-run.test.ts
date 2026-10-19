@@ -95,6 +95,7 @@ type StubStep = {
   text?: string;
   reasoning?: string;
   usage?: Record<string, unknown>;
+  fail?: string;
 };
 
 function stubAdapter(steps: StubStep[]) {
@@ -112,6 +113,14 @@ function stubAdapter(steps: StubStep[]) {
       const step = steps[next];
       next += 1;
       if (step === undefined) throw new Error("stubAdapter: script exhausted");
+      if (step.fail !== undefined) {
+        yield {
+          type: "error",
+          error: { kind: "invalid_request", retryable: false, message: step.fail },
+          completed: null,
+        };
+        return;
+      }
       yield {
         type: "done",
         stopReason: step.stop,
@@ -363,6 +372,201 @@ describe("runHeadless", () => {
         const data = req.data as { bodySha256: string };
         expect(data.bodySha256).toMatch(/^[0-9a-f]{64}$/);
       }
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tui "Headless mode"
+  test("usage and cost add up every request of the turn, not just the last", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "go",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("Q"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            calls: [{ id: "c1", name: "echo", input: { text: "a" } }],
+            usage: { promptTokens: 1000, completionTokens: 100 },
+          },
+          {
+            stop: "tool_use",
+            calls: [{ id: "c2", name: "echo", input: { text: "b" } }],
+            usage: { promptTokens: 2000, completionTokens: 200 },
+          },
+          { stop: "end_turn", text: "done", usage: { promptTokens: 3000, completionTokens: 300 } },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.usage).toEqual({ promptTokens: 6000, completionTokens: 600 });
+      expect(out.cost).toBe(0.0156);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tui "Headless mode"
+  test("nested usage objects are added field by field", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "go",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("N"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            calls: [{ id: "c1", name: "echo", input: { text: "a" } }],
+            usage: { inputTokens: { total: 1000, cacheRead: 400 }, outputTokens: { total: 100 } },
+          },
+          {
+            stop: "end_turn",
+            text: "done",
+            usage: { inputTokens: { total: 2000, cacheRead: 1500 }, outputTokens: { total: 50 } },
+          },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.usage).toEqual({
+        inputTokens: { total: 3000, cacheRead: 1900 },
+        outputTokens: { total: 150 },
+      });
+      expect(out.cost).toBe(0.0069);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tui "Headless mode"
+  test("a turn that fails after a paid request still reports that request's cost", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "go",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("E"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            calls: [{ id: "c1", name: "echo", input: { text: "a" } }],
+            usage: { promptTokens: 1000, completionTokens: 100 },
+          },
+          { stop: "end_turn", fail: "the provider refused the request" },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "error" });
+      expect(out.usage).toEqual({ promptTokens: 1000, completionTokens: 100 });
+      expect(out.cost).toBe(0.0026);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tui "Headless mode"
+  test("a turn stopped by the request guard still reports what its requests used and cost", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          maxRequests: 2,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "go",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("G"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter(
+          [1, 2, 3].map((i) => ({
+            stop: "tool_use" as const,
+            calls: [{ id: `c${i}`, name: "echo", input: { text: `t${i}` } }],
+            usage: { promptTokens: 1000, completionTokens: 100 },
+          })),
+        ),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "guard" });
+      expect(out.usage).toEqual({ promptTokens: 2000, completionTokens: 200 });
+      expect(out.cost).toBe(0.0052);
     } finally {
       await dir.dispose();
     }
