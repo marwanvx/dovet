@@ -121,6 +121,12 @@ A text-only end of turn in an **interactive** session is the end of the turn; th
 
 **Decided while building (QUESTIONS Q47):** the agent exposes pure plans (`shutdownPlan`, `exitCodeForSignal`, `sigintOutcome`); only `cli/main.ts` wires `process.on`/`process.exit`. A crash report is `<data>/crash/crash-<ISO stamp>.json`. SIGTSTP leaves tools running; only the terminal is restored.
 
+**Decided while building (QUESTIONS Q62, Q64):**
+- Headless installs signal handlers in the CLI composition root (`src/cli/signals.ts`, given an injected runtime). SIGTERM, SIGHUP and SIGBREAK: flush, fsync and release the log; abort; await `killTrees()` (every live group, through the SIGTERM→SIGKILL escalation; concurrent calls share it); then exit 143 or 129. A failed flush prints `dovet: could not flush the session log: …` and a failed kill `dovet: could not kill the running commands: …`; both still exit. No synthetic results are written: crash recovery on resume completes them.
+- SIGINT: the first press aborts and warns "press Ctrl+C again within 1 s" without exiting (the turn ends interrupted and exits 130); a second press within the window flushes, aborts and exits 130. A signal before a session attaches aborts and exits without the flush.
+- A crash (`uncaughtException`/`unhandledRejection`) writes the report (stack, versions, the last 50 event types only) under `<data>/crash/`, flushes, prints the path and exits 70; it kills nothing.
+- When an interrupt keeps completed blocks, the interrupt note is logged so a resume's next request carries it. Interrupted tools all use one wording, `INTERRUPTED_TOOL_TEXT`.
+
 ## Loop and runaway protection
 
 | Guard | Default | When triggered |

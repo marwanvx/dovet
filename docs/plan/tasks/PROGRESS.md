@@ -564,3 +564,9 @@ Done: build loop step 6 now writes each spec-gap answer into the spec in the sam
 Review: quick (docs only).
 Learned: an audit of the 82 tracked `.md` files against the session logs: 33 are in the cycle and read; `docs/prompts/` is read by the code; the rest are for GitHub visitors, history, or specs for tasks not started yet. 67 of 69 answered questions had never reached a spec; syncing them follows in separate PRs.
 Next: sync the answered questions into the specs, then F2, then M2-05.
+
+## 2026-10-19 — Spec sync: every answered question is in its spec
+Done: the 58 answers that existed only in `QUESTIONS.md` are written into the spec sections their tasks read, marked `(QUESTIONS Qn)` (#151, #152, #153). Every answered question ends with a `- **Spec:**` line, and `bun run docs:check` fails without one (`answersWithoutSpec`). Q6 and Q43 item 9 would change acceptance criteria, so they wait for the owner as W2 and W3. PR: #153 (merged).
+Review: quick (docs, plus a 15-line check with 3 tests).
+Learned: an entry's own claim that it was applied isn't proof: Q17 said "Written into architecture 'Distribution'", but the spec didn't hold it. Check the spec text. Transitional notes ("until M1-23") were left out of the specs because those tasks are done. Headless runs don't load AGENTS.md/CLAUDE.md yet; M2-05's "Done when" already owns that, so it isn't a separate follow-up.
+Next: F2 (usage under-reported), then M2-05.

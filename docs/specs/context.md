@@ -121,6 +121,8 @@ These come from instruction files in this project and the user's config. Follow 
 - Resume: the epoch keeps its stored system prompt; a launch file whose content (or an import's) changed is sent as `instructions-updated`; a new launch file as a `lazy-instructions` part; files attached lazily in the resumed epoch aren't attached again.
 - Files are deduplicated by canonical path and by exact `dev:ino` file identity, read as bigint: 64-bit Windows file IDs lose their low bits as doubles (follow-up F1).
 
+**Decided while building (QUESTIONS Q29):** a launch instruction file deleted mid-epoch is announced once as `Instructions updated (<path>):\n(the file was deleted)` and stops being watched until the next epoch.
+
 ## 4. Mid-epoch instructions (append-only injection)
 
 Used for: instruction file changes, mode and sandbox changes, budget warnings shown to the model (optional, off by default), the interrupt note, subdirectory instruction files, and the other fixed texts in [prompts/instructions.md](../prompts/instructions.md).
@@ -136,6 +138,11 @@ Delivery per protocol ([providers](providers.md)):
 **Reserved markers can't be forged:** Dovet's own markers (`[Dovet instruction]`, the `▸ dovet:` label and any `<dovet-…>` tag) are escaped wherever they appear in content Dovet didn't author: instruction files, tool results, fetched pages, hook output (v0.2). Invisible characters (zero-width, bidi overrides) in instruction files and tool results are shown visibly in the UI. Text can't impersonate the harness.
 
 Injected instructions are **never removed** later (removal = history edit). Every injection is a `system.injected` event and is visible in the transcript UI as a dim `▸ dovet:` line. Nothing the model sees is hidden from the user.
+
+**Decided while building (QUESTIONS Q29):**
+- Reserved markers in instruction files and tool results stay readable but can't match: `[Dovet instruction]` gets full-width brackets (`［Dovet instruction］`), `▸ dovet:` becomes `▹ dovet:`, `<dovet-` becomes `‹dovet-`. Matching ignores case, extra spaces and invisible characters (zero-width, bidi).
+- Delivery is decided once, by the adapter's `instructionDelivery`: a developer message on openai-responses; a text block marked `[Dovet instruction] ` on chat and interactions.
+- `epoch.start` data: `epoch, reason, provider, model, systemText, toolsJson, thinking, promptVersion`. `PROMPT_VERSION` hashes every `.md` file in `docs/prompts/` except `README.md`, by name and content.
 
 ## 5. What forces a new epoch
 

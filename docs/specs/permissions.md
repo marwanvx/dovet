@@ -320,10 +320,19 @@ Rules can be added/removed live with `/permissions`, **also while a turn runs**;
 - Hostnames resolving only to local addresses (loopback, link-local incl. `169.254.169.254`, own interfaces) are refused after resolution; `localhost`/`*.localhost` allowed. Allow a specific local target by IP:port in `allowedDomains`.
 - Tools that ignore proxy env vars (plain `ssh`, DB drivers) and non-TCP traffic (UDP, QUIC, ICMP) can't connect; documented in troubleshooting.
 
+**Decided while building (QUESTIONS Q57, Q58):**
+- Hosts the sandbox library rejects are dropped from its allow and deny lists (fail closed) and reported through `globWarnings()` as `ambiguous host <h> (see /doctor)`, next to the library's Linux glob warnings; expansion never blocks startup.
+- Before a command, `decide` covers the prompt (WebFetch to an unknown host asks; `dontAsk` denies, `bypassPermissions` allows). During a command the proxy asks through `SandboxAskCallback`: denied domains and local literals are denied first; registry, loopback and allowed hosts pass without asking; `strictAllowlist` refuses; `dontAsk` denies; `bypassPermissions` allows; otherwise it waits for the permission prompt (no prompt wired denies).
+- Local addresses: IP-literal loopback and link-local (`127/8`, `::1`, `169.254/16`, `fe80::/10` and mapped forms) are denied for WebFetch in `decide`; hostnames that resolve to local addresses are refused by the proxy's resolved-address guard, with no second lookup by Dovet. `localhost` and `*.localhost` are never refused; an exact `IP:port` in `allowedDomains` lifts the refusal.
+
 ### 7.5 Escape hatches
 - **Unsandboxed retry:** the shell tool has a `dangerouslyDisableSandbox: boolean` parameter. When a command fails in the sandbox, the result names what was blocked (host, path); the model may retry with the flag. The retry runs unsandboxed and **always goes through the normal permission flow** (prompt titled "Shell command (unsandboxed)"; a matching allow rule approves it; `dontAsk` denies). `Bash(dangerouslyDisableSandbox:true)` as an ask rule forces a prompt even in bypass mode.
 - **Strict sandbox mode:** `sandbox.allowUnsandboxedCommands: false` ignores the flag. `sandbox.failIfUnavailable: true` refuses to run shell commands when the sandbox can't start.
 - **Excluded commands:** `sandbox.excludedCommands: ["docker *", …]` run unsandboxed through the normal permission flow, including a bare `Bash` ask rule. A compound command is excluded only if **every** part matches. Matching uses the same argv rules as permission rules (§3.2): env prefixes, short and long option spellings (`git clone -b` ≡ `--branch`), and quoted `#`/`[WIP]` in messages don't change the result. From project settings, `excludedCommands` applies only in trusted folders and never when `allowUnsandboxedCommands: false`.
+
+**Decided while building (QUESTIONS Q55, Q57):** `allowUnsandboxedCommands: false` ignores both the retry flag and `excludedCommands`, so nothing runs unsandboxed. Until workspace trust exists (M2-05), every `excludedCommands` entry applies whatever its source, but the unsandboxed retry still asks (a matching allow rule approves it, `dontAsk` denies), so an untrusted entry can't run silently. The decision reason names the boundary: `unsandboxed command: … (unsandboxed execution, §7.5)`.
+
+**Decided while building (QUESTIONS Q67):** `dangerouslyDisableSandbox` is a parameter of the `Bash` and `PowerShell` rule matchers, so a rule can name an unsandboxed retry. With `failIfUnavailable`, a command fails when the sandbox is enabled but not healthy. Before every command, `wrap()` re-expands both the session's read-deny and write-deny paths and passes the union to the POSIX and Windows backends.
 
 ### 7.5b Sandbox configuration hygiene
 - **Path entries are normalized** before use: `~` expanded, trailing slashes removed (a `denyRead: "~/.aws/"` with a slash was silently bypassable), absolute paths accepted without a `//` prefix, and parentheses in paths handled.
@@ -350,6 +359,12 @@ Rules can be added/removed live with `/permissions`, **also while a turn runs**;
 
 **Native Windows sandbox:** whichever backend is active is labeled **experimental** (status bar, docs, doctor) until it passes the same escape test suite as Linux/macOS.
 
+**Decided while building (QUESTIONS Q56, Q59):**
+- The first command waits in `run()` for `sandbox.ready`; until the state leaves `off`, `describeAction` reports `sandboxed: false`, so `decide` asks instead of auto-allowing. Nothing whose safety premise is "sandboxed" auto-allows before the health check passes.
+- Windows backend order: MXC, then srt-windows, then none (`selectWindowsBackend`). A healthy Windows backend reports `experimental`, never `on`. MXC is detected and reported but kept `off` until its execution, PTY and proxy wiring is verified on Windows, so nothing auto-allows through an unverified boundary.
+
+**Decided while building (QUESTIONS Q68):** while MXC execution is unverified (`mxcExecutable` false), an installed srt-windows is selected, so commands run sandboxed at level 2; once MXC execution is verified it is preferred (ADR-6). The state follows from the backend (`windowsStateFor`). Elsewhere, `dovet sandbox status` probes the library's dependencies and reports `off` when one is missing. An unexpected `getPlatformSupport()` answer counts as unsupported (fail closed).
+
 ### 7.7 What runs outside the sandbox
 Dovet's own file tools (permission rules apply instead), WebFetch (rules apply; WebFetch requests are routed through the sandbox proxy when the sandbox is on, so local-address refusal and domain logging apply uniformly [SPIKE-18]), hooks and MCP servers (v0.2), and the user's own `!` shell-mode commands (v0.1; they are the user typing, so they run unsandboxed and unprompted).
 
@@ -358,6 +373,13 @@ Dovet's own file tools (permission rules apply instead), WebFetch (rules apply; 
 - **Output redaction:** values of those variables, and known key formats (`sk-ant-`, `sk-`, `sk-or-`, `AIza`, `ghp_/gho_/ghu_/ghs_/github_pat_`, `glpat-`, `xox[abpr]-`, `AKIA/ASIA`, PEM private keys, JWTs), are replaced with `[REDACTED:<name>]` in tool results before they reach the model or the log. Not a security boundary; documented as such.
   The redaction test corpus (`policy/testdata/redaction-corpus.jsonl`) includes the known miss cases: a key name with no value, JSON inside a shell string, zero-width characters inside key names, URL passwords containing `)`, quotes, `]`, `&`, a second `@` or `%40`.
 - Credential **masking** via the proxy (TLS termination + sentinel substitution) is v0.2.
+
+**Decided while building (QUESTIONS Q60, Q69):**
+- Redaction labels: a value is replaced by `[REDACTED:<variable name>]`; key formats use a fixed kind (`ANTHROPIC_KEY`, `OPENROUTER_KEY`, `OPENAI_KEY`, `GOOGLE_API_KEY`, `GITHUB_TOKEN`, `GITLAB_TOKEN`, `SLACK_TOKEN`, `AWS_ACCESS_KEY_ID`, `PRIVATE_KEY`, `JWT`); a URL password is `URL_PASSWORD`. Values under 8 characters never redact by value.
+- Tool results carry `[REDACTED:<name>]` into both the model and the log from the loop boundary; the log writer keeps `[redacted]` as the backstop for other fields.
+- `.env` scan: `.env` and `.env.*` under the working directories, except `*.example`, `*.sample`, `*.template` and `*.dist`, skipping `node_modules`, `.git` and `target`-style trees. Built at session start and re-read for a tool result when a file's mtime changed; a new nested file is picked up when a working directory's root mtime changes.
+
+**Decided while building (QUESTIONS Q69):** in `.env` parsing, an unquoted value ends at an inline comment (`\s+#`, or `#` at the start), and a quoted value may span several lines. Redaction maps positions in UTF-16 code units, so a secret after an emoji or another astral character is cut exactly.
 
 ## 9. Auto mode [v0.2]
 Specified now so v0.1 doesn't block it:
@@ -396,6 +418,11 @@ The file on disk is unchanged. The tool result says so, taint is set and the use
 - (v0.2) Subagent results are delivered under a header marking them as subagent output.
 
 **Dovet's own command lines are never built from untrusted strings:** every process Dovet spawns gets an argv array (no shell string interpolating file names, paths or URLs). (File names in "open in editor" and in executable lookups are classic command-injection vectors.)
+
+**Decided while building (QUESTIONS Q58):**
+- A sandboxed command that names an `https://host` outside the registry and loopback hosts taints the session (`sandbox: <host>`), unless the violations show that host was denied. This over-taints on purpose (an `echo` of a URL taints); a real proxy allow log replaces the heuristic when available.
+- `State.taintSource` feeds the `session tainted by <source>` banner. While tainted, sandbox auto-allow is suspended, sensitive findings always ask, and "don't ask again" is withheld.
+- `/untaint` needs confirmation, clears the in-memory taint and emits a notice; `taint.change` events persist it across resume.
 
 ## 11. Workspace trust
 - Project `.dovet/settings.json` (and `.claude/settings.json` when imported) **allow rules and `additionalDirectories` apply only after the user accepts the trust dialog** for the repo root. The dialog lists what they'd grant. Deny/ask rules always apply (they only restrict).
