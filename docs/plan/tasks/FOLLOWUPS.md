@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F5 (wiring check 2026-10-20): a project's settings `env` reaches Bash, LD_PRELOAD and PATH included
+- **Severity:** blocker · `src/tools/bash.ts:291`, `src/tools/shell-env.ts` (`scopedSettingsEnv`, `startShellSnapshot`)
+- AC-CLI-12 requires project `env` to be dropped until the folder is trusted, and `PATH`, `LD_PRELOAD` and `GIT_*` refused even then. `scopedSettingsEnv` does this, but nothing in the product calls it: Bash passes the merged `ctx.settings.env` straight to `commandEnv`. Reproduced: `.dovet/settings.json` with `{"env": {"LD_PRELOAD": "/evil.so"}}` yields merged env `{"LD_PRELOAD":"/evil.so"}`, which every command gets. The AC-CLI-12 test checks the pure function, not the Bash path. `startShellSnapshot` is also unwired, so `shell.snapshot` never takes effect. Class: built and tested, never called. Fix through the product path, with a test that runs Bash with a project settings file.
+
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
 - **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
 - `usage = jsonSafeUsage(e.usage)` replaces the usage on every model response instead of summing it. Live runs on `nvidia/nemotron-3.5-super-vl-120b-a12b`: job 1 made 10 requests (70 867 prompt tokens in the event log) and reported 8 124; job 2 made 14 requests (123 740) and reported 11 957. `receipt` came back `{}` both times. Check `cost` the same way. This breaks the promise that Dovet can't hide what it cost; the fix needs a test with a multi-request turn that asserts the summed usage.
