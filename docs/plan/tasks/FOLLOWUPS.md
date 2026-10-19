@@ -35,7 +35,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
 - **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
 - `usage = jsonSafeUsage(e.usage)` replaces the usage on every model response instead of summing it. Live runs on `nvidia/nemotron-3.5-super-vl-120b-a12b`: job 1 made 10 requests (70 867 prompt tokens in the event log) and reported 8 124; job 2 made 14 requests (123 740) and reported 11 957. `receipt` came back `{}` both times. Check `cost` the same way. This breaks the promise that Dovet can't hide what it cost; the fix needs a test with a multi-request turn that asserts the summed usage.
-- **Fixed:** #PR (usage and cost add up every request of the turn; every exit of `runHeadless` reports the cost so far)
+- **Fixed:** #160 (usage and cost add up every request of the turn; every exit of `runHeadless` reports the cost so far)
 
 ### F5 (wiring check 2026-10-20): a project's settings `env` reaches Bash, LD_PRELOAD and PATH included
 - **Severity:** blocker · `src/tools/bash.ts:291`, `src/tools/shell-env.ts` (`scopedSettingsEnv`, `startShellSnapshot`)
