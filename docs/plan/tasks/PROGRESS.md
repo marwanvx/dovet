@@ -546,3 +546,9 @@ Done: audited the last 20 tasks from raw session logs and GitHub history (`docs/
 Review: quick (docs and Markdown only).
 Learned: the biggest time cost on free models is waiting for the first token on every message, so cut round trips first. Baseline: median 70 min and 22.5 M tokens per task, 0.55 fix-up PRs and 1.7 bookkeeping PRs per task, `main` red 22.1 h. The audit scripts live in `~/.local/share/dovet-audit/` (README there).
 Next: F1 (Windows instruction-file test flake), then M2-05; recheck the baseline after 5 tasks.
+
+## 2026-10-19 — Fix F1: Windows file IDs lost precision in the instruction loader
+Done: the instruction loader and settings reload identify files by exact bigint file IDs (`fileIdentityKey`), so neighbouring Windows files no longer share a dedupe key. This was the cause of 29 of the 64 Windows CI failures; the other Windows failures were bursts on PR branches that got fixed before merging, or dependency-update PRs. PR: #148 (merged).
+Review: standard (two source files, one test; the class of bug checked across `src/`: `read.ts`, `write-file.ts` and the snapshotter already used bigint).
+Learned: on Windows, never compare `stat().ino` as a number; use `{ bigint: true }`. Linux can't reproduce this (small inode numbers); proof was 30 consecutive Windows runs of the test file (1 020 pass, 0 fail) from a temporary CI step, reverted before merge.
+Next: merge #147 once its CI is green, then M2-05.

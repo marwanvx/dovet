@@ -10,7 +10,7 @@ export type FileSig = {
   exists: boolean;
   mtimeMs?: number;
   size?: number;
-  ino?: number;
+  ino?: string;
   isFile?: boolean;
 };
 export type DirSig = { exists: boolean; mtimeMs?: number };
@@ -64,8 +64,15 @@ export function watchedSettingsPaths(input: Pick<LoadInput, "dirs" | "home" | "p
 
 async function sigOfFile(path: string): Promise<FileSig> {
   try {
-    const s = await stat(path);
-    return { exists: true, mtimeMs: s.mtimeMs, size: s.size, ino: s.ino, isFile: s.isFile() };
+    // bigint: a 64-bit Windows file ID loses its low bits as a double, so a replaced file could look unchanged.
+    const s = await stat(path, { bigint: true });
+    return {
+      exists: true,
+      mtimeMs: Number(s.mtimeNs) / 1e6,
+      size: Number(s.size),
+      ino: String(s.ino),
+      isFile: s.isFile(),
+    };
   } catch (err) {
     if (isErrno(err, "ENOENT", "ENOTDIR")) return { exists: false };
     return { exists: true, mtimeMs: -1, size: -1, isFile: false };

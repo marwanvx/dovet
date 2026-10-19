@@ -1,5 +1,5 @@
 // Instruction files: discovery, imports, lazy and path-scoped loads, dedupe and policy (context §3).
-import type { Stats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { posix, win32 } from "node:path";
 import { canonicalizePath, isErrno, isWithin, type Os, PathRefused, pathKey } from "../../platform/index.ts";
@@ -76,8 +76,14 @@ const RULE_DIRS = [".dovet/rules", ".claude/rules"];
 const sha256 = (bytes: Uint8Array): string => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 const lineCount = (text: string): number => (text === "" ? 0 : text.replace(/\n$/, "").split("\n").length);
 
-async function statOrNull(p: string): Promise<Stats | null> {
-  return stat(p).catch((e: unknown) => (isErrno(e, "ENOENT", "ENOTDIR", "ELOOP") ? null : Promise.reject(e)));
+/** Windows file IDs are 64-bit; as a double, neighbouring files can share one, so identity uses bigint. */
+export const fileIdentityKey = (s: { dev: bigint; ino: bigint }): string | undefined =>
+  s.ino === 0n ? undefined : `${s.dev}:${s.ino}`;
+
+async function statOrNull(p: string): Promise<BigIntStats | null> {
+  return stat(p, { bigint: true }).catch((e: unknown) =>
+    isErrno(e, "ENOENT", "ENOTDIR", "ELOOP") ? null : Promise.reject(e),
+  );
 }
 
 export async function discoverInstructions(
@@ -145,14 +151,15 @@ async function build(
     if (typeof canonical !== "string") return refuse("network", canonical.refused);
     const info = await statOrNull(requested);
     if (info === null || !info.isFile()) return undefined;
-    const keys = [pathKey(canonical, os), ...(info.ino === 0 ? [] : [`${info.dev}:${info.ino}`])];
+    const identity = fileIdentityKey(info);
+    const keys = [pathKey(canonical, os), ...(identity === undefined ? [] : [identity])];
     if (keys.some((k) => seen.has(k))) return undefined;
     const rel = (p: string): string | undefined => (isWithin(p, cwd, os) ? path.relative(cwd, p) : undefined);
     if (excluded(rel(requested), requested) || excluded(rel(canonical), canonical)) {
       return refuse("excluded", "matches instructions.exclude");
     }
     if (ctx.readDenied(canonical)) return refuse("denied", "denied by a Read rule");
-    if (info.size > MAX_BYTES) {
+    if (info.size > BigInt(MAX_BYTES)) {
       warnings.push(`${shown} skipped: larger than 4 MiB`);
       return refuse("too-large", "larger than 4 MiB");
     }
@@ -175,7 +182,7 @@ async function build(
         return refuse("declined", "external import declined");
       }
     }
-    return { canonical, keys, mtimeMs: info.mtimeMs };
+    return { canonical, keys, mtimeMs: Number(info.mtimeNs) / 1e6 };
   }
 
   type Loaded = { file: LoadedInstruction; records: InstructionsLoadedData["files"] };
@@ -399,7 +406,8 @@ async function build(
   for (const p of resumed.keys()) {
     seen.add(p);
     const info = await statOrNull(p);
-    if (info !== null && info.ino !== 0) seen.add(`${info.dev}:${info.ino}`);
+    const identity = info === null ? undefined : fileIdentityKey(info);
+    if (identity !== undefined) seen.add(identity);
   }
   const launchEvent: InstructionsLoadedData = { files: launch.flatMap((l) => l.records), warnings: [...warnings] };
 
