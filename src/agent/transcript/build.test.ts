@@ -310,6 +310,72 @@ describe("buildRequest", () => {
     expect(items).toHaveLength(4);
     expect(items[3]).toEqual({ kind: "user", parts: [{ kind: "instruction", reason: "mode-change", text: "later" }] });
   });
+
+  // spec: AC-LOG-12
+  test("repair epoch renders history from prior epochs with opaque reasoning and unpaired tool calls dropped", () => {
+    const events = [
+      ev("user.message", { text: "turn 1 prompt" }, 1, 0),
+      ev(
+        "model.response",
+        stored(
+          [
+            { kind: "text", text: "turn 1 text" },
+            {
+              kind: "reasoning",
+              summary: "secret thoughts",
+              replay: { provider: "nvidia", protocol: "openai-chat", modelId: MODEL, fields: {} },
+            },
+            { kind: "tool_call", id: "call_paired", name: "Read", inputJson: "{}" },
+            { kind: "tool_call", id: "call_unpaired", name: "Read", inputJson: "{}" },
+          ],
+          "tool_calls",
+        ),
+        1,
+        0,
+      ),
+      ev("tool.result", { callId: "call_paired", status: "ok", output: "file contents" }, 1, 0),
+      ev("turn.end", { reason: "end_turn" }, 1, 0),
+      ev("user.message", { text: "turn 2 prompt" }, 2, 0),
+      ev("model.request", {}, 2, 0),
+      ev("turn.end", { reason: "error" }, 2, 0),
+      ev(
+        "epoch.start",
+        {
+          epoch: 1,
+          reason: "repair",
+          provider: "nvidia",
+          model: MODEL,
+          systemText: scenario.systemText,
+          toolsJson: JSON.stringify(scenario.tools),
+          thinking: { mode: "off" },
+          promptVersion: sha("repair-test"),
+        },
+        null,
+        1,
+      ),
+      ev("user.message", { text: "turn 3 prompt" }, 3, 1),
+    ];
+    const repairEpoch: BuildEpoch = {
+      header: { ...epoch.header, epoch: 1 },
+      params: epoch.params,
+      cache: epoch.cache,
+    };
+    const items = buildRequest(events, repairEpoch).transcript;
+    expect(items.length).toBeGreaterThan(1);
+    const turn1User = items[0];
+    expect(turn1User).toEqual({ kind: "user", parts: [{ kind: "text", text: "turn 1 prompt" }] });
+    const assistant = items[1];
+    expect(assistant?.kind).toBe("assistant");
+    if (assistant?.kind === "assistant") {
+      const kinds = assistant.stored.parts.map((p) => p.kind);
+      expect(kinds).not.toContain("reasoning");
+      const toolCallIds = assistant.stored.parts.flatMap((p) => (p.kind === "tool_call" ? [p.id] : []));
+      expect(toolCallIds).toEqual(["call_paired"]);
+      expect(toolCallIds).not.toContain("call_unpaired");
+    }
+    const finalUser = items.at(-1);
+    expect(finalUser).toEqual({ kind: "user", parts: [{ kind: "text", text: "turn 3 prompt" }] });
+  });
 });
 
 describe("prefix fingerprint", () => {

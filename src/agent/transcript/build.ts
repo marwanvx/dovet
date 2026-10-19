@@ -9,9 +9,12 @@ import {
   TurnEndData,
   UserMessageData,
 } from "../../schema/index.ts";
+import { normalizeForRepair } from "../../store/index.ts";
 import { escapeReservedMarkers } from "./markers.ts";
 
-export type BuildEpoch = Pick<RenderInput, "header" | "params" | "cache">;
+export type BuildEpoch = Pick<RenderInput, "header" | "params" | "cache"> & {
+  repair?: boolean;
+};
 
 /** Dropped from every replay (providers §3): the APIs reject empty text. */
 function normalized(response: StoredResponse): StoredResponse | null {
@@ -41,13 +44,42 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
     }
     return open.parts;
   };
+  const isRepair =
+    epoch.repair === true ||
+    events.some(
+      (e) =>
+        e.type === "epoch.start" &&
+        e.epoch === epoch.header.epoch &&
+        (e.data as { reason?: string })?.reason === "repair",
+    );
+  const pairedCallIds = new Set<string>();
+  const latestEpochPerTurn = new Map<number, number>();
+  if (isRepair) {
+    for (const e of events) {
+      if (e.turn !== null && e.epoch <= epoch.header.epoch) {
+        const cur = latestEpochPerTurn.get(e.turn);
+        if (cur === undefined || e.epoch > cur) latestEpochPerTurn.set(e.turn, e.epoch);
+      }
+      if (e.type === "tool.result") {
+        try {
+          pairedCallIds.add(ToolResultData.parse(e.data).callId);
+        } catch {}
+      }
+    }
+  }
   for (const e of events) {
-    if (e.epoch !== epoch.header.epoch || (e.turn !== null && cancelled.has(e.turn))) continue;
+    if (e.epoch > epoch.header.epoch || (e.turn !== null && cancelled.has(e.turn))) continue;
+    if (isRepair) {
+      if (e.turn !== null && e.epoch !== latestEpochPerTurn.get(e.turn)) continue;
+    } else {
+      if (e.epoch !== epoch.header.epoch) continue;
+    }
     if (e.type === "user.message") {
       items.push({ kind: "user", parts: [{ kind: "text", text: UserMessageData.parse(e.data).text }] });
       open = null;
     } else if (e.type === "model.response") {
-      const response = normalized(StoredResponse.parse(e.data));
+      const parsed = StoredResponse.parse(e.data);
+      const response = isRepair ? normalizeForRepair(parsed, pairedCallIds) : normalized(parsed);
       if (response !== null) {
         const ids = response.parts.flatMap((p) => (p.kind === "tool_call" ? [p.id] : []));
         lastCalls = new Map(ids.map((id, i) => [id, i]));

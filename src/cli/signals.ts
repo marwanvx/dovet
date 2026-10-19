@@ -24,7 +24,10 @@ export type SessionHandle = {
   eventTypes(): readonly string[];
 };
 
-export type SignalHandlers = { attach(session: SessionHandle): void };
+export type SignalHandlers = {
+  attach(session: SessionHandle): void;
+  crash(err: unknown): Promise<void>;
+};
 
 /** AC-LOOP-09: Windows console close / Ctrl+Break is the same as SIGTERM (agent-loop "Process signals and crashes"). */
 export function stopSignalsFor(os: Os): readonly StopSignal[] {
@@ -86,35 +89,38 @@ export function installSignalHandlers(input: {
     }
   }
 
+  const crash = async (err: unknown): Promise<void> => {
+    let reportPath: string | undefined;
+    try {
+      const report = buildCrashReport({
+        stack: err instanceof Error ? (err.stack ?? err.message) : String(err),
+        versions: input.crash.versions,
+        eventTypes: session?.eventTypes() ?? [],
+        nowMs: runtime.now(),
+      });
+      await mkdir(input.crash.dir, { recursive: true });
+      reportPath = join(input.crash.dir, report.filename);
+      await writeFile(reportPath, report.text);
+    } catch (writeErr) {
+      runtime.writeErr(`dovet: could not write the crash report: ${messageOf(writeErr)}\n`);
+    }
+    try {
+      await session?.shutdown();
+    } catch (shutdownErr) {
+      runtime.writeErr(`dovet: could not flush the session log: ${messageOf(shutdownErr)}\n`);
+    }
+    if (reportPath !== undefined) runtime.writeErr(`dovet: crashed; the report is at ${reportPath}\n`);
+    runtime.exit(EXIT_CRASH);
+  };
+
   runtime.onCrash((err) => {
-    void (async () => {
-      let reportPath: string | undefined;
-      try {
-        const report = buildCrashReport({
-          stack: err instanceof Error ? (err.stack ?? err.message) : String(err),
-          versions: input.crash.versions,
-          eventTypes: session?.eventTypes() ?? [],
-          nowMs: runtime.now(),
-        });
-        await mkdir(input.crash.dir, { recursive: true });
-        reportPath = join(input.crash.dir, report.filename);
-        await writeFile(reportPath, report.text);
-      } catch (writeErr) {
-        runtime.writeErr(`dovet: could not write the crash report: ${messageOf(writeErr)}\n`);
-      }
-      try {
-        await session?.shutdown();
-      } catch (shutdownErr) {
-        runtime.writeErr(`dovet: could not flush the session log: ${messageOf(shutdownErr)}\n`);
-      }
-      if (reportPath !== undefined) runtime.writeErr(`dovet: crashed; the report is at ${reportPath}\n`);
-      runtime.exit(EXIT_CRASH);
-    })();
+    void crash(err);
   });
 
   return {
     attach(next: SessionHandle): void {
       session = next;
     },
+    crash,
   };
 }

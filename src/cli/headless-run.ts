@@ -316,16 +316,22 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     ...dotEnvSecrets.current(),
   ];
 
+  const ep = record !== undefined ? endpointOf(record) : undefined;
   const endpointBase = {
-    package: record?.endpoints[0]?.package ?? "@ai-sdk/openai-compatible",
+    package: ep?.package ?? record?.endpoints[0]?.package ?? "@ai-sdk/openai-compatible",
     baseURL,
-    quirks: {},
+    quirks: ep?.quirks ?? {},
   };
   const adapter: HeadlessAdapter =
     input.adapter ??
     createSdkAdapter({
       endpoint: () => ({ ...endpointBase, baseURL, apiKey: new Secret(secretValue) }),
-      modelInfo: () => ({ effortLevels: ["minimal", "low", "medium", "high", "xhigh", "max"] }),
+      modelInfo: () => ({
+        effortLevels:
+          ep?.effortLevels !== undefined && ep.effortLevels.length > 0
+            ? ep.effortLevels
+            : ["minimal", "low", "medium", "high", "xhigh", "max"],
+      }),
     });
 
   let sessionId: string;
@@ -734,7 +740,12 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     for (;;) {
       await pollAndApply();
       ctx = buildCtx();
-      const built = buildRequest(events, { header, params, cache });
+      const built = buildRequest(events, {
+        header,
+        params,
+        cache,
+        ...(input.args.repair ? { repair: true } : {}),
+      });
       try {
         validateTranscriptItems(
           built.transcript.map((t) =>
@@ -1233,7 +1244,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const recordResultEvents = (): void => {
         for (const r of results) {
           const text = r.output.content.map((x) => (x.kind === "text" ? x.text : "")).join("");
-          const status = r.output.status === "ok" ? "ok" : r.output.status === "interrupted" ? "interrupted" : "error";
+          const status =
+            r.output.status === "ok"
+              ? "ok"
+              : r.output.status === "interrupted"
+                ? "interrupted"
+                : r.output.status === "denied"
+                  ? "denied"
+                  : r.output.status === "timeout"
+                    ? "timeout"
+                    : "error";
           push("tool.result", epochNum, turn, { callId: r.callId, status, output: text });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
         }
