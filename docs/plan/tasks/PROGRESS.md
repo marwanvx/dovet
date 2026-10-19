@@ -471,3 +471,11 @@ Done (PR #127, CI green on three OSes after one Windows retry): resume and crash
 Learned: when validating transcript invariants, `tool_result` content in user message parts must be mapped through to the validator rather than stripped to `{ kind: p.kind }`, allowing non-text tool outputs to be caught before wire rendering. In headless resume, switching providers across configurations is unsafe without re-initializing the client adapter and credentials, so rejecting provider mismatches with a clear usage error naming both providers prevents accidental credential leakage. The Windows CI runner failed on the known instruction-files flake on the initial run and passed green on rerun.
 
 Next: M2-05.
+
+## 2026-10-19 — fix: M1-30 re-review
+
+Done (PR #129, CI green on three OSes after Windows retries for instruction-files flake): nightly live NVIDIA testing now prevents multi-model hang outages from failing CI before the test budget starts. `selectModel` bounds the overall probe phase with `DEFAULT_PROBE_BUDGET_MS = 5 * 60_000` (5 minutes) and short-circuits on budget expiry to satisfy the Done-when requirement by skipping with a clear reason; `probeModel` now accepts `timeoutMs` defaulting to 60 s per ask (down from 180 s) and formats aborted outage durations cleanly; `nightly.yml` job timeout is raised from 40 to 60 minutes to safely accommodate probe and live session execution across runners; `picked.date` is recorded and logged alongside the selected model (`live nvidia: using <model> (probed <date>)`); and workflow trigger assertions prevent flow-style push triggers (`/\bpush\b/`). Four fresh review lenses (spec, scope, security, tests) over two verification stages reached none-above-minor, with mutation proofs confirming red-before-green failure on probe timeout aborts, budget cap bypass, and workflow trigger assertions.
+
+Learned: when a suite probes multiple endpoints in sequence, individual per-request timeouts can accumulate to exceed test and runner deadlines in all-hang outage scenarios; bounding the cumulative phase with an explicit budget ensures the test satisfies graceful skip semantics rather than timing out the CI job. The Windows CI runner failed on the known instruction-files flake on the initial runs and passed green on rerun.
+
+Next: M2-05.
