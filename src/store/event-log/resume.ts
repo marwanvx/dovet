@@ -64,7 +64,7 @@ export function isHistoryRelated(err: { kind: string; retryable: boolean; messag
 
 type Item = {
   kind: string;
-  parts?: Array<{ kind: string; text?: string; summary?: string }>;
+  parts?: Array<{ kind: string; text?: string; summary?: string; content?: unknown }>;
   stored?: { parts: Array<{ kind: string; text?: string; summary?: string }> };
 };
 
@@ -75,6 +75,14 @@ export function validateTranscriptItems(items: readonly Item[]): void {
     for (const p of parts) {
       if (p.kind === "text" && (p.text ?? "").trim() === "")
         throw new Error("InvariantViolation: empty or whitespace-only text block");
+      if (p.kind === "padding") throw new Error("InvariantViolation: padding block");
+      if (p.kind === "tool_result") {
+        const content = (p as { content?: unknown }).content;
+        if (Array.isArray(content)) {
+          if (content.length === 0 || content.some((c) => c?.kind !== "text" || typeof c?.text !== "string"))
+            throw new Error("InvariantViolation: non-text tool output");
+        }
+      }
     }
     if (item.kind === "assistant" && parts.length > 0 && parts.every((p) => p.kind === "reasoning")) {
       throw new Error("InvariantViolation: assistant turn with only reasoning");
@@ -83,10 +91,12 @@ export function validateTranscriptItems(items: readonly Item[]): void {
 }
 
 /** The repair epoch drops provider-opaque reasoning, empty blocks and unpaired items, like a model switch. */
-export function normalizeForRepair(stored: StoredResponse): StoredResponse | null {
+export function normalizeForRepair(stored: StoredResponse, pairedCallIds?: ReadonlySet<string>): StoredResponse | null {
   const parts = stored.parts.filter((p) => {
     if (p.kind === "reasoning") return false;
-    return !(p.kind === "text" && p.text.trim() === "");
+    if (p.kind === "text" && p.text.trim() === "") return false;
+    if (p.kind === "tool_call" && pairedCallIds !== undefined && !pairedCallIds.has(p.id)) return false;
+    return true;
   });
   return parts.length === 0 ? null : { ...stored, parts };
 }
@@ -441,10 +451,14 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
 /** Yield a log's lines without holding the file in memory; a torn tail is dropped, never yielded. */
 async function* linesOf(path: string): AsyncGenerator<string> {
   const gen = streamLines(path, 0);
-  for (;;) {
-    const next = await gen.next();
-    if (next.done === true) return;
-    yield next.value;
+  try {
+    for (;;) {
+      const next = await gen.next();
+      if (next.done === true) return;
+      yield next.value;
+    }
+  } finally {
+    await gen.return?.({ trailing: "" });
   }
 }
 
@@ -463,8 +477,8 @@ export async function forkSession(
   let copied = 0;
   let parentEvent = "";
   let uptoEpoch = 0;
+  const it = linesOf(log);
   try {
-    const it = linesOf(log);
     let buffered: string | undefined;
     const take = async (): Promise<string | undefined> => {
       if (buffered !== undefined) {
@@ -530,6 +544,7 @@ export async function forkSession(
     };
     await out.appendFile(`${JSON.stringify(fork)}\n`);
   } finally {
+    await it.return?.(undefined);
     await out.close();
   }
   return { loc: next, copied, parentEvent };

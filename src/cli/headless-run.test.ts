@@ -1,7 +1,7 @@
 // Headless agent turn tests (tui Headless mode, agent-loop Turn state machine, event-log Resume, providers section 1).
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -22,10 +22,11 @@ import {
   INTERRUPTED_TOOL_TEXT,
   modelRequestBody,
   REFUSAL_NOT_RUN,
+  serializeTools,
   TRUNCATED_INSTRUCTION,
   TRUNCATED_NOT_RUN,
 } from "../agent/index.ts";
-import { createSdkAdapter } from "../ai/index.ts";
+import { createSdkAdapter, type SdkCall } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import { ModelRequestData } from "../schema/index.ts";
 import type { LoadedSettings, LoadInput } from "../store/index.ts";
@@ -33,7 +34,7 @@ import { openSession, readSession, sessionPaths } from "../store/index.ts";
 import type { ToolDefinition } from "../tools/index.ts";
 import { readTool } from "../tools/index.ts";
 import { exitCodeFor } from "./headless-output.ts";
-import { headlessToolDefs, resolveHeadlessModel, runHeadless } from "./headless-run.ts";
+import { type HeadlessAdapter, headlessToolDefs, resolveHeadlessModel, runHeadless } from "./headless-run.ts";
 
 const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 
@@ -3707,4 +3708,636 @@ describe("interrupts", () => {
       await dir.dispose();
     }
   }, 15_000);
+
+  // spec: AC-LOG-12
+  test("history rejection offers repair epoch, after repair next request succeeds, and log is append-only", async () => {
+    const { APICallError } = await import("ai");
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const out1 = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "step 1",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("H1"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          {
+            error: new APICallError({
+              message: "replay failed: empty text block",
+              url: "u",
+              requestBodyValues: {},
+              statusCode: 400,
+              isRetryable: false,
+            }),
+          },
+        ]),
+        toolDefs: [echoTool()],
+      });
+      expect(out1.exit).toEqual({ kind: "history-rejected" });
+      expect(exitCodeFor(out1.exit)).toBe(6);
+      expect(out1.result).toContain("--repair");
+
+      const paths = sessionPaths({ data, projectRoot: dir.root, os: testOs(), session: out1.sessionId });
+      const beforeLog = await readFile(paths.log, "utf8");
+
+      const out2 = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: true,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "step 2 repaired",
+        clock: { now: () => Date.UTC(2026, 9, 15, 0, 1) },
+        ids: sequentialIds("H2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ text: "repaired and answered successfully" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out2.exit).toEqual({ kind: "ok" });
+      expect(out2.result).toContain("repaired and answered successfully");
+
+      const afterLog = await readFile(paths.log, "utf8");
+      expect(afterLog.startsWith(beforeLog)).toBe(true);
+      const appended = afterLog.slice(beforeLog.length);
+      expect(appended).toContain('"repair"');
+      expect(appended).toContain('"repaired and answered successfully"');
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-LOG-15
+  test("resuming with narrower allowedTools still renders stored tool definitions byte-identically", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("T").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const storedToolDefs = [
+        { name: "read", description: "read file", inputSchema: { type: "object" } },
+        { name: "write", description: "write file", inputSchema: { type: "object" } },
+      ];
+      const toolsJson = serializeTools(storedToolDefs);
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("T1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "test/model",
+          systemText: "sys",
+          toolsJson,
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "first turn" } });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+
+      let capturedCall: SdkCall | undefined;
+      const baseAdapter = createSdkAdapter({
+        endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+        model: () => scriptedModel([{ text: "done" }]),
+      });
+      const adapter: HeadlessAdapter = {
+        render: (input) => {
+          capturedCall = baseAdapter.render(input);
+          return capturedCall;
+        },
+        stream: baseAdapter.stream,
+      };
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: ["read"],
+          disallowedTools: [],
+        },
+        prompt: "second turn",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("T2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter,
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(capturedCall).toBeDefined();
+      const renderedTools = capturedCall?.tools as Array<{ name: string; description: string }>;
+      expect(renderedTools.map((t) => t.name).sort()).toEqual(["read", "write"]);
+      expect(out.warnings.some((w) => w.includes("settings differ from session"))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-LOG-16
+  test("damaged log returns read-only error with fork offer; --fork continues from last valid turn", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("D").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("D1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "test/model",
+          systemText: "sys",
+          toolsJson: "[]",
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      for (let t = 1; t <= 3; t++) {
+        opened.writer.append({ type: "user.message", epoch: 0, turn: t, data: { text: `turn ${t}` } });
+        opened.writer.append({ type: "turn.end", epoch: 0, turn: t, data: { reason: "end_turn" } });
+      }
+      await opened.writer.close();
+
+      const paths = sessionPaths(loc);
+      const originalLines = (await readFile(paths.log, "utf8")).split("\n");
+      const turn3Idx = originalLines.findIndex((l) => l.includes("turn 3"));
+      originalLines[turn3Idx] = "not valid json";
+      const damagedContent = originalLines.join("\n");
+      await writeFile(paths.log, damagedContent);
+
+      const out1 = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "attempt 1",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("D2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        toolDefs: [echoTool()],
+      });
+      expect(out1.exit).toEqual({ kind: "error" });
+      expect(out1.result).toContain("is read-only");
+      expect(out1.result).toContain("--fork (from turn 2)");
+      expect(await readFile(paths.log, "utf8")).toBe(damagedContent);
+
+      const out2 = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          fork: true,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "forked turn",
+        clock: { now: () => Date.UTC(2026, 9, 15, 0, 1) },
+        ids: sequentialIds("D3"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ text: "forked turn answer" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out2.exit).toEqual({ kind: "ok" });
+      expect(out2.sessionId).not.toBe(session);
+      expect(await readFile(paths.log, "utf8")).toBe(damagedContent);
+
+      const forkedRead = await readSession({ data, projectRoot: dir.root, os: testOs(), session: out2.sessionId });
+      expect(forkedRead.events.some((e) => e.type === "session.fork")).toBe(true);
+      expect(forkedRead.events.filter((e) => e.type === "turn.end")).toHaveLength(3);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-LOG-15
+  test("resuming a session restores mode, taint and costUsd into the active turn", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("P").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("P1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "plan" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "test/model",
+          systemText: "sys",
+          toolsJson: "[]",
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({
+        type: "taint.change",
+        epoch: 0,
+        turn: 1,
+        data: { source: "src/tainted.ts", tainted: true },
+      });
+      opened.writer.append({ type: "receipt", epoch: 0, turn: 1, data: { turn: 1, cost: { sessionUsd: 1.25 } } });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+
+      let observedMode: string | undefined;
+      let observedTaint: string[] | undefined;
+      const inspectTool: ToolDefinition<unknown> = {
+        name: "inspect",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (_input, ctx) => {
+          observedMode = ctx.session.mode;
+          observedTaint = [...ctx.session.taint];
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "inspected" }] });
+        },
+      };
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          budget: 1.5,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "check state",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("P2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            calls: [{ id: "c1", name: "inspect", input: {} }],
+            usage: { promptTokens: 100_000, completionTokens: 50_000 },
+          },
+          { stop: "end_turn", text: "done" },
+        ]),
+        toolDefs: [inspectTool],
+      });
+
+      expect(observedMode).toBe("plan");
+      expect(observedTaint).toEqual(["src/tainted.ts"]);
+      expect(out.exit).toEqual({ kind: "budget" });
+      expect(out.cost).toBeGreaterThanOrEqual(1.5);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: event-log "Resume"
+  test("resuming with differing config model defaults to stored model with a warning", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("M").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("M1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "session/model-v1",
+          systemText: "sys",
+          toolsJson: "[]",
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "hello" } });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+
+      let renderedModel: string | undefined;
+      const baseAdapter = createSdkAdapter({
+        endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+        model: () => scriptedModel([{ text: "resumed ok" }]),
+      });
+      const adapter: HeadlessAdapter = {
+        render: (input) => {
+          renderedModel = input.header.model;
+          return baseAdapter.render(input);
+        },
+        stream: baseAdapter.stream,
+      };
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor("new/config-model-v2"),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "resumed turn",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("M2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter,
+        toolDefs: [echoTool()],
+      });
+
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(renderedModel).toBe("session/model-v1");
+      expect(out.warnings.some((w) => w.includes("session/model-v1") && w.includes("new/config-model-v2"))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: event-log "Resume"
+  test("resuming with differing provider exits with usage error naming both and session id", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("PM").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("PM1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "other-provider",
+          model: "other/model",
+          systemText: "sys",
+          toolsJson: "[]",
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "hello" } });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "resumed turn",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("PM2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        toolDefs: [echoTool()],
+      });
+
+      expect(out.exit).toEqual({ kind: "usage" });
+      expect(out.result).toContain('provider "nvidia" does not match session');
+      expect(out.result).toContain("other-provider");
+      expect(out.result).toContain(session);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: event-log "Resume"
+  test("cold large session emits cost estimate warning and offers /compact", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      const session = sequentialIds("C").ulid();
+      const loc = { data, projectRoot: dir.root, os: testOs(), session };
+      const opened = await openSession({
+        ...loc,
+        clock: { now: () => Date.UTC(2026, 9, 14) },
+        ids: sequentialIds("C1"),
+        pid: 1,
+        host: "h",
+        secrets: [],
+      });
+      if (opened.mode !== "write") throw new Error("could not seed session");
+      opened.writer.append({ type: "session.start", epoch: 0, turn: null, data: { mode: "default" } });
+      opened.writer.append({
+        type: "epoch.start",
+        epoch: 0,
+        turn: null,
+        data: {
+          epoch: 0,
+          reason: "session-start",
+          provider: "nvidia",
+          model: "test/model",
+          systemText: "s".repeat(20_000),
+          toolsJson: JSON.stringify([{ name: "echo", description: "d".repeat(20_000), inputSchema: {} }]),
+          thinking: { mode: "off" },
+          promptVersion: "0".repeat(64),
+        },
+      });
+      opened.writer.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "msg".repeat(10_000) } });
+      opened.writer.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+      await opened.writer.close();
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "new turn",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("C2"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ text: "cold large ok" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("cold large session") && w.includes("/compact"))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
 });

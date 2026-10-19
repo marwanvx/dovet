@@ -237,7 +237,7 @@ describe("history rejection and the repair epoch", () => {
     expect(isHistoryRelated({ kind: "server", retryable: true, message: "history broke" })).toBe(false);
   });
 
-  test("repair normalization drops reasoning and empty text, and an emptied turn vanishes", () => {
+  test("repair normalization drops reasoning and empty text, and drops unpaired tool calls when paired set is given", () => {
     const stored = {
       provider: "nvidia",
       protocol: "openai-chat" as const,
@@ -248,11 +248,16 @@ describe("history rejection and the repair epoch", () => {
         { kind: "reasoning" as const, summary: "hmm", replay: undefined },
         { kind: "text" as const, text: "  \n " },
         { kind: "text" as const, text: "keep" },
+        { kind: "tool_call" as const, id: "c1", name: "read", inputJson: "{}" },
+        { kind: "tool_call" as const, id: "c2", name: "write", inputJson: "{}" },
       ],
       usage: {},
       finishReason: "stop",
     };
-    expect(normalizeForRepair(stored)?.parts).toEqual([{ kind: "text", text: "keep" }]);
+    expect(normalizeForRepair(stored, new Set(["c1"]))?.parts).toEqual([
+      { kind: "text", text: "keep" },
+      { kind: "tool_call", id: "c1", name: "read", inputJson: "{}" },
+    ]);
     expect(normalizeForRepair({ ...stored, parts: stored.parts.slice(0, 2) })).toBeNull();
   });
 
@@ -266,6 +271,8 @@ describe("history rejection and the repair epoch", () => {
     const resumed = await resumeSession(loc);
     const w2 = await writer(loc, "2");
     const ev = repairEpochEvent(resumed.state);
+    expect(ev.epoch).toBe(resumed.state.epoch + 1);
+    expect((ev.data as { reason: string }).reason).toBe("repair");
     w2.append({ type: "epoch.start", epoch: ev.epoch, turn: null, data: ev.data });
     await w2.close();
     const after = await readFile(log, "utf8");
@@ -280,6 +287,52 @@ describe("history rejection and the repair epoch", () => {
     expect(() =>
       validateTranscriptItems([{ kind: "assistant", stored: { parts: [{ kind: "reasoning", summary: "x" }] } }]),
     ).toThrow("only reasoning");
+    expect(() => validateTranscriptItems([{ kind: "user", parts: [{ kind: "padding" }] }])).toThrow("padding block");
+    expect(() =>
+      validateTranscriptItems([
+        {
+          kind: "user",
+          parts: [
+            {
+              kind: "tool_result",
+              content: [{ kind: "object", text: "invalid" }],
+            },
+          ],
+        },
+      ]),
+    ).toThrow("non-text tool output");
+  });
+
+  test("a sidecar with a mismatched epochEventId falls back to full scanning", async () => {
+    const loc = await location();
+    const w = await writer(loc);
+    w.append({
+      type: "epoch.start",
+      epoch: 0,
+      turn: null,
+      data: {
+        epoch: 0,
+        reason: "session-start",
+        provider: "p",
+        model: "m",
+        systemText: "s",
+        toolsJson: "[]",
+        thinking: { mode: "off" },
+        promptVersion: "a".repeat(64),
+      },
+    });
+    w.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "hello" } });
+    w.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+    await w.close();
+    const first = await resumeSession(loc);
+    expect(first.fastPath).toBe(false);
+    const { meta } = sessionPaths(loc);
+    const sidecar = JSON.parse(await readFile(meta, "utf8")) as Record<string, unknown>;
+    sidecar.epochEventId = "01CORRUPTEDEVENTID00000000";
+    await writeFile(meta, `${JSON.stringify(sidecar)}\n`);
+    const second = await resumeSession(loc);
+    expect(second.fastPath).toBe(false);
+    expect(second.state).toEqual(first.state);
   });
 });
 

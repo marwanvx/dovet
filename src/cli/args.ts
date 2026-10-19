@@ -10,6 +10,7 @@ export type HeadlessArgs = {
   resume?: string;
   continued: boolean;
   repair: boolean;
+  fork?: boolean;
   budget?: number;
   maxRequests?: number;
   allowedTools: string[];
@@ -47,6 +48,7 @@ export function parseHeadlessArgs(argv: readonly string[]): ParseResult {
     noSessionPersistence: false,
     continued: false,
     repair: false,
+    fork: false,
     allowedTools: [],
     disallowedTools: [],
   };
@@ -64,6 +66,7 @@ export function parseHeadlessArgs(argv: readonly string[]): ParseResult {
     else if (a === "--no-session-persistence") out.noSessionPersistence = true;
     else if (a === "--continue" || a === "-c") out.continued = true;
     else if (a === "--repair") out.repair = true;
+    else if (a === "--fork") out.fork = true;
     else if (a === "--output") {
       const v = need(argv, i, a);
       if (typeof v !== "string") return v;
