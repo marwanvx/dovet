@@ -526,6 +526,52 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: tui "Headless mode"
+  test("a turn stopped by the request guard still reports what its requests used and cost", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "json",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          maxRequests: 2,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "go",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("G"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter(
+          [1, 2, 3].map((i) => ({
+            stop: "tool_use" as const,
+            calls: [{ id: `c${i}`, name: "echo", input: { text: `t${i}` } }],
+            usage: { promptTokens: 1000, completionTokens: 100 },
+          })),
+        ),
+        toolDefs: [echoTool()],
+      });
+      expect(out.exit).toEqual({ kind: "guard" });
+      expect(out.usage).toEqual({ promptTokens: 2000, completionTokens: 200 });
+      expect(out.cost).toBe(0.0052);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: AC-PERM-19
   test("a deny rule written mid-session blocks the next call; removing it unblocks", async () => {
     const dir = await tempProject({ ".dovet/settings.local.json": '{ "permissions": { "deny": [] } }' });
