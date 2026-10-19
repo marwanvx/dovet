@@ -455,14 +455,14 @@ export function createBashTool(opts: {
       const effects = await carryOver(ctx, cwdFile, notes);
       const taint = sandboxed ? taintSourceForCommand(input.command) : undefined;
       // Denied traffic never reached the host, so a blocked host does not taint.
-      if (
-        taint !== undefined &&
-        !sandboxViolations
-          .join("\n")
-          .toLowerCase()
-          .includes(taint.split(":")[1]?.trim() ?? "\0")
-      ) {
-        effects.push({ kind: "taint", source: taint });
+      if (taint !== undefined) {
+        const host = taint.split(":")[1]?.trim().toLowerCase();
+        const escaped = host?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = escaped ? new RegExp(`(^|[^a-z0-9_.-])${escaped}([^a-z0-9_.-]|$)`, "i") : undefined;
+        const blocked = pattern !== undefined && sandboxViolations.some((v) => pattern.test(v));
+        if (!blocked) {
+          effects.push({ kind: "taint", source: taint });
+        }
       }
       const fileChanges: NonNullable<NonNullable<ToolOutput["meta"]>["fileChanges"]> = [];
       if (before !== undefined) {

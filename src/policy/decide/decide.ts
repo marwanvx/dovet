@@ -310,10 +310,7 @@ function fsCommand(s: Subcommand): boolean {
 const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc"]);
 
 function hasDynamicName(subs: Subcommand[]): boolean {
-  return subs.some((s) => {
-    const name = program(unwrapCmd(s).argv[0] ?? "");
-    return DYNAMIC_NAMES.has(name);
-  });
+  return subs.some((s) => variants(unwrapCmd(s).argv).some((v) => DYNAMIC_NAMES.has(program(v[0] ?? ""))));
 }
 
 function shellDefault(

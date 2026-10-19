@@ -93,9 +93,27 @@ export function shouldRefuseLocalHost(host: string, allowedDomains?: readonly st
   return true;
 }
 
-/** Data from an arbitrary host is as untrusted as a fetched page: registry and loopback names never taint. */
+/** True for a loopback IP literal (127/8, ::1, or mapped ::ffff:127.). */
+export function isLoopbackIpLiteral(host: string): boolean {
+  const bare = stripPort(host);
+  const clean = bare.replace(/%.*$/, "");
+  const family = isIP(clean);
+  if (family === 4) {
+    const parts = ipv4Parts(clean);
+    if (parts === undefined) return false;
+    const [a = 0] = parts;
+    return a === 127;
+  }
+  if (family === 6) {
+    const lower = clean.toLowerCase();
+    return lower === "::1" || lower.startsWith("::ffff:127.");
+  }
+  return false;
+}
+
+/** Data from an arbitrary host is as untrusted as a fetched page: registry and loopback targets never taint. */
 export function hostNeedsTaint(host: string): boolean {
-  if (isLoopbackName(host)) return false;
+  if (isLoopbackName(host) || isLoopbackIpLiteral(host)) return false;
   return !isRegistryHost(host);
 }
 

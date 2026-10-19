@@ -1,7 +1,9 @@
 // M2-02 network helpers failing tests first (permissions §7.4): registry, local refusal, taint trigger.
 import { describe, expect, test } from "bun:test";
 import {
+  DEFAULT_ALLOWED_DOMAINS,
   extractHosts,
+  type HostAskMode,
   hostNeedsTaint,
   isLoopbackName,
   isRegistryHost,
@@ -43,6 +45,31 @@ describe("taint trigger from proxy hosts", () => {
     expect(taintSourceForCommand("curl https://registry.npmjs.org/a")).toBeUndefined();
     expect(extractHosts("curl https://a.example/a https://b.example/b")).toEqual(["a.example", "b.example"]);
   });
+  test("default allowed domains list matches permissions §7.4 and excludes github.com", () => {
+    expect(DEFAULT_ALLOWED_DOMAINS).toEqual([
+      "registry.npmjs.org",
+      "registry.yarnpkg.com",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "crates.io",
+      "static.crates.io",
+      "index.crates.io",
+      "proxy.golang.org",
+      "sum.golang.org",
+      "rubygems.org",
+      "repo.maven.apache.org",
+      "api.nuget.org",
+    ]);
+    expect(isRegistryHost("github.com")).toBe(false);
+    expect(hostNeedsTaint("github.com")).toBe(true);
+  });
+  test("loopback IP literals do not taint; link-local still taints", () => {
+    expect(hostNeedsTaint("127.0.0.1")).toBe(false);
+    expect(hostNeedsTaint("127.0.0.1:3000")).toBe(false);
+    expect(hostNeedsTaint("::1")).toBe(false);
+    expect(hostNeedsTaint("[::1]:8080")).toBe(false);
+    expect(hostNeedsTaint("169.254.169.254")).toBe(true);
+  });
 });
 
 // spec: AC-PERM-11
@@ -70,7 +97,27 @@ describe("proxy allowlist asker", () => {
     expect(
       await makeHostAsker({ ...base, mode: "default", strictAllowlist: true })({ host: "new4.example", port: 443 }),
     ).toBe(false);
+    expect(asked).toBe(1);
     expect(await makeHostAsker({ ...base, mode: "default" })({ host: "169.254.169.254", port: 80 })).toBe(false);
+  });
+  test("makeHostAsker resolves mode dynamically per call via getter", async () => {
+    let asked = 0;
+    let m: HostAskMode = "default";
+    const asker = makeHostAsker({
+      mode: () => m,
+      allowedDomains: ["registry.npmjs.org"],
+      deniedDomains: [],
+      strictAllowlist: false,
+      ask: async () => {
+        asked++;
+        return true;
+      },
+    });
+    expect(await asker({ host: "new1.example", port: 443 })).toBe(true);
+    expect(asked).toBe(1);
+    m = "dontAsk";
+    expect(await asker({ host: "new2.example", port: 443 })).toBe(false);
+    expect(asked).toBe(1);
   });
   test("an explicitly allowed local IP:port is allowed; other ports are refused", async () => {
     const ask = makeHostAsker({

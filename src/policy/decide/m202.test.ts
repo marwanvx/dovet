@@ -39,7 +39,7 @@ const rulesFor = (lists: { allow?: string[]; ask?: string[]; deny?: string[] } =
   const texts = (xs: string[] = []) => xs.map((text) => ({ text }));
   return loadRules(
     [{ file: "/p/s.json", baseDir: root, allow: texts(lists.allow), ask: texts(lists.ask), deny: texts(lists.deny) }],
-    { os, home: "/home/u", canonicalize: (p) => p },
+    { os, home: join(root, "..", "home"), canonicalize: (p) => canonicalizePath(p, root, os) },
   ).rules;
 };
 const state = (mode: PermissionMode, lists: Parameters<typeof rulesFor>[0] = {}, over: Partial<State> = {}): State => ({
@@ -108,6 +108,13 @@ describe("AC-PERM-23 lower analysis bar under sandbox auto-allow", () => {
     const st = state("default", {}, { sandboxAutoAllow: true });
     expect(sh('eval "$x"', st, true).behavior).toBe("ask");
     expect(sh("$cmd args", st, true).behavior).toBe("ask");
+    expect(sh('sh -c "$x"', st, true).behavior).toBe("ask");
+    expect(sh('FOO=bar eval "$x"', st, true).behavior).toBe("ask");
+    expect(sh("FOO=bar source ./setup.sh", st, true).behavior).toBe("ask");
+    expect(sh("FOO=bar exec curl https://example.com", st, true).behavior).toBe("ask");
+    expect(sh("cat list.txt | xargs", st, true).behavior).toBe("ask");
+    expect(sh("xargs -0", st, true).behavior).toBe("ask");
+    expect(sh("echo git push | xargs", st, true).behavior).toBe("ask");
     expect(sh("echo hi | xargs $cmd", st, true).behavior).toBe("ask");
     expect(sh("printf '%s\\n' a | xargs grep -l foo", st, true).behavior).toBe("allow");
     const denied = state("default", { deny: ["Bash(rm *)"] }, { sandboxAutoAllow: true });
@@ -125,6 +132,20 @@ describe("AC-PERM-27 taint triggers and effects", () => {
   test("sensitive-file read prompts with the tainted banner", () => {
     const tainted = state("default", {}, { tainted: true, taintSource: "WebFetch: example.com" });
     const d = decide({ tool: "Read", action: { kind: "read", paths: [join(root, ".env")] } }, tainted);
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toContain("tainted");
+  });
+  test("taint re-prompts a sensitive path that already has a pre-taint grant", () => {
+    const envPath = join(root, ".env");
+    const st0 = state("default");
+    const req = { tool: "Read", action: { kind: "read" as const, paths: [envPath] } };
+    const g = suggestGrant(req, decide(req, st0), st0);
+    expect(g).toBeDefined();
+    const allow = g?.rules ?? [];
+    const untainted = state("default", { allow });
+    expect(decide(req, untainted).behavior).toBe("allow");
+    const tainted = state("default", { allow }, { tainted: true, taintSource: "WebFetch: example.com" });
+    const d = decide(req, tainted);
     expect(d.behavior).toBe("ask");
     expect(d.reason).toContain("tainted");
   });

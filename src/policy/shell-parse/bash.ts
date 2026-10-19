@@ -33,6 +33,23 @@ const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
 
+const XARGS_VALUED = new Set(["-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"]);
+
+function xargsCommandWord(args: Word[]): Word | undefined {
+  let i = 0;
+  while (i < args.length) {
+    const text = args[i]?.text ?? "";
+    if (text === "--") return args[i + 1];
+    if (text.startsWith("-") && text.length > 1) {
+      if (XARGS_VALUED.has(text)) i += 2;
+      else i += 1;
+    } else {
+      return args[i];
+    }
+  }
+  return undefined;
+}
+
 export function walkBash(root: Node, walk: Walk, st: State): void {
   const { ctx } = walk;
 
@@ -211,9 +228,17 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     }
     sub.argv.push(name.text, ...args.map((a) => a.text));
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
-    if (name.text === "xargs" && args.some((a) => !a.literal || a.values !== undefined)) {
-      ctx.state.literalNames = false;
-      ctx.fail("xargs runs a computed command");
+    if (name.text === "xargs") {
+      const cmd = xargsCommandWord(args);
+      if (
+        cmd === undefined ||
+        !cmd.literal ||
+        cmd.values !== undefined ||
+        args.some((a) => !a.literal || a.values !== undefined)
+      ) {
+        ctx.state.literalNames = false;
+        ctx.fail("xargs runs a computed command");
+      }
     }
     if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
     if (SHELLS.has(name.text)) shellScript(args, st);
