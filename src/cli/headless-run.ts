@@ -690,7 +690,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             isDirectory,
           });
           const d = decide(
-            { tool: name, action: { kind: "shell", analysis, sandboxed: desc.sandboxed } },
+            {
+              tool: name,
+              action: { kind: "shell", analysis, sandboxed: desc.sandboxed },
+              input: { command: desc.command, dangerouslyDisableSandbox: desc.unsandboxedRetry },
+            },
             { mode, rules, env: policyEnv },
           );
           return d.behavior === "allow"

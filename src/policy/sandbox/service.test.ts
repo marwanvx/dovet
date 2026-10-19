@@ -1,5 +1,8 @@
 // SandboxService tests: health gating, config hygiene, status line (AC-PERM-09, 10, 24, 25, 28).
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tempProject } from "../../../test/helpers/index.ts";
 import { Settings } from "../../schema/index.ts";
 import { createSandboxService, fakeSandboxService, sandboxConfigFor, sandboxStatus } from "./service.ts";
 
@@ -185,6 +188,70 @@ describe("per-command denies", () => {
     expect(denies).toContain("/work/b/.dovet/settings.json");
     expect(new Set(denies).size).toBe(denies.length);
   });
+
+  test("wrap resolves late-appearing symlinks for both denyWrite and denyRead after ready", async () => {
+    let captured: { denyWrite?: string[]; denyRead?: string[] } | undefined;
+    const dir = await tempProject({});
+    const realSettings = join(dir.root, "real-settings.json");
+    const symlinkSettings = join(dir.root, ".dovet", "settings.json");
+    mkdirSync(join(dir.root, ".dovet"), { recursive: true });
+    writeFileSync(realSettings, "{}");
+
+    const realAws = join(dir.root, "real-aws");
+    mkdirSync(realAws, { recursive: true });
+    const symlinkAws = join(dir.root, "mock-home", ".aws");
+    mkdirSync(join(dir.root, "mock-home"), { recursive: true });
+
+    const svc = createSandboxService({
+      os: "linux" as const,
+      srtDir: "install/libexec/srt",
+      settings: Settings.parse({
+        sandbox: {
+          filesystem: {
+            denyRead: [symlinkAws],
+          },
+        },
+      }),
+      workingDirs: [dir.root],
+      sessionId: "late-symlink-test",
+      configDir: "/cfg",
+      dataDir: "/data",
+      home: join(dir.root, "mock-home"),
+      starter: (async () => ({
+        checkDependencies: () => ({ errors: [], warnings: [] }),
+        getLinuxGlobPatternWarnings: () => [],
+        getSandboxViolationStore: () => ({ getViolations: () => [] }),
+        wrapWithSandbox: async (
+          _c: string,
+          _b: unknown,
+          custom?: { filesystem?: { denyWrite?: string[]; denyRead?: string[] } },
+        ) => {
+          captured = {
+            ...(custom?.filesystem?.denyWrite !== undefined ? { denyWrite: custom.filesystem.denyWrite } : {}),
+            ...(custom?.filesystem?.denyRead !== undefined ? { denyRead: custom.filesystem.denyRead } : {}),
+          };
+          return `wrapped:${_c}`;
+        },
+        cleanupAfterCommand: () => {},
+      })) as never,
+    });
+    await svc.ready;
+
+    symlinkSync(realSettings, symlinkSettings, process.platform === "win32" ? "file" : undefined);
+    symlinkSync(realAws, symlinkAws, process.platform === "win32" ? "junction" : undefined);
+
+    await svc.wrap({ argv: ["/bin/bash", "x"], cwd: dir.root, env: {} }, { unsandboxed: false });
+
+    const writes = captured?.denyWrite ?? [];
+    expect(writes).toContain(symlinkSettings.replace(/\\/g, "/"));
+    expect(writes).toContain(realSettings.replace(/\\/g, "/"));
+
+    const reads = captured?.denyRead ?? [];
+    expect(reads).toContain(symlinkAws.replace(/\\/g, "/"));
+    expect(reads).toContain(realAws.replace(/\\/g, "/"));
+
+    await dir.dispose();
+  });
 });
 
 // spec: AC-PERM-25
@@ -192,5 +259,39 @@ describe("violations passthrough", () => {
   test("a fake service passes violations through even when the command succeeds", () => {
     const svc = fakeSandboxService("on", "bubblewrap", ["blocked host: example.com (denied)"]);
     expect(svc.violations(Date.now() - 1000)).toEqual(["blocked host: example.com (denied)"]);
+  });
+
+  test("violations(since) filters entries from violation store by timestamp on a real service", async () => {
+    const t0 = 1000;
+    const t1 = 2000;
+    const t2 = 3000;
+    const violations = [
+      { line: "first violation", timestamp: new Date(t0) },
+      { line: "second violation", timestamp: new Date(t1) },
+      { line: "third violation", timestamp: new Date(t2) },
+    ];
+    const svc = createSandboxService({
+      os: "linux" as const,
+      srtDir: "install/libexec/srt",
+      settings: Settings.parse({}),
+      workingDirs: ["/work"],
+      sessionId: "violations-test",
+      configDir: "/cfg",
+      dataDir: "/data",
+      home: "/home/u",
+      starter: (async () => ({
+        checkDependencies: () => ({ errors: [], warnings: [] }),
+        getLinuxGlobPatternWarnings: () => [],
+        getSandboxViolationStore: () => ({ getViolations: () => violations }),
+        wrapWithSandbox: async () => "wrapped",
+        cleanupAfterCommand: () => {},
+      })) as never,
+    });
+    await svc.ready;
+
+    expect(svc.violations(t0)).toEqual(["first violation", "second violation", "third violation"]);
+    expect(svc.violations(t1)).toEqual(["second violation", "third violation"]);
+    expect(svc.violations(t2)).toEqual(["third violation"]);
+    expect(svc.violations(t2 + 1)).toEqual([]);
   });
 });

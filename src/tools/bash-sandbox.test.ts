@@ -12,6 +12,7 @@ import {
   loadRules,
   loadShellParsers,
   type RuleSet,
+  ruleSetFromSettings,
   type ShellParsers,
   sandboxStatus,
 } from "../policy/index.ts";
@@ -132,6 +133,30 @@ describe("sandbox auto-allow", () => {
     expect(sandboxedOf(tool, { command: "Get-ChildItem C:\\work" }, on)).toBe(true);
     expect(sandboxedOf(tool, { command: "Get-ChildItem C:\\work", dangerouslyDisableSandbox: true }, on)).toBe(false);
   });
+
+  test("failIfUnavailable refuses when sandbox failed to start, but allows unsandboxed when deliberately disabled", async () => {
+    if (process.platform === "win32") return;
+    await ready;
+    const cwd = await workspace();
+    const tool = createBashTool({ tmpDir: await workspace() });
+    const failedCtx: ToolContext = {
+      ...context(cwd),
+      sandbox: fakeSandboxService("off", "none"),
+      settings: Settings.parse({ sandbox: { failIfUnavailable: true } }),
+    };
+    const disabledCtx: ToolContext = {
+      ...context(cwd),
+      sandbox: fakeSandboxService("off", "none"),
+      settings: Settings.parse({ sandbox: { enabled: false, failIfUnavailable: true } }),
+    };
+    const failedRes = await tool.run({ command: "echo hi" }, failedCtx);
+    expect(failedRes.status).toBe("error");
+    expect(text(failedRes)).toContain("failIfUnavailable is true");
+
+    const disabledRes = await tool.run({ command: "echo hi" }, disabledCtx);
+    expect(disabledRes.status).toBe("ok");
+    expect(text(disabledRes)).toContain("hi");
+  });
 });
 
 // spec: AC-PERM-10
@@ -158,6 +183,104 @@ describe("unsandboxed retry", () => {
       settings: Settings.parse({}),
     };
     expect(sandboxedOf(tool, { command: "npm test", dangerouslyDisableSandbox: true }, looseCtx)).toBe(false);
+  });
+
+  test("Bash(dangerouslyDisableSandbox:true) ask rule forces prompt even in bypassPermissions", async () => {
+    await ready;
+    const cwd = await workspace();
+    const tool = createBashTool({ tmpDir: await workspace() });
+    const { rules } = ruleSetFromSettings({
+      loaded: {
+        settings: {},
+        rules: {
+          allow: [],
+          ask: [{ rule: "Bash(dangerouslyDisableSandbox:true)", source: "user", file: "/u/.dovet/settings.json" }],
+          deny: [],
+        },
+        warnings: [],
+        notices: [],
+        files: [],
+      },
+      env: {
+        os: process.platform as "linux",
+        home: "/home/u",
+        cwd,
+        workingDirs: [cwd],
+        canonicalize: (p: string) => p,
+        pid: 1,
+        ppid: 0,
+        selfNames: ["dovet"],
+      },
+      parsers,
+      ruleContext: { os: process.platform as "linux", home: "/home/u", canonicalize: (p: string) => p },
+      configDir: "/cfg",
+    });
+    const bypassCtx: ToolContext = {
+      ...context(cwd),
+      settings: Settings.parse({}),
+      policy: {
+        mode: "bypassPermissions",
+        rules,
+        env: {
+          os: process.platform as "linux",
+          home: "/home/u",
+          cwd,
+          workingDirs: [cwd],
+          canonicalize: (p: string) => p,
+          pid: 1,
+          ppid: 0,
+          selfNames: ["dovet"],
+        },
+        parsers,
+        sandboxed: true,
+      },
+      sandbox: fakeSandboxService("on", "bubblewrap"),
+    };
+    const descNormal = tool.describeAction?.({ command: "ls" }, bypassCtx);
+    const descRetry = tool.describeAction?.({ command: "ls", dangerouslyDisableSandbox: true }, bypassCtx);
+    if (descNormal?.kind !== "shell" || descRetry?.kind !== "shell") throw new Error("not shell");
+    expect(descNormal.unsandboxedRetry).toBe(false);
+    expect(descRetry.unsandboxedRetry).toBe(true);
+
+    const st = {
+      mode: "bypassPermissions" as const,
+      rules,
+      env: {
+        os: process.platform as "linux",
+        home: "/home/u",
+        cwd,
+        workingDirs: [cwd],
+        canonicalize: (p: string) => p,
+        pid: 1,
+        ppid: 0,
+        selfNames: ["dovet"],
+      },
+    };
+    const analysis = analyzeShell(parsers, "bash", "ls", {
+      cwd,
+      workingDirs: [cwd],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    const dNormal = decide(
+      {
+        tool: "Bash",
+        action: { kind: "shell", analysis, sandboxed: descNormal.sandboxed },
+        input: { command: "ls", dangerouslyDisableSandbox: descNormal.unsandboxedRetry },
+      },
+      st,
+    );
+    const dRetry = decide(
+      {
+        tool: "Bash",
+        action: { kind: "shell", analysis, sandboxed: descRetry.sandboxed },
+        input: { command: "ls", dangerouslyDisableSandbox: descRetry.unsandboxedRetry },
+      },
+      st,
+    );
+    expect(dNormal.behavior).toBe("allow");
+    expect(dRetry.behavior).toBe("ask");
   });
 });
 

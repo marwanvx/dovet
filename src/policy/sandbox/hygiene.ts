@@ -1,7 +1,7 @@
 // Sandbox configuration hygiene (permissions §7.5b).
 import { lstat, readlink } from "node:fs/promises";
 import { dirname as nativeDirname, resolve as nativeResolve } from "node:path";
-import { dirname, isAbsolute, join, resolve } from "node:path/posix";
+import { dirname, isAbsolute, join } from "node:path/posix";
 import {
   canonicalCmdlet,
   needsExactRule,
@@ -112,6 +112,8 @@ const STARTUP_FILES = [
   ".envrc",
 ];
 
+const isAbs = (p: string): boolean => isAbsolute(p) || /^[A-Za-z]:[/\\]/.test(p);
+
 /** Anchored sandbox write denies (permissions §7.2): `.git/hooks` and `.git/config`, never bare `hooks/` or `config/`. */
 export function sandboxProtectedDenyWrite(
   workingDirs: readonly string[],
@@ -125,11 +127,11 @@ export function sandboxProtectedDenyWrite(
   const out = new Set<string>();
   const parentsOf = (dir: string): string[] => {
     const out: string[] = [];
-    let cur = resolve(dir);
+    let cur = dir.replace(/\\/g, "/");
     for (let i = 0; i < 20; i++) {
       out.push(cur);
       const parent = dirname(cur);
-      if (parent === cur) break;
+      if (parent === cur || /^[A-Za-z]:\/?$/.test(cur) || cur === "/") break;
       cur = parent;
     }
     return out;
@@ -153,8 +155,8 @@ export function sandboxProtectedDenyWrite(
     out.add(join(wd, "objects"));
     out.add(join(wd, "refs"));
   }
-  if (isAbsolute(cfg)) out.add(cfg);
-  if (isAbsolute(data)) out.add(data);
+  if (isAbs(cfg)) out.add(cfg);
+  if (isAbs(data)) out.add(data);
   return [...out];
 }
 
@@ -173,8 +175,8 @@ export async function expandProtectedSymlinks(paths: readonly string[]): Promise
       if (st.isSymbolicLink()) {
         // Native fs semantics: resolve the target the same way the OS does so the
         // returned string matches what callers passed in on every platform.
-        const target = nativeResolve(nativeDirname(p), await readlink(p));
-        out.add(p);
+        const resolved = nativeResolve(nativeDirname(p), await readlink(p));
+        const target = p.includes("/") && !p.includes("\\") ? resolved.replace(/\\/g, "/") : resolved;
         out.add(target);
       }
     } catch {}

@@ -48,6 +48,15 @@ describe("sandbox hygiene", () => {
     expect(denies).toContain("/work/proj/.mcp.json");
   });
 
+  test("protected entries handle Windows drive paths without escaping root", () => {
+    const denies = sandboxProtectedDenyWrite(["C:\\work\\proj"], "C:\\cfg", "C:\\data");
+    expect(denies).toContain("C:/cfg");
+    expect(denies).toContain("C:/data");
+    expect(denies).toContain("C:/work/proj/.git/hooks");
+    expect(denies).toContain("C:/.dovet");
+    expect(denies.some((p) => p.startsWith("."))).toBe(false);
+  });
+
   test("a linked worktree allows objects, refs and logs but denies hooks and config", () => {
     const denies = worktreeCommonDenies("/git/common");
     expect(denies).toEqual(["/git/common/hooks", "/git/common/config"]);
