@@ -479,3 +479,9 @@ Done (PR #129, CI green on three OSes after Windows retries for instruction-file
 Learned: when a suite probes multiple endpoints in sequence, individual per-request timeouts can accumulate to exceed test and runner deadlines in all-hang outage scenarios; bounding the cumulative phase with an explicit budget ensures the test satisfies graceful skip semantics rather than timing out the CI job. The Windows CI runner failed on the known instruction-files flake on the initial runs and passed green on rerun.
 
 Next: M2-05.
+
+## 2026-10-19 — fix: M1-31 re-review
+
+No fixes needed: the re-review of M1-31 (PR #103) surfaced nothing above a nit for this item. M1-31 was the exit-check task that compared M1 exit evidence with proof, discovered the missing headless turn, and carved it out as new task M1-32 (since implemented and shipped in #104). The only minor noted is daylight between the wording in `roadmap.md:17` ("10 real multi-turn coding tasks complete end-to-end headless on Linux") and M1-32's fixture-backed proof (live runs require `NVIDIA_API_KEY`, which is available in nightly CI only; running live tasks locally is unavailable, and softening roadmap.md requires owner approval). The only other finding is a pure nit in QUESTIONS.md Q50 answer item 8 referencing M1-31 instead of M1-32, which is pre-existing and already addressed in Q52 item 10. Changed nothing in code. Re-verified on today's main: all 181 targeted exit-evidence tests pass across the contract suite, binary SDK replay, session API, plan mode, transcript building, loop cache/ordering, and policy corpora (compat 200/200, bypass, false-prompt).
+
+Next: M2-05.
