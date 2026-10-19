@@ -23,6 +23,7 @@ In this order; each one is the whole session's work if it applies:
 1. `main` is red in CI → fix it (smallest change; a regression test if it was a real bug).
 2. Uncommitted or half-done work from a crashed session → finish it or revert it, and say which in `PROGRESS.md`.
 3. An open PR of yours with review findings or failing CI → fix it (step 6–7).
+4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the oldest one (a regression test first), then move it to "Fixed" with the PR number.
 
 ### 3. Apply the owner's overrides
 You answer your own questions (step 6), so there is normally nothing to wait for. `bun run next` lists any answered question where the owner added an `**Override (owner, <date>):**` line. Apply each override where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes), change the code that followed the old answer, and add an `**Override applied:**` line saying what changed. Anything left under "Waiting for the owner" is something only the owner can do (an account, money, a key); don't start work that depends on it.
@@ -47,7 +48,34 @@ Set its `Status:` to `in-progress` and start a branch `task/<id>`.
 **When the spec doesn't say:** don't guess and don't go searching beyond the task's Read list for an answer that isn't there. **Answer it yourself.** Choose the best answer (the one that follows the product principles and the surrounding specs, and is safest and easiest to change later). Write an entry under "Answered" in `QUESTIONS.md`: what was missing, why it matters, your answer and why. Put the answer into the spec in a separate spec-change PR ([dev-workflow](dev-workflow.md)), or, while that PR is pending, build it that way and mark the code `ASSUMPTION (QUESTIONS Qn)`. Never set a task to `blocked` or stop just to wait for the owner. Only if the answer needs something no agent can provide (an account, money, a secret, a physical device) does the question go under "Waiting for the owner"; then build everything that doesn't depend on it.
 
 ### 7. Review with fresh eyes
-Spawn a **fresh reviewer** (a subagent with no memory of your work; in Claude Code, the `reviewer` agent in `.claude/agents/reviewer.md`, which always runs on the strongest model even when a cheaper one builds) with: the task, its spec sections and the diff. It checks every criterion has a real test, and proves it: for each criterion it **breaks the code that implements it** (removes the check, flips the condition, returns early), confirms the tagged test now fails, then restores the code. A test that still passes with the feature broken is a finding. It also checks behavior matches the spec line by line, the module and dependency rules of [architecture](../specs/architecture.md) hold, and nothing outside the task changed. Fix its findings; repeat until it has none above "minor". Without subagents: open the PR and leave the review to the next session (step 2.3).
+Spawn **fresh reviewers** (subagents with no memory of your work), **in parallel**, each with a **different lens**, so no single reviewer runs out of room and no gap falls between two reviewers looking at the same thing. In Claude Code this is the `reviewer` agent in `.claude/agents/reviewer.md`, which always runs on the strongest model even when a cheaper one builds; the request names its lens. Give each of them: the task, its spec sections, the diff and [REVIEW.md](../../REVIEW.md), which says what "broken" means here and how to report.
+
+**Pick the tier from the diff, not from who wrote it:**
+
+| Tier | When | Reviewers |
+|---|---|---|
+| `quick` | Only docs, Markdown, comments or test data changed | One reviewer, `scope` lens |
+| `standard` | Any other change | `tests` and `spec`, plus `scope` when it touches several modules |
+| `deep` | The diff touches a high-risk path listed in REVIEW.md | All four lenses: `tests`, `spec`, `scope`, `security` |
+
+The lenses, split between them:
+
+| Lens | Owns |
+|---|---|
+| `tests` | Every criterion has a real test, proved by breaking the code: for each criterion it **breaks the code that implements it** (removes the check, flips the condition, returns early), confirms the tagged test (`// spec: AC-xx-yy`) now fails, then restores the code. A test that still passes with the feature broken is a **blocker**. |
+| `spec` | Behavior matches the spec line by line; the rules in `AGENTS.md` and [architecture](../specs/architecture.md) hold (module boundaries, state ownership, only `cli/main.ts` touches `process.*`, no `any`, zod at boundaries, no runtime dependency outside ADR-15, provider-neutral); the "Few comments" rule. |
+| `scope` | Nothing outside the task's **Build** list changed; docs claim only what was run; `bun run check` passes; a new user-visible feature updates `docs/product/user-journeys.md`; PR under ~400 changed lines. |
+| `security` | The ways a change breaks Dovet's promise that REVIEW.md lists: guards walked around, secrets leaked, a record that lies, OS-specific paths; also floating promises, races at turn boundaries, and child processes or listeners left behind on `SIGINT`/`SIGTERM`. It tries the bypass, it doesn't only read. |
+
+Every reviewer snapshots `git status --porcelain` and `git diff` before it mutates anything, and restores every file it touched before it reports: a reviewer that leaves the tree dirty has failed even if it found nothing.
+
+**Rounds converge; they don't loop.** An agent acts on every finding, so a noisy review makes another commit and another round.
+1. **Confirm before fixing.** Merge the findings, and for each one above "minor", check its evidence yourself (open the `file:line`, run the input). Drop what doesn't hold up and say why in the PR; fix the rest, every instance of its class.
+2. **Pre-existing findings are logged, not fixed here.** Add each one to [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) with its severity, `file:line` and the task that found it. Step 2.4 fixes them in a later session.
+3. **Later rounds read only what changed.** Round 2 and 3 get the diff since the previous round plus the list of findings already fixed or dropped, and report only new problems in that diff.
+4. **At most three rounds.** If round 3 still reports something above "minor", the approach is wrong, not the last line: write what keeps failing in the progress entry's `Learned:` line, leave the PR open, and make "rethink the approach to <task>" the `Next:` line.
+
+Without subagents: open the PR and leave the review to the next session (step 2.3).
 
 ### 8. Ship
 Open the PR (template filled: task, spec sections, criteria, assumptions). When CI is green on all three OSes and the review passed, **merge it** unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step; those wait for the owner (say so in the progress entry). Set the task's `Status:` to `done (#PR)`.
@@ -59,6 +87,7 @@ Append to `PROGRESS.md`:
 ```
 ## <date> — <task id> <title>
 Done: <one or two lines>. PR: #<n> (merged | waiting for owner).
+Review: <tier>, <rounds> rounds, <n> fixed, <n> dropped, <n> logged to FOLLOWUPS.
 Learned: <anything the next session must know: a quirk, a decision, a workaround>.
 Next: <the next task id>, or what's blocking.
 ```

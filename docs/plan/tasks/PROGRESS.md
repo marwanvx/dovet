@@ -534,3 +534,9 @@ Learned: surrogate pairs in JavaScript strings take two UTF-16 code units; build
 
 Next: M2-05.
 
+
+## 2026-10-19 — Workflow: review rules from the Claude Code team's code-review write-up
+Done: build loop step 7 now picks a review tier from the diff (quick / standard / deep, deep adds a `security` lens for the high-risk paths in the new `REVIEW.md`), confirms each finding before fixing it, logs pre-existing bugs to `FOLLOWUPS.md` instead of fixing them in the task, re-reviews only the new diff, and stops after three rounds. `bun run next` prints open blocker/major follow-ups (step 2.4). PR: #145.
+Review: quick (workflow docs and runner prompts; next.ts change has its own tests).
+Learned: the unbounded "review again until nothing above minor" rule is what made free-model runs take 1–2 hours; a round cap plus diff-only later rounds is the fix. `build-loop.md`, `AGENTS.md`, `playbook.md`, `biome.json` and `.gitignore` carry skip-worktree locally (OpenCode/Antigravity wording); commit their shared parts by staging a blob, never by clearing the flag.
+Next: the next M2 task; then score the reviewer against the M1-32…M2-04 re-review findings as an eval set.

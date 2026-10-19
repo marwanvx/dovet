@@ -125,6 +125,15 @@ export function unappliedOverrides(questions: string): string {
     .join("\n\n");
 }
 
+export function urgentFollowups(followups: string): string {
+  const open = followups.split("## Open")[1]?.split("## Fixed")[0] ?? "";
+  return open
+    .split(/^(?=### )/m)
+    .filter((block) => /^- \*\*Severity:\*\* (blocker|major)\b/m.test(block))
+    .map((block) => block.trim())
+    .join("\n\n");
+}
+
 export function report(want?: string): string {
   const lines: string[] = [];
   const print = (s = ""): void => {
@@ -138,6 +147,9 @@ export function report(want?: string): string {
     : "";
   print(`## Waiting for the owner (only what no agent can do)\n${waiting || "(none)"}\n`);
   print(`## Owner overrides to apply\n${unappliedOverrides(q) || "(none)"}\n`);
+  const followupsPath = join(TASKS, "FOLLOWUPS.md");
+  const followups = existsSync(followupsPath) ? urgentFollowups(read(followupsPath)) : "";
+  print(`## Follow-ups to fix first (build loop step 2.4)\n${followups || "(none)"}\n`);
   print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 3).trim()}\n`);
 
   for (const [name, text] of ms) {
