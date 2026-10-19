@@ -71,12 +71,33 @@ function skipped(reason: string): void {
   console.log(line);
 }
 
-async function selectModel(key: string): Promise<{ model: string; reasons: boolean } | { skipped: string }> {
-  const baseURL = endpointOf(providerRecord("nvidia")).baseURL;
+export const DEFAULT_PROBE_BUDGET_MS = 5 * 60_000;
+
+export async function selectModel(
+  key: string,
+  opts?: {
+    budgetMs?: number;
+    probeTimeoutMs?: number;
+    models?: readonly string[];
+    baseURL?: string;
+  },
+): Promise<{ model: string; reasons: boolean; date: string } | { skipped: string }> {
+  const budgetMs = opts?.budgetMs ?? DEFAULT_PROBE_BUDGET_MS;
+  const started = Date.now();
+  const baseURL = opts?.baseURL ?? endpointOf(providerRecord("nvidia")).baseURL;
+  const models = opts?.models ?? NVIDIA_MODELS;
   const failures: string[] = [];
-  for (const model of NVIDIA_MODELS) {
-    const probe = await probeModel(model, { baseURL, apiKey: new Secret(key) });
-    if (probe.ok) return { model, reasons: probe.reasons };
+  for (const model of models) {
+    if (Date.now() - started >= budgetMs) {
+      failures.push(`probe phase exceeded ${Math.round(budgetMs / 60_000)} minutes`);
+      break;
+    }
+    const probe = await probeModel(model, {
+      baseURL,
+      apiKey: new Secret(key),
+      timeoutMs: opts?.probeTimeoutMs,
+    });
+    if (probe.ok) return { model, reasons: probe.reasons, date: probe.date };
     failures.push(`${model}: ${probe.skipped}`);
   }
   return { skipped: `no probed model answered (${failures.join("; ")})` };
@@ -91,8 +112,9 @@ describe("nightly workflow", () => {
     expect(text).toContain("NVIDIA_API_KEY");
     expect(text).toContain("nvidia-live");
     expect(text).toContain("contents: read");
+    expect(text).toContain("timeout-minutes: 60");
     expect(text).not.toContain("pull_request");
-    expect(text).not.toContain("push:");
+    expect(text).not.toMatch(/\bpush\b/);
   });
 
   test("a longer message list extends a shorter one, and a shorter one never extends", () => {
@@ -101,6 +123,14 @@ describe("nightly workflow", () => {
     expect(extendsRequest(a, b)).toBe(true);
     expect(extendsRequest(b, a)).toBe(false);
     expect(extendsRequest(a, a)).toBe(false);
+  });
+
+  test("selectModel caps total probe phase by budget and skips with reason", async () => {
+    const result = await selectModel("fake-key", { budgetMs: 0 });
+    expect("skipped" in result).toBe(true);
+    if ("skipped" in result) {
+      expect(result.skipped).toContain("probe phase exceeded");
+    }
   });
 });
 
@@ -118,6 +148,7 @@ describe("live nvidia smoke", () => {
       expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
+    console.log(`live nvidia: using ${picked.model} (probed ${picked.date})`);
     counter = 0;
     const baseURL = endpointOf(providerRecord("nvidia")).baseURL;
     const adapter = createSdkAdapter({
@@ -308,6 +339,7 @@ describe("live nvidia smoke", () => {
       expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
+    console.log(`live nvidia: using ${picked.model} (probed ${picked.date})`);
     const baseURL = endpointOf(providerRecord("nvidia")).baseURL;
     const adapter = createSdkAdapter({
       endpoint: () => ({ ...endpointOf(providerRecord("nvidia")), baseURL, apiKey: new Secret(key) }),

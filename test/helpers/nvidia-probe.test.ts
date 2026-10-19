@@ -106,4 +106,22 @@ describe("model probe", () => {
   test("a rejected key is an error, not a skipped model", async () => {
     await expect(probe([reply(401, '{"error":{"message":"Unauthorized"}}')])).rejects.toThrow(/auth/);
   });
+
+  test("a stalled request times out and is skipped as an outage", async () => {
+    const { startScriptedServer } = await import("./scripted-server.ts");
+    const server = startScriptedServer([{ delay: 300, steps: [{ send: "data: {}\n\n" }] }]);
+    try {
+      const result = await probeModel("example/model", {
+        baseURL: server.baseURL,
+        apiKey: new Secret("test-key-not-real"),
+        timeoutMs: 50,
+      });
+      expect(result).toMatchObject({
+        ok: false,
+        skipped: expect.stringMatching(/^outage: no answer within/),
+      });
+    } finally {
+      server.stop();
+    }
+  });
 });
