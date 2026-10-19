@@ -576,3 +576,9 @@ Done: a hook refuses whole-file spec reads, and `bun run next` prints each secti
 Review: quick (workflow scripts and docs; 8 new tests).
 Learned: the blog posts' lesson is to enforce a rule (a hook, a check) rather than write it: the "don't read whole specs" rule had been followed 0 of 32 times. `main` has no required CI checks at all; requiring the three jobs plus up-to-date branches is a repo setting the owner has to apply (the agent's permission was refused).
 Next: F2 (usage under-reported), then M2-05.
+
+## 2026-10-20 — Workflow: medium effort at most (owner's plan limits)
+Done: the security reviewer and deep-tier runs use medium effort instead of high; the owner is on the $20 plan and high effort would use up its limits. PR: #155 (merged).
+Review: quick.
+Learned: effort ceilings follow the owner's plan, not the blog defaults; raise a task to high only with the owner's OK.
+Next: F2, then M2-05.
