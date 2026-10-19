@@ -61,7 +61,7 @@ export {
   sandboxConfigFor,
   sandboxStatus,
 } from "./sandbox/service.ts";
-export { selectWindowsBackend, windowsStatusText } from "./sandbox/windows.ts";
+export { selectWindowsBackend, windowsStateFor, windowsStatusText } from "./sandbox/windows.ts";
 export type { Analysis, AnalyzeOptions, Operand } from "./shell-parse/analyze.ts";
 export { analyzeShell, powershellExitOneIsBenign } from "./shell-parse/analyze.ts";
 export { expandGlob, isDirectory } from "./shell-parse/glob.ts";

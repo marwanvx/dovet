@@ -13,6 +13,7 @@ describe.skipIf(!WINDOWS)("windows escape suite", () => {
     expect(["mxc", "none"]).toContain(sel.backend);
     const svc = createSandboxService({
       os: "win32",
+      windowsBackend: sel.backend,
       srtDir: "install\\libexec\\srt",
       settings: Settings.parse({}),
       workingDirs: ["C:\\work"],
@@ -22,8 +23,8 @@ describe.skipIf(!WINDOWS)("windows escape suite", () => {
       home: "C:\\Users\\u",
     });
     await svc.ready;
-    expect(svc.backend).toBe("none");
-    expect(svc.state).toBe("off");
+    expect(svc.backend).toBe(sel.backend);
+    expect(["off", "experimental"]).toContain(svc.state);
     console.log(`escape suite: mxc=${mxc.supported} backend=${svc.backend} state=${svc.state} (${mxc.detail})`);
   });
 });

@@ -5,6 +5,7 @@ import { homedir, hostname } from "node:os";
 import pkg from "../../package.json";
 import { PROVIDER_AUTH } from "../ai/index.ts";
 import { createPlatformCore, type Os, resolveDirs } from "../platform/index.ts";
+import type { SandboxState } from "../policy/index.ts";
 import type { AbsPath, Settings } from "../schema/index.ts";
 import { findProjectRoot, type LoadedSettings, type LoadInput, loadSettings } from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
@@ -274,11 +275,12 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
 async function runSandbox(argv: readonly string[]): Promise<void> {
   const os = hostOs();
   const { runSandboxCommand } = await import("./sandbox.ts");
-  const { backendFor, checkMxcSupport, selectWindowsBackend } = await import("../policy/index.ts");
+  const { backendFor, checkMxcSupport, selectWindowsBackend, windowsStateFor } = await import("../policy/index.ts");
   const { libexecPath } = await import("../platform/index.ts");
   let backend = backendFor(os);
   let detail = "n/a";
   let provisioned = false;
+  let state: SandboxState = "off";
   if (os === "win32") {
     const mxc = await checkMxcSupport();
     detail = mxc.detail;
@@ -296,10 +298,23 @@ async function runSandbox(argv: readonly string[]): Promise<void> {
     }
     const mxcSupported = mxc.supported;
     backend = selectWindowsBackend({ mxcSupported, srtInstalled: provisioned }).backend;
+    state = windowsStateFor(backend);
+  } else {
+    try {
+      const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+      const exe = realpathSync(process.execPath);
+      let rgCmd: string | undefined;
+      try {
+        const { existsSync } = await import("node:fs");
+        const p = libexecPath(exe, os, "rg");
+        if (existsSync(p)) rgCmd = p;
+      } catch {}
+      const deps = SandboxManager.checkDependencies(rgCmd ? { command: rgCmd } : undefined);
+      state = deps.errors.length > 0 ? "off" : "on";
+    } catch {
+      state = "off";
+    }
   }
-  // ASSUMPTION (QUESTIONS Q59): backend mxc reports but stays off until its execution lands, so the
-  // status never claims an experimental sandbox while commands run unsandboxed.
-  const state = backend === "none" || backend === "mxc" ? "off" : os === "win32" ? "experimental" : "on";
   const { installWindowsSandboxAsync, resolveSrtWin, uninstallWindowsSandbox } = await import(
     "@anthropic-ai/sandbox-runtime"
   );

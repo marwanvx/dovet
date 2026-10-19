@@ -1,14 +1,24 @@
 // Windows backend selection and status text (permissions §7.6, ADR-6).
 import { describe, expect, test } from "bun:test";
-import { selectWindowsBackend, windowsStatusText } from "./windows.ts";
+import { selectWindowsBackend, windowsStateFor, windowsStatusText } from "./windows.ts";
 
 describe("windows backend selection", () => {
   // spec: permissions §7.6
-  test("MXC first, then srt-windows, then none", () => {
-    expect(selectWindowsBackend({ mxcSupported: true, srtInstalled: true }).backend).toBe("mxc");
+  test("MXC when executable, otherwise srt-windows if installed, then MXC reporting, then none", () => {
+    expect(selectWindowsBackend({ mxcSupported: true, srtInstalled: true, mxcExecutable: true }).backend).toBe("mxc");
+    expect(selectWindowsBackend({ mxcSupported: true, srtInstalled: true }).backend).toBe("srt-windows");
     expect(selectWindowsBackend({ mxcSupported: true, srtInstalled: false }).backend).toBe("mxc");
     expect(selectWindowsBackend({ mxcSupported: false, srtInstalled: true }).backend).toBe("srt-windows");
     expect(selectWindowsBackend({ mxcSupported: false, srtInstalled: false }).backend).toBe("none");
+  });
+});
+
+describe("windows state mapping", () => {
+  // spec: permissions §7.6
+  test("mxc and none map to off; srt-windows maps to experimental", () => {
+    expect(windowsStateFor("mxc")).toBe("off");
+    expect(windowsStateFor("srt-windows")).toBe("experimental");
+    expect(windowsStateFor("none")).toBe("off");
   });
 });
 

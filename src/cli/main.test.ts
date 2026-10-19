@@ -36,6 +36,14 @@ describe("dovet command line", () => {
     expect(r.code).toBe(2);
     expect(r.err).toBe("usage: dovet update [--rollback]\n");
   });
+
+  // spec: permissions §7.6
+  test("sandbox status prints platform status and exits 0", () => {
+    const r = dovet("sandbox", "status");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`os: ${process.platform}`);
+    expect(r.out).toMatch(/sandbox: (on|off|experimental)/);
+  });
 });
 
 describe("dovet auth status", () => {

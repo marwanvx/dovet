@@ -2,7 +2,7 @@
 import { lstat, mkdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { SandboxManager as ManagerType } from "@anthropic-ai/sandbox-runtime";
+import type { SandboxManager, SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import type { PermissionMode, Settings } from "../../schema/index.ts";
 import {
   expandProtectedSymlinks,
@@ -15,6 +15,8 @@ import { type SandboxOs, startSandbox } from "./init.ts";
 import { DEFAULT_ALLOWED_DOMAINS, makeHostAsker } from "./network.ts";
 
 export { DEFAULT_ALLOWED_DOMAINS };
+
+type ManagerType = typeof SandboxManager;
 
 export type SandboxState = "on" | "weak" | "experimental" | "off";
 export type SandboxBackend = "bubblewrap" | "seatbelt" | "mxc" | "srt-windows" | "none";
@@ -84,7 +86,7 @@ export type SandboxServiceOptions = {
   tmpBase?: string;
   /** Windows only: which native backend to use (permissions §7.6). Defaults to "none" (off). */
   windowsBackend?: SandboxBackend | undefined;
-  starter?: (opts: Parameters<typeof startSandbox>[0]) => Promise<typeof ManagerType>;
+  starter?: (opts: Parameters<typeof startSandbox>[0]) => Promise<ManagerType>;
   /** Current permission mode for the proxy ask callback; defaults to the settings default (permissions §7.4). */
   getMode?: () => PermissionMode;
   /** Prompt for a new host; the proxy waits while it runs. Absent denies new hosts. */
@@ -194,7 +196,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
   const weak = opts.settings.sandbox?.enableWeakerNestedSandbox === true;
   let state: SandboxState = "off";
   const tmp = join(opts.tmpBase ?? tmpdir(), `dovet-${opts.sessionId}`);
-  let manager: typeof ManagerType | undefined;
+  let manager: ManagerType | undefined;
   let warnings: string[] = [];
   const rejectedHosts: string[] = [];
   let sessionAllowWrite: string[] = [...opts.workingDirs, tmp];
@@ -286,18 +288,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
         filesystem: { allowWrite: sessionAllowWrite, denyRead: readUnion, denyWrite: writeUnion },
       };
       if (opts.os === "win32") {
-        const runner = (
-          manager as unknown as {
-            wrapWithSandboxArgv?: (
-              command: string,
-              binShell: unknown,
-              cfg: unknown,
-              signal: unknown,
-              cwd: string,
-              options: { commandId: string },
-            ) => Promise<{ argv: string[]; env: Record<string, string> }>;
-          }
-        ).wrapWithSandboxArgv;
+        const runner = manager.wrapWithSandboxArgv;
         if (typeof runner !== "function") throw new Error("the Windows sandbox backend is unavailable");
         // srt-win exec exposes per-exec denies only: session-level grants from initialize() still
         // apply, but per-exec allowRead/allowWrite throw (sandbox-runtime 0.0.79).
@@ -305,7 +296,12 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
           manager,
           commandText,
           undefined,
-          { filesystem: { denyRead: readUnion, denyWrite: writeUnion } },
+          {
+            filesystem: {
+              denyRead: readUnion,
+              denyWrite: writeUnion,
+            } as unknown as NonNullable<SandboxRuntimeConfig["filesystem"]>,
+          },
           undefined,
           cmd.cwd,
           {
@@ -314,7 +310,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
         );
         return {
           argv: out.argv,
-          env: out.env,
+          env: out.env as Record<string, string>,
           cleanup: async (): Promise<void> => {
             manager?.cleanupAfterCommand();
           },

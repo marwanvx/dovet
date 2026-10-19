@@ -35,4 +35,14 @@ describe("mxc availability", () => {
     expect(missing.supported).toBe(false);
     expect(missing.detail).toContain("unavailable");
   });
+
+  // spec: permissions §7.6
+  test("malformed SDK output fails closed with unexpected format detail", async () => {
+    const malformed = await checkMxcSupport(async () => ({ getPlatformSupport: () => ({ isSupported: "truthy" }) }));
+    expect(malformed.supported).toBe(false);
+    expect(malformed.detail).toMatch(/unexpected format/i);
+    const nonObject = await checkMxcSupport(async () => ({ getPlatformSupport: () => "invalid" }));
+    expect(nonObject.supported).toBe(false);
+    expect(nonObject.detail).toMatch(/unexpected format/i);
+  });
 });
