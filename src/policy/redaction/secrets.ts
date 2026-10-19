@@ -8,7 +8,7 @@ export type NamedSecret = { name: string; value: string };
 /** Values shorter than this never redact by value (ASSUMPTION QUESTIONS Q60): they match ordinary words. */
 export const MIN_SECRET_VALUE_LENGTH = 8;
 
-const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
+export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
 
 export function secretsFromEnv(env: Readonly<Record<string, string | undefined>>): NamedSecret[] {
   const out: NamedSecret[] = [];

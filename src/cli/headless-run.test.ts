@@ -4520,4 +4520,133 @@ describe("interrupts", () => {
       await dir.dispose();
     }
   });
+
+  // spec: AC-PERM-26
+  test("tool result with hidden characters taints the session, emits taint.change and enforces taint in decide", async () => {
+    const dir = await tempProject();
+    try {
+      const data = join(dir.root, "data");
+      const hiddenTool: ToolDefinition<unknown> = {
+        name: "untrustedRead",
+        input: z.strictObject({ text: z.string() }),
+        descriptionFile: "tools/Read.md",
+        errorExample: { text: "hi" },
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () =>
+          Promise.resolve({
+            status: "ok",
+            content: [{ kind: "text", text: "injection\u{E0041}\u{E0042}payload" }],
+          }),
+      };
+
+      let observedTaint: string[] | undefined;
+      const inspectTool: ToolDefinition<unknown> = {
+        name: "inspectTaint",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: false,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "read",
+          paths: [],
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: (_input, ctx) => {
+          observedTaint = [...ctx.session.taint];
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "inspected" }] });
+        },
+      };
+
+      let ranPush = false;
+      const pushTool: ToolDefinition<unknown> = {
+        name: "gitPush",
+        input: z.strictObject({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: false,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "shell",
+          shell: "bash",
+          command: "git push origin main",
+          sandboxed: false,
+          unsandboxedRetry: false,
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: ["push"], sandboxed: false },
+        }),
+        run: () => {
+          ranPush = true;
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "pushed" }] });
+        },
+      };
+
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: ["untrustedRead", "inspectTaint"],
+          disallowedTools: [],
+        },
+        prompt: "run untrusted tool",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("T1"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: stubAdapter([
+          {
+            stop: "tool_use",
+            text: "calling untrusted and inspect",
+            calls: [
+              { id: "call_1", name: "untrustedRead", input: { text: "x" } },
+              { id: "call_2", name: "inspectTaint", input: {} },
+            ],
+          },
+          {
+            stop: "tool_use",
+            text: "calling push",
+            calls: [{ id: "call_3", name: "gitPush", input: {} }],
+          },
+          { stop: "end_turn", text: "all done" },
+        ]),
+        toolDefs: [hiddenTool, inspectTool, pushTool],
+      });
+
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(observedTaint).toEqual(["untrustedRead result"]);
+      expect(ranPush).toBe(false);
+
+      const read = await readSession({ data, projectRoot: dir.root, os: testOs(), session: out.sessionId });
+      const taintEvent = read.events.find((e) => e.type === "taint.change");
+      expect(taintEvent).toBeDefined();
+      const taintData = taintEvent?.data as { source: string; tainted: boolean } | undefined;
+      expect(taintData?.source).toBe("untrustedRead result");
+      expect(taintData?.tainted).toBe(true);
+      const pushResult = read.events.find(
+        (e) => e.type === "tool.result" && (e.data as { callId?: string }).callId === "call_3",
+      );
+      expect(pushResult).toBeDefined();
+      const pushData = pushResult?.data as { output: string } | undefined;
+      expect(pushData?.output).toBe("Permission denied: remote action: git push");
+    } finally {
+      await dir.dispose();
+    }
+  });
 });

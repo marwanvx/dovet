@@ -37,7 +37,9 @@ function fold(text: string): { folded: string; map: number[] } {
   for (const ch of text) {
     if (!isCamouflage(ch)) {
       folded += ch;
-      map.push(i);
+      for (let j = 0; j < ch.length; j++) {
+        map.push(i + j);
+      }
     }
     i += ch.length;
   }

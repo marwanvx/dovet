@@ -2,14 +2,14 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Os, Platform } from "../platform/index.ts";
+import { parseEnvFile, SECRET_NAME } from "../policy/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { collectOutput } from "./child-output.ts";
 
-export { parseEnvFile } from "../policy/index.ts";
+export { parseEnvFile, SECRET_NAME };
 
 type Env = Readonly<Record<string, string | undefined>>;
 
-export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
 const VOLATILE = /^(PWD|OLDPWD|SHLVL|_|PS[1-4]|PROMPT_COMMAND|TERM_SESSION_ID|HISTFILE|ZSH_.*|P9K_.*|POWERLEVEL9K_.*)$/;
 const PROJECT_REFUSED =
   /^(PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|NODE_OPTIONS|BUN_OPTIONS|BASH_ENV|ENV|PROMPT_COMMAND|PYTHONSTARTUP|GIT_.*)$/i;

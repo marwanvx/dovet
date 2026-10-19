@@ -12,6 +12,7 @@ export {
   type DotEnvSecrets,
   MIN_SECRET_VALUE_LENGTH,
   type NamedSecret,
+  SECRET_NAME,
   secretsFromEnv,
 } from "./redaction/secrets.ts";
 export type {

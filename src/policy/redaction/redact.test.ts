@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { tempProject } from "../../../test/helpers/index.ts";
+import { parseEnvFile } from "./dotenv.ts";
 import { redactText } from "./redact.ts";
 import { createDotEnvSecrets, type NamedSecret, secretsFromEnv } from "./secrets.ts";
 
@@ -89,5 +90,54 @@ describe("workspace .env values", () => {
     } finally {
       await project.dispose();
     }
+  });
+});
+
+// spec: AC-PERM-30
+describe("astral character and emoji boundaries", () => {
+  test("secrets following emojis or astral characters are cut at exact boundaries without leaking", () => {
+    const secrets: NamedSecret[] = [{ name: "STRIPE_SECRET_KEY", value: "rk-live-example-0001-fakevalue" }];
+    expect(redactText("prefix 🦊 sk-ant-example-fake-key-000004 tail", [])).toBe(
+      "prefix 🦊 [REDACTED:ANTHROPIC_KEY] tail",
+    );
+    expect(redactText("charge 🚀 rk-live-example-0001-fakevalue now", secrets)).toBe(
+      "charge 🚀 [REDACTED:STRIPE_SECRET_KEY] now",
+    );
+    expect(redactText("token \u{20000}\u{20001} ghp_examplefake0000000000000000000001", [])).toBe(
+      "token \u{20000}\u{20001} [REDACTED:GITHUB_TOKEN]",
+    );
+    expect(redactText("fetch 🦊 https://deploy:s3cr)t@example.com/data", [])).toBe(
+      "fetch 🦊 https://deploy:[REDACTED:URL_PASSWORD]@example.com/data",
+    );
+  });
+});
+
+// spec: AC-PERM-30
+describe("parseEnvFile", () => {
+  test("parses unquoted values with inline comments stripped", () => {
+    const parsed = parseEnvFile("DB_PASSWORD=hunter2_longpassword # staging comment\n");
+    expect(parsed.DB_PASSWORD).toBe("hunter2_longpassword");
+  });
+
+  test("parses multiline quoted values across newlines", () => {
+    const raw = `PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
+MIIBofakeexample0001
+-----END RSA PRIVATE KEY-----"
+ANOTHER_VAR=value
+`;
+    const parsed = parseEnvFile(raw);
+    expect(parsed.PRIVATE_KEY).toBe(
+      "-----BEGIN RSA PRIVATE KEY-----\nMIIBofakeexample0001\n-----END RSA PRIVATE KEY-----",
+    );
+    expect(parsed.ANOTHER_VAR).toBe("value");
+  });
+
+  test("preserves hash characters inside quotes and strips trailing comments after quotes", () => {
+    const raw = `HASH_IN_VAL="foo # not a comment"
+COMMENT_AFTER='bar_val_long' # after quote
+`;
+    const parsed = parseEnvFile(raw);
+    expect(parsed.HASH_IN_VAL).toBe("foo # not a comment");
+    expect(parsed.COMMENT_AFTER).toBe("bar_val_long");
   });
 });
