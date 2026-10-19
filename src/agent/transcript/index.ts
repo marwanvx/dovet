@@ -12,6 +12,7 @@ export {
 export {
   discoverInstructions,
   type FoundInstruction,
+  fileIdentityKey,
   type InstructionContext,
   type InstructionSet,
   type LazyLoad,
