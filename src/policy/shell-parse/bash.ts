@@ -1,6 +1,6 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
 import type { Node } from "web-tree-sitter";
-import { isSafeEnv, type Redirect, type Subcommand } from "../rules/index.ts";
+import { isSafeEnv, type Redirect, type Subcommand, XARGS_VALUED } from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import { classify, type Word } from "./read-only.ts";
 
@@ -33,15 +33,14 @@ const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
 
-const XARGS_VALUED = new Set(["-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"]);
-
 function xargsCommandWord(args: Word[]): Word | undefined {
   let i = 0;
   while (i < args.length) {
     const text = args[i]?.text ?? "";
     if (text === "--") return args[i + 1];
     if (text.startsWith("-") && text.length > 1) {
-      if (XARGS_VALUED.has(text)) i += 2;
+      if (text.includes("=")) i += 1;
+      else if (XARGS_VALUED.has(text)) i += 2;
       else i += 1;
     } else {
       return args[i];

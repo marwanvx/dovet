@@ -88,6 +88,26 @@ export function splitCommand(command: string): Subcommand[] | undefined {
   return endCommand() ? out : undefined;
 }
 
+export const XARGS_VALUED = new Set([
+  "-n",
+  "-I",
+  "-P",
+  "-L",
+  "-d",
+  "-E",
+  "-s",
+  "-a",
+  "--max-args",
+  "--replace",
+  "--max-procs",
+  "--max-lines",
+  "--delimiter",
+  "--eof",
+  "--max-chars",
+  "--arg-file",
+  "--process-slot-var",
+]);
+
 type Wrapper = { safe: boolean; valued: string[]; positional: number; noFlags?: boolean };
 const WRAPPERS = new Map<string, Wrapper>([
   ["timeout", { safe: true, valued: ["-k", "-s", "--kill-after", "--signal"], positional: 1 }],
@@ -98,7 +118,7 @@ const WRAPPERS = new Map<string, Wrapper>([
   ["command", { safe: true, valued: [], positional: 0, noFlags: true }],
   ["builtin", { safe: true, valued: [], positional: 0, noFlags: true }],
   ["noglob", { safe: true, valued: [], positional: 0, noFlags: true }],
-  ["xargs", { safe: true, valued: ["-n", "-I", "-P", "-L", "-d", "-E", "-s", "-a"], positional: 0 }],
+  ["xargs", { safe: true, valued: [...XARGS_VALUED], positional: 0 }],
   ["env", { safe: false, valued: ["-u", "-C", "-S", "--unset", "--chdir"], positional: 0 }],
   [
     "sudo",

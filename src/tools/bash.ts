@@ -456,7 +456,10 @@ export function createBashTool(opts: {
       const taint = sandboxed ? taintSourceForCommand(input.command) : undefined;
       // Denied traffic never reached the host, so a blocked host does not taint.
       if (taint !== undefined) {
-        const host = taint.split(":")[1]?.trim().toLowerCase();
+        const host = taint
+          .slice(taint.indexOf(":") + 1)
+          .trim()
+          .toLowerCase();
         const escaped = host?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         const pattern = escaped ? new RegExp(`(^|[^a-z0-9_.-])${escaped}([^a-z0-9_.-]|$)`, "i") : undefined;
         const blocked = pattern !== undefined && sandboxViolations.some((v) => pattern.test(v));
