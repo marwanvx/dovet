@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -116,6 +116,9 @@ function expectUntouched() {
   expect(readdirSync(join(root, "versions"))).toEqual(["0.1.0"]);
   expect(readdirSync(root).sort()).toEqual(["current", "versions"]);
 }
+
+// Windows runners take over 5 s to pack the test release with tar (3 CI timeouts by 2026-10-20), as in test/platform/install.
+if (process.platform === "win32") setDefaultTimeout(60_000);
 
 describe("dovet update", () => {
   test("moves current to a newer signed release and keeps the old version", async () => {
