@@ -62,10 +62,10 @@ import {
   createCredentials,
   createSecretStore,
   describeProblem,
+  forkSession,
   isHistoryRelated,
   type LoadedSettings,
   type LoadInput,
-  listSessions,
   openSession,
   pollSettings,
   REPAIR_HINT,
@@ -90,6 +90,7 @@ import {
 } from "../tools/index.ts";
 import type { HeadlessArgs } from "./args.ts";
 import type { HeadlessOutcome } from "./headless-output.ts";
+import { resolveResumeTarget } from "./resume-target.ts";
 import { offlineRefusal } from "./startup.ts";
 
 export type HeadlessAdapter = {
@@ -236,6 +237,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   const warnings: string[] = [];
   if (input.args.repair && input.args.resume === undefined && !input.args.continued)
     return errOut("", "--repair needs --resume or --continue", { kind: "usage" }, warnings);
+  if (input.args.fork && input.args.resume === undefined && !input.args.continued)
+    return errOut("", "--fork needs --resume or --continue", { kind: "usage" }, warnings);
   const resolved = resolveHeadlessModel(input.settings.settings, input.args);
   if ("error" in resolved) return errOut("", resolved.error, { kind: "usage" }, warnings);
   const { provider, model } = resolved;
@@ -327,52 +330,71 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
   let sessionId: string;
   if (input.args.resume !== undefined || input.args.continued) {
-    const sessions = await listSessions({ data: input.dirs.data, projectRoot: input.projectRoot, os: input.os });
-    if (input.args.resume !== undefined) {
-      const exact = sessions.find((s) => s.id === input.args.resume);
-      if (exact !== undefined) sessionId = exact.id;
-      else {
-        const prefixed = sessions.filter((s) => s.id.startsWith(input.args.resume ?? ""));
-        if (prefixed.length === 1 && prefixed[0] !== undefined) sessionId = prefixed[0].id;
-        else
-          return errOut(
-            "",
-            prefixed.length === 0
-              ? `no session matches "${input.args.resume}"`
-              : `"${input.args.resume}" matches ${prefixed.length} sessions; give a longer id`,
-            { kind: "usage" },
-            warnings,
-          );
-      }
-    } else {
-      const latest = sessions[sessions.length - 1];
-      if (latest === undefined) return errOut("", "no saved sessions for this project", { kind: "usage" }, warnings);
-      sessionId = latest.id;
-    }
+    const target = await resolveResumeTarget(
+      { data: input.dirs.data, projectRoot: input.projectRoot, os: input.os },
+      input.args.resume,
+      input.args.continued,
+    );
+    if ("error" in target) return errOut("", target.error, { kind: "usage" }, warnings);
+    sessionId = target.id;
   } else {
     sessionId = input.ids.ulid();
   }
 
-  const loc = { data: input.dirs.data, projectRoot: input.projectRoot, os: input.os, session: sessionId };
-  const resumed = await resumeSession(loc);
+  let loc = { data: input.dirs.data, projectRoot: input.projectRoot, os: input.os, session: sessionId };
+  let resumed = await resumeSession(loc);
   warnings.push(...resumed.warnings);
-  if (resumed.readOnly !== undefined)
-    return errOut(sessionId, `session ${sessionId} is read-only (${resumed.readOnly})`, { kind: "error" }, warnings);
+  if (resumed.readOnly !== undefined) {
+    if (input.args.fork && resumed.forkTurn !== undefined && resumed.forkTurn !== null) {
+      const newSessionId = input.ids.ulid();
+      await forkSession(loc, newSessionId, resumed.forkTurn, { ids: input.ids, clock: input.clock });
+      warnings.push(
+        `forked session ${newSessionId} from turn ${resumed.forkTurn}; original session ${sessionId} left untouched.`,
+      );
+      sessionId = newSessionId;
+      loc = { ...loc, session: sessionId };
+      resumed = await resumeSession(loc);
+      warnings.push(...resumed.warnings);
+    } else {
+      const forkOffer =
+        resumed.forkTurn !== undefined && resumed.forkTurn !== null
+          ? `. Continue from the last valid point with --fork (from turn ${resumed.forkTurn}); the original is left untouched.`
+          : "";
+      return errOut(
+        sessionId,
+        `session ${sessionId} is read-only (${resumed.readOnly})${forkOffer}`,
+        { kind: "error" },
+        warnings,
+      );
+    }
+  }
+
+  let effectiveModel = model;
   if (resumed.lines > 0) {
-    if (resumed.state.provider !== "" && provider !== resumed.state.provider)
+    if (flagMode === undefined && resumed.state.mode !== "") {
+      const parsed = PermissionMode.safeParse(resumed.state.mode);
+      if (parsed.success) mode = parsed.data === "auto" ? "default" : parsed.data;
+    }
+    if (resumed.state.provider !== "" && provider !== resumed.state.provider) {
       return errOut(
         sessionId,
-        `provider "${provider}" does not match session ${sessionId}'s provider "${resumed.state.provider}"; fix the settings or start a new session`,
+        `provider "${input.args.provider ?? provider}" does not match session ${sessionId}'s provider "${resumed.state.provider}"; fix the settings or start a new session`,
         { kind: "usage" },
         warnings,
       );
-    if (resumed.state.model !== "" && model !== resumed.state.model)
+    }
+    if (input.args.model !== undefined && resumed.state.model !== "" && input.args.model !== resumed.state.model) {
       return errOut(
         sessionId,
-        `model "${model}" does not match session ${sessionId}'s model "${resumed.state.model}"; fix the settings or start a new session`,
+        `model "${input.args.model}" does not match session ${sessionId}'s model "${resumed.state.model}"; fix the settings or start a new session`,
         { kind: "usage" },
         warnings,
       );
+    }
+    if (input.args.model === undefined && resumed.state.model !== "" && model !== resumed.state.model) {
+      warnings.push(`resuming with stored model "${resumed.state.model}" (config specifies "${model}")`);
+      effectiveModel = resumed.state.model;
+    }
   }
   const opened = await openSession({
     ...loc,
@@ -483,10 +505,42 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const toolsJson =
         resumed.state.toolsJson !== "" && resumed.state.toolsJson !== "[]" ? resumed.state.toolsJson : "[]";
       const systemText = resumed.state.systemText !== "" ? resumed.state.systemText : "headless";
+      const currentToolsJson = serializeTools(defs.map(toToolDef));
+      if (toolsJson !== "[]" && toolsJson !== currentToolsJson) {
+        try {
+          const storedNames = (JSON.parse(toolsJson) as { name: string }[]).map((t) => t.name);
+          const currentNames = defs.map((d) => d.name);
+          const added = currentNames.filter((n) => !storedNames.includes(n));
+          const removed = storedNames.filter((n) => !currentNames.includes(n));
+          const diffParts: string[] = [];
+          if (added.length > 0) diffParts.push(`added ${added.join(", ")}`);
+          if (removed.length > 0) diffParts.push(`removed ${removed.join(", ")}`);
+          if (diffParts.length === 0) diffParts.push("definitions modified");
+          warnings.push(
+            `settings differ from session: tools ${diffParts.join("; ")}; replaying stored definitions in current epoch.`,
+          );
+        } catch {
+          warnings.push("settings differ from session: tools differ; replaying stored definitions in current epoch.");
+        }
+      }
+      const charCount =
+        toolsJson.length +
+        systemText.length +
+        prior.reduce((acc, e) => {
+          const d = e.data as { text?: string };
+          return acc + (typeof d?.text === "string" ? d.text.length : 0);
+        }, 0);
+      const estTokens = Math.round(charCount / 4);
+      if (estTokens >= 8000 || prior.length >= 50) {
+        const estCost = (estTokens * 0.000002).toFixed(4);
+        warnings.push(
+          `cold large session: cache expired; estimated full re-read cost ~$${estCost}. Consider /compact.`,
+        );
+      }
       header = {
         epoch: epochNum,
-        provider: resumed.state.provider !== "" ? resumed.state.provider : provider,
-        model: resumed.state.model !== "" ? resumed.state.model : model,
+        provider,
+        model: effectiveModel,
         promptVersion: resumed.state.promptVersion !== "" ? resumed.state.promptVersion : "0".repeat(64),
         systemText,
         toolsJson,
@@ -537,7 +591,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         cwd: input.cwd as AbsPath,
         workingDirs: [input.projectRoot as AbsPath],
         mode,
-        taint: [],
+        taint: resumed.lines > 0 ? [...resumed.state.taint] : [],
         interactive: false,
       },
       settings: effectiveSettings,
@@ -552,6 +606,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     };
 
     const guards = new GuardTracker();
+    if (resumed.lines > 0) guards.cost = resumed.state.costUsd;
     const maxRequests = input.args.maxRequests ?? MAX_REQUESTS_PER_TURN;
     // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
     const pollAndApply = async (): Promise<void> => {
@@ -700,7 +755,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
               : t.kind === "user"
                 ? {
                     kind: "user",
-                    parts: t.parts.map((p) => (p.kind === "text" ? { kind: "text", text: p.text } : { kind: p.kind })),
+                    parts: t.parts.map((p) => {
+                      if (p.kind === "text") return { kind: "text", text: p.text };
+                      if (p.kind === "tool_result") return { kind: "tool_result", content: p.content };
+                      return { kind: p.kind };
+                    }),
                   }
                 : { kind: t.kind },
           ),
