@@ -210,6 +210,22 @@ function jsonSafeUsage(value: Record<string, unknown>): Record<string, unknown> 
   }
 }
 
+/** Adds provider usage objects field by field (nested objects too); a non-numeric field takes the newer value. */
+function addUsage(total: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...total };
+  for (const [key, value] of Object.entries(next)) {
+    const before = out[key];
+    if (typeof before === "number" && typeof value === "number") out[key] = before + value;
+    else if (isPlainRecord(before) && isPlainRecord(value)) out[key] = addUsage(before, value);
+    else out[key] = value;
+  }
+  return out;
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
 export function computeUsageCost(u: Record<string, unknown>): number {
   if (typeof u.cost === "number" && Number.isFinite(u.cost)) return u.cost;
   const inTok =
@@ -635,6 +651,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
     const guards = new GuardTracker();
     if (resumed.lines > 0) guards.cost = resumed.state.costUsd;
+    const costOut = (): number | null => (guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null);
     const maxRequests = input.args.maxRequests ?? MAX_REQUESTS_PER_TURN;
     // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
     const pollAndApply = async (): Promise<void> => {
@@ -813,7 +830,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "error" },
           warnings,
@@ -834,7 +851,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "error" },
           warnings,
@@ -850,7 +867,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: true,
           usage,
-          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
+          cost: costOut(),
           receipt: {},
           exit: pre.pause.guard === "budget" ? { kind: "budget" } : { kind: "guard" },
           warnings,
@@ -910,8 +927,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           aborted = true;
           abortedCompleted = e.completed;
         } else if (e.type === "usage") {
-          usage = jsonSafeUsage(e.usage as Record<string, unknown>);
-          const read = cacheReadOf(usage);
+          const read = cacheReadOf(jsonSafeUsage(e.usage as Record<string, unknown>));
           const warn = cacheWarning(
             prevCache === undefined ? undefined : { turn: prevTurn, cacheReadTokens: prevCache },
             { turn, cacheReadTokens: read },
@@ -1006,7 +1022,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "interrupted",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "signal", signal: "SIGINT" },
           warnings,
@@ -1025,7 +1041,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             stopReason: "error",
             incomplete: false,
             usage,
-            cost: null,
+            cost: costOut(),
             receipt: {},
             exit: { kind: "history-rejected" },
             warnings,
@@ -1039,7 +1055,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "error" },
           warnings,
@@ -1054,15 +1070,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "error" },
           warnings,
         };
       }
-      usage = jsonSafeUsage({ ...(done.stored.usage as Record<string, unknown>) });
-      guards.cost += computeUsageCost(usage);
-      const read = cacheReadOf(usage);
+      const requestUsage = jsonSafeUsage({ ...(done.stored.usage as Record<string, unknown>) });
+      usage = addUsage(usage, requestUsage);
+      guards.cost += computeUsageCost(requestUsage);
+      const read = cacheReadOf(requestUsage);
       const warn = cacheWarning(prevCache === undefined ? undefined : { turn: prevTurn, cacheReadTokens: prevCache }, {
         turn,
         cacheReadTokens: read,
@@ -1150,7 +1167,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: true,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "guard" },
           warnings,
@@ -1177,7 +1194,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             stopReason: action.reason,
             incomplete: false,
             usage,
-            cost: null,
+            cost: costOut(),
             receipt: {},
             exit: { kind: "refusal" },
             warnings,
@@ -1212,7 +1229,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: action.reason,
           incomplete,
           usage,
-          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "ok", ...(incomplete ? { incomplete: true } : {}) },
           warnings,
@@ -1237,7 +1254,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "error",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "error" },
           warnings,
@@ -1326,7 +1343,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "interrupted",
           incomplete: false,
           usage,
-          cost: null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "signal", signal: "SIGINT" },
           warnings,
@@ -1338,7 +1355,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         stopReason: "error",
         incomplete: true,
         usage,
-        cost: null,
+        cost: costOut(),
         receipt: {},
         exit: { kind: "guard" },
         warnings,
@@ -1393,7 +1410,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           stopReason: "end_turn",
           incomplete,
           usage,
-          cost: guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null,
+          cost: costOut(),
           receipt: {},
           exit: { kind: "ok", ...(incomplete ? { incomplete: true } : {}) },
           warnings,
