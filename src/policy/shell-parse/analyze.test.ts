@@ -376,7 +376,8 @@ describe("shapes that are not understood", () => {
 describe("fail-closed analysis", () => {
   // spec: AC-PERM-22
   test("a parse that outlasts the budget is cancelled and gives no commands", () => {
-    const text = "echo a; ".repeat(1200);
+    // Long enough that a full parse dwarfs the fixed cost of starting one (a 1,200-command text flaked on macOS CI).
+    const text = "echo a; ".repeat(12_000);
     const t0 = performance.now();
     const full = parsers.withTree("bash", text, 10_000, (n) => n.hasError);
     const fullMs = performance.now() - t0;
