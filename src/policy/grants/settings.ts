@@ -20,6 +20,11 @@ export type RuleSetInput = {
   configDir: string;
 };
 
+export const PRODUCTION_TOOL_PARAMS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Bash", new Set(["dangerouslyDisableSandbox"])],
+  ["PowerShell", new Set(["dangerouslyDisableSandbox"])],
+]);
+
 const problem = (i: RuleIssue): Problem => ({ file: i.file, line: i.line, key: "", message: i.message });
 
 /** Compiles every loaded rule and checks `permissions.examples`; a malformed rule or a failing example is a settings error (permissions §3.1). */
@@ -40,7 +45,14 @@ export function ruleSetFromSettings(input: RuleSetInput): { rules: RuleSet; warn
       sources.set(key, entry);
     }
   }
-  const { rules, issues } = loadRules([...sources.values()], input.ruleContext);
+  const toolParams = new Map<string, ReadonlySet<string>>(PRODUCTION_TOOL_PARAMS);
+  if (input.ruleContext.toolParams !== undefined) {
+    for (const [tool, params] of input.ruleContext.toolParams) {
+      toolParams.set(tool, new Set([...(toolParams.get(tool) ?? []), ...params]));
+    }
+  }
+  const ruleContext: RuleContext = { ...input.ruleContext, toolParams };
+  const { rules, issues } = loadRules([...sources.values()], ruleContext);
   const examples: NonNullable<Settings["permissions"]>["examples"] = loaded.settings.permissions?.examples ?? [];
   issues.push(
     ...checkExamples(rules, examples, {

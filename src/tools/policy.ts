@@ -81,6 +81,7 @@ export function shellEffects(
     const req: Request = {
       tool: shell === "bash" ? "Bash" : "PowerShell",
       action: { kind: "shell", analysis, sandboxed },
+      input: { command, dangerouslyDisableSandbox: unsandboxedRetry },
     };
     return effectsOf(req, decide(req, stateOf(policy)), sandboxed);
   } catch {

@@ -4,7 +4,7 @@
 export type { Action, Decision, Env, Finding, FindingKind, Request, State } from "./decide/index.ts";
 export { decide, exampleDecider, planExitChoices } from "./decide/index.ts";
 export type { Effects, Grant, RuleSetInput } from "./grants/index.ts";
-export { effectsOf, ruleSetFromSettings, saveGrant, suggestGrant } from "./grants/index.ts";
+export { effectsOf, PRODUCTION_TOOL_PARAMS, ruleSetFromSettings, saveGrant, suggestGrant } from "./grants/index.ts";
 export { parseEnvFile } from "./redaction/dotenv.ts";
 export { redactText } from "./redaction/redact.ts";
 export {

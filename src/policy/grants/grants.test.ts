@@ -392,6 +392,41 @@ describe("ruleSetFromSettings", () => {
     expect(ok.rules.list.map((r) => r.raw)).toEqual(["Bash(npm run *)"]);
     expect(() => build(loadedWith(["Bash(ls) x"]))).toThrow("settings.json");
   });
+
+  // spec: AC-PERM-10
+  test("Bash(dangerouslyDisableSandbox:true) compiles as a parameter rule from settings and forces ask in bypassPermissions", () => {
+    const loaded: LoadedSettings = {
+      settings: {},
+      rules: {
+        allow: [],
+        ask: [{ rule: "Bash(dangerouslyDisableSandbox:true)", source: "user", file: "/u/.dovet/settings.json" }],
+        deny: [],
+      },
+      warnings: [],
+      notices: [],
+      files: [],
+    };
+    const { rules } = build(loaded);
+    const paramRule = rules.list.find((r) => r.raw === "Bash(dangerouslyDisableSandbox:true)");
+    expect(paramRule?.matcher.kind).toBe("param");
+    const st = state({ rules }, "bypassPermissions");
+    const reqWithRetry: Request = {
+      tool: "Bash",
+      action: {
+        kind: "shell",
+        sandboxed: false,
+        analysis: analyzeShell(parsers, "bash", "ls", {
+          cwd: root,
+          workingDirs: [root],
+          home: "/home/u",
+          glob: expandGlob,
+          isDirectory,
+        }),
+      },
+      input: { command: "ls", dangerouslyDisableSandbox: true },
+    };
+    expect(decide(reqWithRetry, st).behavior).toBe("ask");
+  });
 });
 
 function loadedWith(allow: string[]): LoadedSettings {

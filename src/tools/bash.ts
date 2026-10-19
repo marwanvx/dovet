@@ -300,7 +300,7 @@ export function createBashTool(opts: {
       input.dangerouslyDisableSandbox === true,
     );
     const healthyNow = sandboxHealthy(ctx);
-    if (!healthyNow && ctx.settings.sandbox?.failIfUnavailable === true) {
+    if (ctx.settings.sandbox?.enabled !== false && !healthyNow && ctx.settings.sandbox?.failIfUnavailable === true) {
       return {
         status: "error",
         content: [
@@ -586,7 +586,7 @@ export function createBashTool(opts: {
         command: input.command,
         sandboxed,
         unsandboxedRetry: input.dangerouslyDisableSandbox === true,
-        effects: shellEffects(ctx, shell, input.command, !routing.sandboxed),
+        effects: shellEffects(ctx, shell, input.command, input.dangerouslyDisableSandbox === true),
       };
     },
     run,

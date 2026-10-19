@@ -276,12 +276,14 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
       }
       await mkdir(tmp, { recursive: true });
       const denyWrite = sandboxProtectedDenyWrite([cmd.cwd], opts.configDir, opts.dataDir);
-      const expanded = await expandProtectedSymlinks(denyWrite);
-      const union = [...new Set([...sessionDenyWrite, ...expanded])];
+      const expandedWrite = await expandProtectedSymlinks(denyWrite);
+      const writeUnion = [...new Set([...sessionDenyWrite, ...expandedWrite])];
+      const expandedRead = await expandProtectedSymlinks(sessionDenyRead);
+      const readUnion = [...new Set([...sessionDenyRead, ...expandedRead])];
       const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
       const commandText = cmd.argv.map(quote).join(" ");
       const custom = {
-        filesystem: { allowWrite: sessionAllowWrite, denyRead: sessionDenyRead, denyWrite: union },
+        filesystem: { allowWrite: sessionAllowWrite, denyRead: readUnion, denyWrite: writeUnion },
       };
       if (opts.os === "win32") {
         const runner = (
@@ -303,7 +305,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
           manager,
           commandText,
           undefined,
-          { filesystem: { denyRead: sessionDenyRead, denyWrite: union } },
+          { filesystem: { denyRead: readUnion, denyWrite: writeUnion } },
           undefined,
           cmd.cwd,
           {
