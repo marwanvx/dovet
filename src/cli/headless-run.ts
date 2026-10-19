@@ -77,6 +77,7 @@ import {
   Secret,
   SettingsError,
   type SettingsSnapshot,
+  sessionPaths,
   snapshotSettings,
   validateTranscriptItems,
 } from "../store/index.ts";
@@ -85,6 +86,8 @@ import {
   builtinTools,
   createReadState,
   createToolRegistry,
+  type ShellSnapshot,
+  startShellSnapshot,
   type ToolContext,
   type ToolDefinition,
   type ToolOutput,
@@ -155,6 +158,7 @@ export function resolveHeadlessModel(
 export function headlessToolDefs(input: {
   shell?: ShellChoice | undefined;
   tmpDir: string;
+  snapshot?: ShellSnapshot | undefined;
   offline?: boolean;
   baseTools?: readonly ToolDefinition<unknown>[];
 }): ToolDefinition<unknown>[] {
@@ -165,7 +169,7 @@ export function headlessToolDefs(input: {
       if (input.offline && (t.name === "WebFetch" || t.name === "WebSearch")) return false;
       return true;
     }),
-    shellToolFor(input.shell, input.tmpDir),
+    shellToolFor(input.shell, input.tmpDir, input.snapshot),
   ] as ToolDefinition<unknown>[];
 }
 
@@ -418,6 +422,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   // Attached before readSession: the lock exists now, so a signal during the read can still flush and close.
   const events: EventEnvelope[] = [];
   let shuttingDown = false;
+  let shellSnapshot: ShellSnapshot | undefined;
   input.onSession?.({
     // A stop signal closes the log before it aborts the turn: the writes the abort still unwinds with are dropped.
     shutdown: () => {
@@ -441,11 +446,25 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const flushLog = (): Promise<void> => (shuttingDown ? Promise.resolve() : writer.flush());
     const isNew = resumed.lines === 0;
     const shellChoice = await input.platform.resolveShell(input.settings.settings.shell);
+    shellSnapshot =
+      shellChoice === undefined ||
+      shellChoice.kind === "powershell" ||
+      input.settings.settings.shell?.snapshot === false
+        ? undefined
+        : startShellSnapshot({
+            platform: input.platform,
+            userShell: (input.os === "win32" ? undefined : input.env.SHELL) ?? shellChoice.path,
+            cwd: input.cwd as AbsPath,
+            env: input.env,
+            sessionDir: sessionPaths(loc).dir,
+            group: `snapshot:${sessionId}`,
+          });
     const defs =
       input.toolDefs ??
       headlessToolDefs({
         shell: shellChoice,
         tmpDir: `${input.dirs.data}/tmp`,
+        snapshot: shellSnapshot,
         offline: input.args.offline,
       });
     let header: RenderInput["header"];
@@ -1383,6 +1402,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     }
   } finally {
+    if (shellSnapshot !== undefined) {
+      // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
+      await input.platform.killTree(`snapshot:${sessionId}`);
+      await shellSnapshot.ready();
+    }
     await writer.close();
   }
 }

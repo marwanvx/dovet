@@ -87,11 +87,36 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
         });
       }
     }
-    out.layers.push({ source, file: path, settings: result.value });
+    out.layers.push({
+      source,
+      file: path,
+      settings: source === "project" || source === "local" ? withoutRefusedEnv(result.value, path, out) : result.value,
+    });
   } catch (err) {
     if (!(err instanceof SettingsError)) throw err;
     out.problems.push(...err.problems);
   }
+}
+
+// cli-config "env": these names could redirect code execution, so a repo's settings never set them, trusted or not.
+const PROJECT_ENV_REFUSED =
+  /^(PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|NODE_OPTIONS|BUN_OPTIONS|BASH_ENV|ENV|PROMPT_COMMAND|PYTHONSTARTUP|GIT_.*)$/i;
+
+function withoutRefusedEnv(settings: Settings, file: string, out: Collected): Settings {
+  if (settings.env === undefined) return settings;
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(settings.env)) {
+    if (!PROJECT_ENV_REFUSED.test(name)) {
+      kept[name] = value;
+      continue;
+    }
+    out.warnings.push({
+      file,
+      key: formatKey(["env", name]),
+      message: `${name} is ignored in project settings (it could redirect code execution); set it in your user settings`,
+    });
+  }
+  return { ...settings, env: kept };
 }
 
 const PORTABLE_PERMISSION_KEYS = ["allow", "ask", "deny", "additionalDirectories", "defaultMode"] as const;

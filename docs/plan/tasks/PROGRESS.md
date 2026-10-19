@@ -594,3 +594,9 @@ Done: `bun run wiring` (in `bun run check`) requires every export that only test
 Review: quick (workflow script with 3 tests, plus docs).
 Learned: of ~51 serious escaped bugs, 15 were "built and tested, never called"; promises like "M1-25 wires it" were forgotten. Write such a promise as a `scripts/wiring.json` owner instead. The scope lens found no blocker in 15 tasks; spec found 3 blockers and 28 majors.
 Next: F5 (blocker), then F2, then M2-05.
+
+## 2026-10-20 — F5 project settings `env` reached Bash; shell snapshot never started
+Done: `loadSettings` drops PATH, LD_PRELOAD, GIT_* and the other refused names from the project and local settings files (warning each); the dead `scopedSettingsEnv` is gone; `runHeadless` now starts the login-shell snapshot and stops it at run end. PR: #159 (merged).
+Review: standard, 1 round, 3 fixed (local-file bypass, untested cleanup, 10 s wait on abort), 0 dropped, 0 logged to FOLLOWUPS.
+Learned: the wiring check's promise held: a test that loads a real project settings file and runs Bash caught the bug the pure-function test missed. Dropping the local file's whole `env` while untrusted (tracked by git) is still M2-05's job; the TUI session boot (M3) must also start the snapshot.
+Next: F2 (usage summed across requests in `dovet -p` JSON output), then M2-05.

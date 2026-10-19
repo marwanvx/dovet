@@ -34,7 +34,6 @@ export {
   parseEnvFile,
   type ShellSnapshot,
   type SnapshotResult,
-  scopedSettingsEnv,
   startShellSnapshot,
 } from "./shell-env.ts";
 export { createTodoWriteTool, todoWriteTool } from "./todos.ts";
