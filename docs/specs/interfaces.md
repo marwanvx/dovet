@@ -333,6 +333,8 @@ type ActionDescriptor = { effects: Effects } & (
   | { kind: "mcp"; server: string; tool: string } );   // v0.2
 ```
 
+**Decided while building (QUESTIONS Q44):** `ToolContext.policy` carries the precompiled `RuleSet`, `mode`, `Env`, optional `ShellParsers`, `sandboxed`, `tainted` and `sandboxAutoAllow`. Each built-in `describeAction` builds its `Request` (a shell call runs `analyzeShell` when parsers are present, else fail-closed `unknown`), calls `decide` and returns `effectsOf`. Write and Edit read an unread existing file silently (not partial, not `.ipynb`) only when its read decision is `allow`; otherwise they refuse with "You must Read". `ToolContext.keepHardLink` carries the `hard-linked` approval into `writeBytes`.
+
 ## 5. Policy engine
 
 ```ts
@@ -364,6 +366,8 @@ type ParsedCommand = {
   interactive: boolean;                     // needs a TTY
 };
 ```
+
+**Decided while building (QUESTIONS Q40):** `ruleTexts(fileText)` reads rule strings and their lines with jsonc-parser; `loadRules` takes sources `{file, baseDir, allow/ask/deny: {text, line}[]}`.
 
 ## 6. Agent session API (used by TUI, headless, ACP)
 
@@ -398,6 +402,8 @@ type AgentEvent =                           // all structured-clone-safe
   | { type: "queue"; pending: number }
   | { type: "notice"; level: "info" | "warn" | "error"; text: string };
 ```
+
+**Decided while building (QUESTIONS Q48):** a late `events()` subscriber gets `{type: "status", state: "idle"}` first, then only new events. `runUserShell` spawns the platform's bash (fallback `/bin/sh`) in the session's process group, emits `user.shell` and caps the output at 30,000 characters for the next submit. Pending answers are keyed by an emitted request id (`status awaiting-user`) and answered through `answerQuestion`/`answerPlan`/`answerPermission`, zod-validated; `applyEffects` applies `set-mode`, `taint` and `cwd` in order. Headless sessions don't declare AskUserQuestion.
 
 ## 6b. Receipt (persisted in `receipt` events; included in headless JSON)
 

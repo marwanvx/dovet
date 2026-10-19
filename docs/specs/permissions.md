@@ -65,6 +65,12 @@ Three layers, all enforced in code (principle 9):
 
 **Permanent rules are saved** to `.dovet/settings.local.json` at the **git repository root** (resolved through worktrees to the main checkout), so they apply in subdirectories and worktrees. Outside a git repo: the starting directory. The file is created if it doesn't exist and added to `.git/info/exclude`, so it is never committed and the repo's `.gitignore` is never changed. Session-only grants are never written to it.
 
+**Decided while building (QUESTIONS Q43):**
+- "Don't ask again" suggestions: `Edit(<working directory>/**)` for an edit inside a working directory with no finding; the exact file for one outside it or on a sensitive file. `Bash(<program> <verb> *)` for version-control, package and cloud tools (`git`, `npm`, `cargo`, `kubectl`, …), `Bash(<program> *)` for other programs, the exact command for shells, `sudo`/`env`/`xargs`, destructive programs (`rm`, `mv`, `chmod`, …) or an argument containing `*`. At most 5 rules; none when the call has an unlifted safety ask or invisible characters, or a generated rule doesn't match its own subcommand.
+- For a non-sensitive read outside the working directories, "don't ask again" saves a permanent `Read(<directory>/**)` for that file's directory (the exact file for the home directory or the filesystem root).
+- Rule anchors: project, local and `.claude/` project files and `env`/`flags` anchor at the primary working directory; `user` at the Dovet config dir; `claude-user` at `~/.claude`.
+- Effects of a shell call: only read-only commands is none/none; unsandboxed is `unknown` writes and network; sandboxed takes workspace/outside/protected from the findings and network `allowed-hosts`. Every save re-checks `.git/info/exclude`.
+
 ## 2. Permission modes
 
 Mode names are the same config values as Claude Code's, so settings import directly.
@@ -86,6 +92,8 @@ Mode names are the same config values as Claude Code's, so settings import direc
 - **Starting mode:** `permissions.defaultMode` in settings; otherwise `default`. With a working sandbox, `default` already avoids most prompts (§7.3).
 - The current mode is always visible in the status bar.
 
+**Decided while building (QUESTIONS Q42):** in plan mode an edit or a non-read-only command is denied, not asked: nothing changes until the plan is approved. Under sandbox auto-allow, sandboxed commands are free (§0b); sensitive paths still ask. `sed` with `e`/`w`/`-f` and `cp -t` are not acceptEdits file commands.
+
 ## 3. Rules
 
 ### 3.1 Syntax and evaluation
@@ -104,6 +112,12 @@ Mode names are the same config values as Claude Code's, so settings import direc
 - Tool-name globs: deny/ask accept `"*"`, `"mcp__*"`; allow accepts globs only after a literal `mcp__<server>__` prefix.
 - Unknown tool names in deny/ask → startup warning (catches typos).
 - **Rule examples:** `permissions.examples` lists commands or tool calls with the decision the user expects, e.g. `{ "Bash": "git push --force origin main", "expect": "deny" }`. They are checked at load and by `dovet doctor`, and a mismatch is reported naming the rule that actually decides. Rules are tested the way users intend them, and a misread rule (§3.2's literal-prefix pitfalls) shows up before it matters.
+
+**Decided while building (QUESTIONS Q40):**
+- `name:value` is a parameter rule only when `name` is a primary field (rejected with a warning) or listed in `RuleContext.toolParams` for that tool; otherwise it is shell text.
+- One allow rule must cover every path of the call, each in both spellings (requested and canonical). A Read allow never covers an edit.
+- Path rules compile to gitignore patterns under absolute roots (the literal directory prefix and its canonical form). A `!` rule re-includes only against earlier rules of the same file, behavior and tool. `lib/` and `lib/**` float (a `**/` prefix) in deny and ask, and are anchored in allow; an unclosed `[` is an escaped literal in deny and ask.
+- A rule is reported unreachable when an earlier-priority rule of the same tool is bare, has an equal path text, or its shell pattern matches the later rule's pattern text. PowerShell rules are case-insensitive.
 
 ### 3.2 Shell rules (Bash and PowerShell)
 - `*` matches any text **including spaces**; a rule without `*` matches exactly one command.
@@ -158,6 +172,11 @@ Text-based command checkers keep being bypassed by new shapes (special variables
 7. **The analyzer fails closed:** a parser that fails to start or times out (out of memory, a pathological input) yields "not fully checkable", never a cached allow. Analysis has a 200 ms budget per command.
 8. Commands over 10,000 characters are never auto-approved, for Bash and PowerShell alike.
 
+**Decided while building (QUESTIONS Q41):**
+- `analyzeShell(parsers, language, command, opts)` returns `{ commands, understood, literalNames, reasons, operands }`. `commands` are the simple commands anywhere in the text (`{ argv, redirects?, readOnly? }`, redirect targets made absolute in the simulated cwd), or undefined when the text couldn't be parsed (an error, the 200 ms timeout, a crash). `understood` is false when any node is off the allowlist or the text is over 10,000 characters; then no allow rule applies (`RuleCall.checkable`). A subcommand with `readOnly: true` needs no allow rule of its own.
+- A `$( )` or backtick inside a word is understood when its own commands are, and makes the word non-literal; process substitution is not understood. `sh|bash|zsh|dash|ksh -c <literal>` is parsed as a nested script (depth 8) so deny and ask rules see its commands, but the call is never understood.
+- `tee` targets are `edit` operands (not understood with `~` or a glob).
+
 ### 4.1 Working directories
 - Definitions of **working directories** and **project root**: [cli-config](cli-config.md) "Two directory concepts". Primary working directory = where Dovet started (moved with `/cd`, v0.2). Add with `--add-dir`, `/add-dir`, or `permissions.additionalDirectories`.
 - Reads inside working directories need no approval (except sensitive files, §4.7). Reads by Dovet's file tools **outside** working directories ask (reason `outside working directory`); "don't ask again" saves a `Read(<dir>/**)` rule. `permissions.blockReadsOutsideWorkingDirectories: true` makes file tools refuse outside reads in every mode.
@@ -206,6 +225,8 @@ Run without prompting in every mode (unless an ask/deny rule matches, or §4.0 s
 Bare assignments (`FOO=bar` on its own) are read-only only for allowlisted names. Still prompt (Manual mode) when: an unquoted glob is passed to a command with write/exec-capable flags (`find`, `sort`, `sed`, `git`); `ps` options that print env vars (`ps e`, `ps auxe`); a UNC path argument on Windows; writes to special shell variables (`PATH`, `IFS`); `cd` into another directory combined with `git` (git hooks of that dir could run); `cd` combined with a redirect whose target can't be resolved; the command can't be fully parsed; or it is longer than 10,000 characters.
 This list is a versioned data file in `policy/` (not user-configurable; users add ask/deny rules to tighten).
 
+**Decided while building (QUESTIONS Q41):** `cut` and `awk` are read-only (data file `src/policy/shell-parse/read-only.ts`), except an `awk` program containing `system(`, `getline`, `>`, `|` or `ENVIRON`, or `awk -f`.
+
 ### 4.7 Sensitive files read by Dovet's own tools
 
 The sandbox credential list (§7.2) only restricts **shell commands**. Dovet's built-in Read, Grep, Glob, `@` mentions and any other internal file reader run outside the sandbox, and reads inside working directories are otherwise auto-approved. So a separate policy covers them:
@@ -216,6 +237,8 @@ The sandbox credential list (§7.2) only restricts **shell commands**. Dovet's b
 - **Values from workspace `.env*` files** (parsed with a dotenv parser at session start and when they change) join the redaction set (§8), so `cat .env` or a test that prints config in a shell command is redacted too. Honest limit: redaction is a mitigation, not a guarantee.
 
 **Decided while building (QUESTIONS Q36):** `.env.*` is excluded whole, templates included (the safe side); `permissions.sensitiveFiles.add/remove` apply. The home-directory credential list of §7.2 isn't added to Grep/Glob's exclusions: it lies outside the working directories, where reads already ask.
+
+**Decided while building (QUESTIONS Q42):** a sensitive-file ask is lifted only by an allow rule without wildcards naming that path.
 
 ### 4.8 Remote actions (built-in ask) [ADR-28]
 
@@ -238,6 +261,8 @@ Behavior:
 - In `bypassPermissions` the list doesn't ask (the user chose no prompts); `dontAsk` denies.
 - While tainted, these are denied in **every** mode, `bypassPermissions` included (§10).
 - **Honest limit:** this is text recognition, a guardrail; the network boundary (§7.4) is what stops unknown destinations.
+
+**Decided while building (QUESTIONS Q42):** the default branch is `main`, `master` and `State.defaultBranch`; a force-push naming no branch, or `HEAD`, counts as the default branch (fail closed). A remote-action ask is lifted only by an allow rule that names the command: no `*`, or two fixed words before it (`git push*`, not `git *`). Every check runs on the command with wrappers (`sudo`, `env`, `timeout`) stripped and the program reduced to its basename.
 
 ## 5. Actions no mode auto-approves
 Even in `bypassPermissions`: critical-path removals (prompt with countdown), protected-path writes (§4.3), shell commands with network-path arguments (§4.1), `AskUserQuestion`, `ExitPlanMode`, and (v0.2) MCP tools marked `requiresUserInteraction`. Additionally, `git push --force*` (and `--force-with-lease`, `+refspec`) to the default branch is **denied** in every mode unless an exact-match allow rule (no `*`) names that command.

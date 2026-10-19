@@ -77,6 +77,12 @@ The owner has a free NVIDIA API key (`NVIDIA_API_KEY`, 2026-10-13). It is the pr
 - **Never block a PR on it.** A failure caused by a retired model, a rate limit (429) or an outage is reported and the model skipped, not treated as a Dovet bug; a failure that reproduces on a working model is a Dovet bug.
 - **The key** is a secret: environment variable only, never in a fixture, log, receipt or PR (fixtures are recorded with secrets stripped). The sandbox host `integrate.api.nvidia.com` must be allowed.
 
+**Decided while building (QUESTIONS Q51):**
+- The live suite is `test/integration/nvidia-live.test.ts`, run by `nightly.yml` only on `schedule` and `workflow_dispatch`, never on pull requests, with `NVIDIA_API_KEY` from secrets.
+- A missing key, an unusable model, a 429, an overload, an outage or a retired model logs `live nvidia: skipped: <reason>` and returns (no `test.skip`). A history-related `invalid_request` fails: that is a Dovet bug.
+- The 10-turn session goes through `adapter.render(buildRequest(events, epoch))`: an error result to recover from at turn 3, an injected instruction before turn 6 that must appear as the `[Dovet instruction]` block in every later request, and a text-only turn 10. A crafted history (empty and whitespace-only parts, an out-of-order result group) must be accepted live.
+- One probed model from the fast tier, strictly sequential requests, a 180 s per-request timeout, a 20-minute test timeout with a 14-minute session budget. Request bodies and headers are checked free of the key with a boolean check, so a failure never prints the secret.
+
 ## Evals
 
 **Purpose:** decide prompt, tool and default changes with data (principle 14), and track Dovet against other harnesses.

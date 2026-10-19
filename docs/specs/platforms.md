@@ -59,6 +59,8 @@ Both paths are needed: many Windows developers have Git Bash, and many don't. **
 
 **Signals:** no SIGINT to child process trees; use tree-kill. Ctrl+C in the TUI is handled by the TUI's raw-mode input, not the console's signal.
 
+**Shell selection (QUESTIONS Q39):** `Platform.resolveShell(setting?: { windows, gitBashPath })` returns `{ kind: "bash" | "git-bash" | "powershell", path, edition?, note? }`. A forced `git-bash` without Git Bash falls back to PowerShell with a `note`; the result is cached per tool instance.
+
 ## macOS specifics
 
 - Seatbelt via `sandbox-exec` (deprecated by Apple but still functional and widely used by coding agents; monitored as a risk).

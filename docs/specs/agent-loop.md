@@ -52,6 +52,8 @@ Waiting for the whole response before running anything wastes the time the model
 - If the response ends with `refusal`, `max_tokens` + tool call, or an interrupt: early results are **discarded** (not sent). Reads have no side effects, so this is safe.
 - Results are still returned in emitted order, in one message.
 
+**Decided while building (QUESTIONS Q46):** early execution is Read, Grep and Glob only, and only when the decision is `allow` without a prompt. Early results are discarded on a refusal, on `max_tokens` with a tool call, or on an interrupt, and are returned in emitted order otherwise.
+
 ## Tool execution within a turn
 
 1. Parse and validate all tool calls from the response (zod). Invalid → `is_error` result with `INVALID_JSON` or a schema error message naming the field. Tool-input JSON is parsed **strictly**: no lenient repair that could reinterpret escapes. (Lenient repair can turn `C:\Users\unicorn` into CJK characters by reading `\u` as a Unicode escape.)
@@ -61,6 +63,11 @@ Waiting for the whole response before running anything wastes the time the model
 5. Persist `tool.result` (and `file.change` events) as each finishes; the UI updates live. **No failure cascade:** every call returns its own result; a failing call (any tool, including a failing shell command) never cancels its siblings. Only a user's "No" (step 3) or an interrupt stops the remaining calls. The model sees each failure and decides what to re-run.
 5b. **Request-size guard (append-only safety):** before a tool result or attachment is appended, the builder computes the next request's body size. If it would exceed 90% of the provider's request cap (Anthropic 32 MB; lower on Bedrock/Vertex), the result is replaced by an `is_error` result naming the size and suggesting a smaller read or `/compact`. Once appended, an over-cap item could never be removed, and every later request would fail.
 6. Results are appended as **one** user message containing all `tool_result` parts, in emitted order (splitting them across messages trains the model to stop making parallel calls [VERIFIED 2026-10-10]).
+
+**Decided while building (QUESTIONS Q46):**
+- Result size cap: 32 MB by default, 16 MB for providers that document a lower request limit. Over 90% of it, the result is replaced by an `is_error` naming the byte size and suggesting a smaller read or `/compact`.
+- A prompt answered "No" without a comment, or dismissed with Esc, stops the turn: the remaining calls get "Not run: the user stopped this turn". "No" with a comment denies only that call. Headless (`dontAsk`) denies at once.
+- A user interrupt writes `Interrupted by the user before this tool finished.` results so the transcript stays valid; SIGTERM/SIGHUP write none (crash recovery on resume completes them).
 
 ## Interrupts (Esc in the TUI, SIGINT in headless)
 
@@ -78,6 +85,11 @@ A second Esc within 1 s of an interrupt does nothing more (no double handling). 
 - **Queued messages are never lost:** if the turn ends for any reason (guard, budget, error, refusal, max requests), they move back into the input box (interactive) or are delivered as the next turn (headless). Their attachments and `@` mentions travel with them.
 - If the model ends its turn (`end_turn`) while messages are queued, the next turn starts immediately with them, so steering is never ignored while the model wraps up.
 - Without Ctrl+Enter, a queued message never interrupts a running request (incl. extended thinking).
+
+**Decided while building (QUESTIONS Q47):**
+- A queued message is `{ text, attachments: (ImagePart | DocumentPart)[] }`: files travel as blob refs, `@` mentions as text.
+- The pairing invariant (every `tool_use` gets exactly one `tool_result`, in order) is proven by rendering the interrupted transcript through the real adapter; each provider package re-proves it for its protocols.
+- A whitespace-only text block counts as nothing completed, so thinking-only or empty completions append nothing.
 
 ## Harness messages during a turn
 
@@ -107,6 +119,8 @@ A text-only end of turn in an **interactive** session is the end of the turn; th
 | Uncaught exception / unhandled rejection | Restore the terminal first, write a crash report (stack, versions, last 50 events' types, no content) to `<data>/crash/`, flush the log, print the report path, exit 70 |
 | Windows console close / Ctrl+Break | Same as SIGTERM (`process.on("SIGBREAK")` / console close handler) |
 
+**Decided while building (QUESTIONS Q47):** the agent exposes pure plans (`shutdownPlan`, `exitCodeForSignal`, `sigintOutcome`); only `cli/main.ts` wires `process.on`/`process.exit`. A crash report is `<data>/crash/crash-<ISO stamp>.json`. SIGTSTP leaves tools running; only the terminal is restored.
+
 ## Loop and runaway protection
 
 | Guard | Default | When triggered |
@@ -120,6 +134,8 @@ A text-only end of turn in an **interactive** session is the end of the turn; th
 | Budget | See [receipts-budgets](receipts-budgets.md) | Pause before the next request. |
 
 "Pause and ask" ends the request cycle in a resumable state: the user can say continue (the guard counter resets) or give new instructions. In headless mode a guard ends the run with exit code 3 and a JSON reason.
+
+**Decided while building (QUESTIONS Q46):** identical calls are the same tool with the same normalized input JSON; three consecutive failures pause. Progress is a file change, a new file read or a new command per request; 25 requests without any pause the turn. When all three malformed rounds were cut off by `max_tokens`, the hint names the output limit ("Every call was cut off by the output limit; raise the limit or ask for smaller steps").
 
 ## Determinism contract of the transcript builder
 
