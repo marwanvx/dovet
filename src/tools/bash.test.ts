@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPlatformCore } from "../platform/index.ts";
 import { type AbsPath, Settings } from "../schema/index.ts";
-import { openSnapshotter } from "../store/index.ts";
+import { loadSettings, openSnapshotter } from "../store/index.ts";
 import {
   createBashTool,
   createReadTool,
@@ -13,7 +13,7 @@ import {
   type ToolContext,
   type ToolOutput,
 } from "./index.ts";
-import { commandEnv, scopedSettingsEnv, startShellSnapshot } from "./shell-env.ts";
+import { commandEnv, startShellSnapshot } from "./shell-env.ts";
 import { context, text, workspace } from "./test-context.ts";
 
 const BASH = Bun.which("bash") as AbsPath;
@@ -270,15 +270,17 @@ describe.skipIf(process.platform === "win32")("settings env", () => {
   });
 
   // spec: AC-CLI-12
-  test("project env is dropped until the folder is trusted, and PATH, LD_PRELOAD and GIT_* are refused even then", () => {
-    const project = { PATH: "/evil", LD_PRELOAD: "/x.so", GIT_SSH_COMMAND: "x", NODE_OPTIONS: "-r x", SAFE: "1" };
-    expect(scopedSettingsEnv({ user: { U: "u" }, project, projectTrusted: false })).toEqual({
-      env: { U: "u" },
-      refused: [],
-    });
-    const trusted = scopedSettingsEnv({ user: { U: "u" }, project, projectTrusted: true });
-    expect(trusted.env).toEqual({ U: "u", SAFE: "1" });
-    expect(trusted.refused).toEqual(["PATH", "LD_PRELOAD", "GIT_SSH_COMMAND", "NODE_OPTIONS"]);
+  test("a project settings file's LD_PRELOAD and PATH never reach a command, its other variables do", async () => {
+    const dir = await workspace();
+    await mkdir(join(dir, ".dovet"));
+    await writeFile(
+      join(dir, ".dovet", "settings.json"),
+      JSON.stringify({ env: { PATH: "/evil", LD_PRELOAD: "/evil.so", SAFE: "1" } }),
+    );
+    const loaded = await loadSettings({ dirs: { config: join(dir, "cfg") }, home: dir, projectRoot: dir, env: {} });
+    const r = await rig({}, loaded.settings);
+    const out = text(await bash(r, { command: 'echo "[${LD_PRELOAD-unset}][${SAFE-unset}][${PATH:0:5}]"' }));
+    expect(out).toBe(`[unset][1][${(process.env.PATH ?? "").slice(0, 5)}]`);
   });
 
   test("shell.envFile is applied after the snapshot", async () => {

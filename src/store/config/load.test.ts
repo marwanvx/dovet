@@ -541,3 +541,30 @@ describe("writing", () => {
     },
   );
 });
+
+describe("project env", () => {
+  // spec: AC-CLI-12
+  test("names that redirect code execution are refused from the project file even when trusted, with a warning", async () => {
+    const { dir, input } = await setup({
+      "cfg/settings.json": '{ "env": { "U": "u", "PATH": "/user/bin" } }',
+      "proj/.dovet/settings.json":
+        '{ "env": { "PATH": "/evil", "LD_PRELOAD": "/x.so", "git_ssh_command": "x", "NODE_OPTIONS": "-r x", "SAFE": "1" } }',
+    });
+    const loaded = await loadSettings({ ...input, env: {} });
+    expect(loaded.settings.env).toEqual({ U: "u", PATH: "/user/bin", SAFE: "1" });
+    const refused = loaded.warnings.filter((w) => w.file === join(dir.root, "proj/.dovet/settings.json"));
+    expect(refused.map((w) => w.key)).toEqual([
+      "env.PATH",
+      "env.LD_PRELOAD",
+      "env.git_ssh_command",
+      "env.NODE_OPTIONS",
+    ]);
+    expect(refused[0]?.message).toContain("project settings");
+  });
+
+  // spec: AC-CLI-12
+  test("project env is dropped while the folder is untrusted", async () => {
+    const { input } = await setup({ "proj/.dovet/settings.json": '{ "env": { "SAFE": "1" } }' });
+    expect((await loadSettings({ ...input, env: {}, projectTrusted: false })).settings.env).toBeUndefined();
+  });
+});

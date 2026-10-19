@@ -7,7 +7,7 @@ import { redactText, ruleSetFromSettings } from "../policy/index.ts";
 import type { EventEnvelope, PrefixFingerprint, StoredResponse } from "../schema/index.ts";
 import type { LoadedSettings } from "../store/index.ts";
 import { findProjectRoot, isHistoryRelated, REPAIR_HINT } from "../store/index.ts";
-import type { ToolContext, ToolDefinition, ToolOutput, ToolRegistry } from "../tools/index.ts";
+import type { ShellSnapshot, ToolContext, ToolDefinition, ToolOutput, ToolRegistry } from "../tools/index.ts";
 import {
   buildReadResultsIndex,
   createBashTool,
@@ -732,11 +732,16 @@ export function loopRuleSet(input: {
   return ruleSetFromSettings(input);
 }
 
-export function shellToolFor(choice: ShellChoice | undefined, tmpDir: string): ToolDefinition<unknown> {
+export function shellToolFor(
+  choice: ShellChoice | undefined,
+  tmpDir: string,
+  snapshot?: ShellSnapshot,
+): ToolDefinition<unknown> {
   if (choice?.kind === "powershell")
     return createBashTool({ tmpDir, powershell: { edition: choice.edition ?? "pwsh" } }) as ToolDefinition<unknown>;
-  if (choice?.kind === "git-bash") return createBashTool({ tmpDir, gitBash: true }) as ToolDefinition<unknown>;
-  return createBashTool({ tmpDir }) as ToolDefinition<unknown>;
+  if (choice?.kind === "git-bash")
+    return createBashTool({ tmpDir, gitBash: true, snapshot }) as ToolDefinition<unknown>;
+  return createBashTool({ tmpDir, snapshot }) as ToolDefinition<unknown>;
 }
 
 /** The shell tool's name as the system prompt's env facts state it (`transcript/system-prompt.ts`). */

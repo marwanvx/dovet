@@ -1830,6 +1830,65 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: AC-TOOLS-06
+  test("a session captures the login shell's environment at start and cleans up its process group; shell.snapshot false skips it", async () => {
+    const run = async (snapshot: boolean | undefined) => {
+      const dir = await tempProject({});
+      const spawned: Array<{ argv: string[]; group: string }> = [];
+      const killed: string[] = [];
+      try {
+        const settings = settingsFor();
+        if (snapshot !== undefined) settings.settings.shell = { snapshot };
+        const out = await runHeadless({
+          dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+          projectRoot: dir.root,
+          cwd: dir.root,
+          os: "linux",
+          settings,
+          env: { ...TEST_ENV, SHELL: "/usr/bin/zsh" },
+          loadInput: loadInputFor(dir, TEST_ENV),
+          args: {
+            print: true,
+            output: "text",
+            offline: false,
+            noSessionPersistence: false,
+            continued: false,
+            repair: false,
+            allowedTools: [],
+            disallowedTools: [],
+          },
+          prompt: "hi",
+          clock: { now: () => Date.UTC(2026, 9, 15) },
+          ids: sequentialIds("W"),
+          pid: 1,
+          host: "h",
+          platform: fakePlatform({
+            resolveShell: () => Promise.resolve({ kind: "bash", path: "/bin/bash" as never }),
+            spawn: (cmd) => {
+              spawned.push({ argv: cmd.argv, group: cmd.group });
+              throw new Error("scripted: no shell here");
+            },
+            killTree: (group) => {
+              killed.push(group);
+              return Promise.resolve();
+            },
+          }),
+          adapter: stubAdapter([{ stop: "end_turn", text: "done" }]),
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        return { spawned, killed, sessionId: out.sessionId };
+      } finally {
+        await dir.dispose();
+      }
+    };
+    const on = await run(undefined);
+    expect(on.spawned).toEqual([
+      { argv: ["/usr/bin/zsh", "-l", "-i", "-c", "env -0"], group: `snapshot:${on.sessionId}` },
+    ]);
+    expect(on.killed).toEqual([`snapshot:${on.sessionId}`]);
+    expect((await run(false)).spawned).toEqual([]);
+  });
+
   // spec: agent-loop "Early execution of read-only tools" (ADR-21)
   test("a Read whose block completes during streaming starts before the response ends", async () => {
     const dir = await tempProject({});

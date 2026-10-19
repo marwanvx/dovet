@@ -11,8 +11,6 @@ export { parseEnvFile, SECRET_NAME };
 type Env = Readonly<Record<string, string | undefined>>;
 
 const VOLATILE = /^(PWD|OLDPWD|SHLVL|_|PS[1-4]|PROMPT_COMMAND|TERM_SESSION_ID|HISTFILE|ZSH_.*|P9K_.*|POWERLEVEL9K_.*)$/;
-const PROJECT_REFUSED =
-  /^(PATH|LD_PRELOAD|LD_LIBRARY_PATH|DYLD_.*|NODE_OPTIONS|BUN_OPTIONS|BASH_ENV|ENV|PROMPT_COMMAND|PYTHONSTARTUP|GIT_.*)$/i;
 const ENTRY = /^[A-Za-z_][A-Za-z0-9_]*=/;
 export const SNAPSHOT_TIMEOUT_MS = 10_000;
 
@@ -100,23 +98,6 @@ export function startShellSnapshot(deps: {
 
   const pending = capture();
   return { ready: () => pending };
-}
-
-/** Settings `env` from the user file plus, only in a trusted folder, the project file minus names that could redirect code execution. */
-export function scopedSettingsEnv(scopes: {
-  user?: Readonly<Record<string, string>> | undefined;
-  project?: Readonly<Record<string, string>> | undefined;
-  projectTrusted: boolean;
-}): { env: Record<string, string>; refused: string[] } {
-  const env: Record<string, string> = { ...scopes.user };
-  const refused: string[] = [];
-  if (scopes.projectTrusted) {
-    for (const [name, value] of Object.entries(scopes.project ?? {})) {
-      if (PROJECT_REFUSED.test(name)) refused.push(name);
-      else env[name] = value;
-    }
-  }
-  return { env, refused };
 }
 
 export function commandEnv(deps: {
