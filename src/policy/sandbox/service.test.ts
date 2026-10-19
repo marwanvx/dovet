@@ -237,8 +237,8 @@ describe("per-command denies", () => {
     });
     await svc.ready;
 
-    symlinkSync(realSettings, symlinkSettings);
-    symlinkSync(realAws, symlinkAws);
+    symlinkSync(realSettings, symlinkSettings, process.platform === "win32" ? "file" : undefined);
+    symlinkSync(realAws, symlinkAws, process.platform === "win32" ? "junction" : undefined);
 
     await svc.wrap({ argv: ["/bin/bash", "x"], cwd: dir.root, env: {} }, { unsandboxed: false });
 
