@@ -14,6 +14,18 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
+- **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
+- `usage = jsonSafeUsage(e.usage)` replaces the usage on every model response instead of summing it. Live runs on `nvidia/nemotron-3.5-super-vl-120b-a12b`: job 1 made 10 requests (70 867 prompt tokens in the event log) and reported 8 124; job 2 made 14 requests (123 740) and reported 11 957. `receipt` came back `{}` both times. Check `cost` the same way. This breaks the promise that Dovet can't hide what it cost; the fix needs a test with a multi-request turn that asserts the summed usage.
+
+### F3 (live test 2026-10-19): a fresh install refuses to run without a configured model
+- **Severity:** minor · `src/cli/headless-run.ts:149`
+- With an NVIDIA key and no settings file, `dovet -p "…"` exits 2 with "no model configured; set model in settings or --model". Pick a default NVIDIA model (the registry's) or name a working `--model` value in the message.
+
+### F4 (live test 2026-10-19): the model retries Bash after the sandbox refused it
+- **Severity:** minor · Bash tool result when the sandbox is unavailable
+- On a machine where the sandbox can't start (Ubuntu AppArmor user namespaces), job 1 tried `bun test` 7 times, including with `dangerouslyDisableSandbox`, and every try errored. The result text should say plainly that this command can't run in this session, so the model stops.
+
 ## Fixed
 
 ### F1 (workflow PR #145): two instruction-file tests fail on Windows in about half of CI runs
