@@ -455,3 +455,11 @@ Done (PR #123, CI green on three OSes after one retry): the ExitPlanMode describ
 Learned: tools that rely on execution ordering (like ExitPlanMode showing a plan written earlier in the same response) should explicitly assert their `parallelSafe: false` declaration alongside the functional scenario, mirroring EnterPlanMode. The Windows CI runner failed on the known instruction-files flake on the initial run and passed green on rerun without changes.
 
 Next: M2-05.
+
+## 2026-10-18 — fix: M1-28 re-review
+
+Done (PR #125, CI green on three OSes after one retry): headless mode now enforces `--budget` via spend accumulation in `GuardTracker.cost` and a pre-request pause exiting with code 4 (`{ kind: "budget" }`); open task-list items from `TodoWrite` are detected in headless mode via `openTasksFromEvents` to drive automatic turn continuations with `shouldContinueForOpenTasks` (up to 2) and finalize with `{ kind: "ok", incomplete: true }` (exit code 0); `--offline` filters `WebFetch` and `WebSearch` in `headlessToolDefs`, denies them with `offlineRefusal` in `decideFn`, and surfaces `Permission denied: <reason>` in `executeTools` when denied un-prepared tools are called; `stream-json` maps and formats full turn events (`out.events`); and AC-CLI-13's 10 s outer CI timeout bound is documented in QUESTIONS.md Q65. Three fresh review lenses (scope, spec, tests) over two verification rounds ended none-above-minor, with proof-by-breaking confirming that mutation of budget stops, continuation checks, and offline denials fail their respective tests.
+
+Learned: `shouldContinueForOpenTasks` in headless mode requires asserting both the final turn summary result and the continuation user messages in the session log to guarantee that the multi-turn continuation loop actually ran to completion before finalizing as incomplete. Offline tool filtering and refusal tests must provide dummy base tool definitions in milestones where the real network tools are not yet registered, proving both inclusion when online and exclusion when offline. The Windows CI runner failed on the known instruction-files flake on the initial run and passed green on rerun.
+
+Next: M2-05.
