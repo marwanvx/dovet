@@ -570,3 +570,9 @@ Done: the 58 answers that existed only in `QUESTIONS.md` are written into the sp
 Review: quick (docs, plus a 15-line check with 3 tests).
 Learned: an entry's own claim that it was applied isn't proof: Q17 said "Written into architecture 'Distribution'", but the spec didn't hold it. Check the spec text. Transitional notes ("until M1-23") were left out of the specs because those tasks are done. Headless runs don't load AGENTS.md/CLAUDE.md yet; M2-05's "Done when" already owns that, so it isn't a separate follow-up.
 Next: F2 (usage under-reported), then M2-05.
+
+## 2026-10-20 — Workflow: enforce the context cuts, ratchet instruction size, model and effort per tier
+Done: a hook refuses whole-file spec reads, and `bun run next` prints each section's line range. `docs:check` caps the instruction files at 7,500 tokens and `bun run next` at 15,000 per task. The runner picks model and effort per tier, caps a run at $10, verifies that a PR called merged is merged, and notifies when it stops. Reviewer at low effort; new `security-reviewer` at high. A deep-tier checklist, the traps table in AGENTS.md, and M2-09c plus an old-code pass in M2-16. PR: #154 (merged).
+Review: quick (workflow scripts and docs; 8 new tests).
+Learned: the blog posts' lesson is to enforce a rule (a hook, a check) rather than write it: the "don't read whole specs" rule had been followed 0 of 32 times. `main` has no required CI checks at all; requiring the three jobs plus up-to-date branches is a repo setting the owner has to apply (the agent's permission was refused).
+Next: F2 (usage under-reported), then M2-05.

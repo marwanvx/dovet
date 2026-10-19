@@ -1,6 +1,6 @@
 // `bun run next` shows the owner's overrides that no session has applied yet (build loop step 3).
 import { describe, expect, test } from "bun:test";
-import { unappliedOverrides, urgentFollowups } from "./next.ts";
+import { sections, unappliedOverrides, urgentFollowups } from "./next.ts";
 
 const file = (answered: string) => `# Questions\n\n## Waiting for the owner\n\n(none)\n\n## Answered\n\n${answered}`;
 
@@ -48,5 +48,16 @@ describe("urgentFollowups", () => {
 
   test("a fixed follow-up is not listed", () => {
     expect(urgentFollowups(followups(""))).toBe("");
+  });
+});
+
+describe("sections", () => {
+  test("each printed section names its exact line range, so an agent can read just those lines", () => {
+    const doc = "# Spec\n\nintro\n\n## 1. One\na\nb\n\n## 2. Two\nc\n\n### 2.1 Sub\nd\n\n## 3. Three\ne\n";
+    expect(sections(doc, ["2"]).map((s) => [s.from, s.to, s.text.split("\n")[0]])).toEqual([[9, 13, "## 2. Two"]]);
+    expect(sections(doc, ["1", "Three"]).map((s) => [s.from, s.to])).toEqual([
+      [5, 7],
+      [15, 16],
+    ]);
   });
 });
