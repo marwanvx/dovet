@@ -376,14 +376,16 @@ describe("shapes that are not understood", () => {
 describe("fail-closed analysis", () => {
   // spec: AC-PERM-22
   test("a parse that outlasts the budget is cancelled and gives no commands", () => {
-    // Long enough that a full parse dwarfs the fixed cost of starting one (a 1,200-command text flaked on macOS CI).
-    const text = "echo a; ".repeat(12_000);
+    // The timing text is long enough that a full parse dwarfs the fixed cost of starting one (1,200 commands flaked on
+    // macOS CI); the analysis below keeps a text under the 10,000-character limit.
+    const long = "echo a; ".repeat(12_000);
+    const text = "echo a; ".repeat(1200);
     const t0 = performance.now();
-    const full = parsers.withTree("bash", text, 10_000, (n) => n.hasError);
+    const full = parsers.withTree("bash", long, 10_000, (n) => n.hasError);
     const fullMs = performance.now() - t0;
     expect(full).toBe(false);
     const t1 = performance.now();
-    const cut = parsers.withTree("bash", text, 1, (n) => n.hasError);
+    const cut = parsers.withTree("bash", long, 1, (n) => n.hasError);
     const cutMs = performance.now() - t1;
     expect(cut).toBeUndefined();
     expect(cutMs).toBeLessThan(fullMs / 2);
