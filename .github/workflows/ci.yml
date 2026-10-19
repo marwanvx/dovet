@@ -37,9 +37,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bubblewrap socat gnome-keyring libsecret-1-0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: TEMPORARY proof for F1, removed before merge
-        if: matrix.os == 'windows-latest'
-        run: bun test src/agent/transcript/instruction-files.test.ts --rerun-each 30
       - run: bun run check
       - name: all eight release archives build
         if: matrix.os == 'ubuntu-latest'
