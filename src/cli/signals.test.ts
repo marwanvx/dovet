@@ -279,4 +279,24 @@ describe("process signals", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  test("signals.crash writes the report, flushes the log, and exits 70", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dovet-crash-"));
+    try {
+      const f = fakeRuntime();
+      const order: string[] = [];
+      const session = fakeSession(order);
+      const handlers = installed(f, order, dir);
+      handlers.attach(session);
+      await handlers.crash(new Error("unhandled error in turn"));
+      expect(f.exits).toEqual([EXIT_CRASH]);
+      expect(order).toEqual(["shutdown"]);
+      const files = await readdir(dir);
+      expect(files).toHaveLength(1);
+      const report = JSON.parse(await readFile(join(dir, files[0] ?? ""), "utf8")) as { stack: string };
+      expect(report.stack).toContain("unhandled error in turn");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });

@@ -220,14 +220,28 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       onSession: (handle) => signals.attach(handle),
     });
   } catch (err) {
-    console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
-    process.exitCode = 1;
+    await signals.crash(err);
     await cleanupEphemeral();
+    process.exitCode = 70;
     return;
   }
   for (const w of out.warnings) console.error(`dovet: ${w}`);
   if (out.exit.kind !== "ok") {
-    if (out.result !== "") console.error(`dovet: ${out.result}`);
+    if (parsed.output === "json") {
+      process.stdout.write(
+        formatJson({
+          result: out.result,
+          stopReason: out.stopReason,
+          incomplete: out.incomplete,
+          sessionId: out.sessionId,
+          receipt: out.receipt,
+          usage: out.usage,
+          cost: out.cost,
+        }),
+      );
+    } else {
+      if (out.result !== "") console.error(`dovet: ${out.result}`);
+    }
     await cleanupEphemeral();
     process.exitCode = exitCodeFor(out.exit);
     return;

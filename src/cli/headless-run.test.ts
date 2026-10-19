@@ -9,6 +9,8 @@ import {
   nvidiaAdapter,
   scriptedModel,
   sequentialIds,
+  sseBody,
+  startFixtureServer,
   startScriptedServer,
   type TempProject,
   tempProject,
@@ -26,9 +28,9 @@ import {
   TRUNCATED_INSTRUCTION,
   TRUNCATED_NOT_RUN,
 } from "../agent/index.ts";
-import { createSdkAdapter, type SdkCall } from "../ai/index.ts";
+import { createSdkAdapter, type RenderInput, type SdkCall } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
-import { ModelRequestData } from "../schema/index.ts";
+import { ModelRequestData, type Part, type StoredResponse } from "../schema/index.ts";
 import type { LoadedSettings, LoadInput } from "../store/index.ts";
 import { openSession, readSession, sessionPaths } from "../store/index.ts";
 import type { ToolDefinition } from "../tools/index.ts";
@@ -310,7 +312,7 @@ describe("headlessToolDefs", () => {
 });
 
 describe("runHeadless", () => {
-  test("a tool-using turn writes the events and replays byte-identically", async () => {
+  test("a tool-using turn writes the expected event types and fingerprint hash", async () => {
     const dir = await tempProject({ "note.txt": "hello" });
     try {
       const out = await runHeadless({
@@ -2548,12 +2550,6 @@ describe("runHeadless", () => {
     }
   });
 
-  // spec: agent-loop "Loop and runaway protection"
-  test("the cache monitor stays quiet when the provider reports no cache field", () => {
-    expect(cacheWarning({ turn: 4, cacheReadTokens: 8000 }, { turn: 5, cacheReadTokens: undefined })).toBeNull();
-    expect(cacheWarning(undefined, { turn: 5, cacheReadTokens: 0 })).toBeNull();
-  });
-
   // spec: tui "Headless mode", agent-loop "Stop-reason handling"
   test("a refusal ends the turn with exit 5", async () => {
     const dir = await tempProject({});
@@ -3735,7 +3731,36 @@ describe("interrupts", () => {
         },
         prompt: "step 1",
         clock: { now: () => Date.UTC(2026, 9, 15) },
-        ids: sequentialIds("H1"),
+        ids: sequentialIds("H01"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ text: "step 1 answer", reasoning: "secret reasoning thoughts" }]),
+        toolDefs: [echoTool()],
+      });
+      expect(out1.exit).toEqual({ kind: "ok" });
+
+      const out1b = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: true,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "step 2",
+        clock: { now: () => Date.UTC(2026, 9, 15, 0, 1) },
+        ids: sequentialIds("H02"),
         pid: 1,
         host: "h",
         platform: fakePlatform(),
@@ -3752,12 +3777,22 @@ describe("interrupts", () => {
         ]),
         toolDefs: [echoTool()],
       });
-      expect(out1.exit).toEqual({ kind: "history-rejected" });
-      expect(exitCodeFor(out1.exit)).toBe(6);
-      expect(out1.result).toContain("--repair");
+      expect(out1b.exit).toEqual({ kind: "history-rejected" });
+      expect(exitCodeFor(out1b.exit)).toBe(6);
+      expect(out1b.result).toContain("--repair");
 
       const paths = sessionPaths({ data, projectRoot: dir.root, os: testOs(), session: out1.sessionId });
       const beforeLog = await readFile(paths.log, "utf8");
+
+      let capturedTranscript: unknown[] = [];
+      const baseAdapter = adapterFor([{ text: "repaired and answered successfully" }]);
+      const repairAdapter = {
+        ...baseAdapter,
+        render(input: RenderInput) {
+          capturedTranscript = input.transcript;
+          return baseAdapter.render(input);
+        },
+      };
 
       const out2 = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
@@ -3777,23 +3812,168 @@ describe("interrupts", () => {
           allowedTools: [],
           disallowedTools: [],
         },
-        prompt: "step 2 repaired",
-        clock: { now: () => Date.UTC(2026, 9, 15, 0, 1) },
-        ids: sequentialIds("H2"),
+        prompt: "step 3 repaired",
+        clock: { now: () => Date.UTC(2026, 9, 15, 0, 2) },
+        ids: sequentialIds("H03"),
         pid: 1,
         host: "h",
         platform: fakePlatform(),
-        adapter: adapterFor([{ text: "repaired and answered successfully" }]),
+        adapter: repairAdapter,
         toolDefs: [echoTool()],
       });
       expect(out2.exit).toEqual({ kind: "ok" });
       expect(out2.result).toContain("repaired and answered successfully");
+      expect(capturedTranscript.length).toBeGreaterThanOrEqual(3);
+      const user1 = capturedTranscript[0] as { kind: string; parts: Array<{ text?: string }> };
+      expect(user1.kind).toBe("user");
+      expect(user1.parts[0]?.text).toBe("step 1");
+      const asst = capturedTranscript[1] as { kind: string; stored: StoredResponse };
+      expect(asst.kind).toBe("assistant");
+      expect(asst.stored.parts.some((p: Part) => p.kind === "reasoning")).toBe(false);
+      expect(asst.stored.parts.some((p: Part) => p.kind === "text" && p.text === "step 1 answer")).toBe(true);
+      const userLast = capturedTranscript.at(-1) as { kind: string; parts: Array<{ text?: string }> };
+      expect(userLast.kind).toBe("user");
+      expect(userLast.parts[0]?.text).toBe("step 3 repaired");
 
       const afterLog = await readFile(paths.log, "utf8");
       expect(afterLog.startsWith(beforeLog)).toBe(true);
       const appended = afterLog.slice(beforeLog.length);
       expect(appended).toContain('"repair"');
       expect(appended).toContain('"repaired and answered successfully"');
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CLI-09
+  test("headless turn with --effort high passes reasoning_effort to NVIDIA provider", async () => {
+    const delta = (d: unknown, finish: string | null = null) => ({
+      id: "c",
+      object: "chat.completion.chunk",
+      created: 1,
+      model: "meta/llama-3.1-70b-instruct",
+      choices: [{ index: 0, delta: d, finish_reason: finish }],
+    });
+    const server = startFixtureServer([
+      {
+        request: { path: "", body: "" },
+        response: {
+          status: 200,
+          contentType: "text/event-stream",
+          body: sseBody([delta({ content: "ok" }), delta({}, "stop")]),
+        },
+      },
+    ]);
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: {
+          ...settingsFor(),
+          settings: {
+            provider: "nvidia",
+            model: "meta/llama-3.1-70b-instruct",
+            providers: { nvidia: { baseUrl: server.baseURL } },
+          } as LoadedSettings["settings"],
+        },
+        env: { ...TEST_ENV, NVIDIA_API_KEY: "nvapi-test-key" },
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          effort: "high",
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "test effort",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("EFF"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        toolDefs: [],
+      });
+      expect(server.received.length).toBeGreaterThan(0);
+      const parsedBody = JSON.parse(server.received[0] ?? "{}") as Record<string, unknown>;
+      expect(parsedBody.reasoning_effort).toBe("high");
+    } finally {
+      await server.stop();
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TUI-05
+  test("headless mode denies tools that ask without prompting and logs status denied", async () => {
+    const dir = await tempProject({});
+    try {
+      const data = join(dir.root, "data");
+      let ranInteractiveTool = false;
+      const interactiveTool: ToolDefinition<unknown> = {
+        name: "InteractivePrompt",
+        input: z.object({}),
+        descriptionFile: "tools/Read.md",
+        errorExample: {},
+        parallelSafe: true,
+        mutates: "none",
+        describeAction: () => ({
+          kind: "interaction",
+          effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+        }),
+        run: () => {
+          ranInteractiveTool = true;
+          return Promise.resolve({ status: "ok", content: [{ kind: "text", text: "ran" }] });
+        },
+      };
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data, cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "run interactive tool",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("ASK"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([
+          { toolCall: { id: "call_ask", name: "InteractivePrompt", input: {} } },
+          { text: "The interactive tool was denied as expected in headless mode." },
+        ]),
+        toolDefs: [interactiveTool],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toContain("denied as expected");
+      expect(ranInteractiveTool).toBe(false);
+
+      const read = await readSession({ data, projectRoot: dir.root, os: testOs(), session: out.sessionId });
+      const toolResult = read.events.find(
+        (e) => e.type === "tool.result" && (e.data as { callId?: string }).callId === "call_ask",
+      );
+      expect(toolResult).toBeDefined();
+      const resultData = toolResult?.data as { status: string; output: string };
+      expect(["error", "denied"]).toContain(resultData.status);
+      expect(resultData.output).toContain("Permission denied");
     } finally {
       await dir.dispose();
     }

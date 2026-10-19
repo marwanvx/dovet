@@ -233,6 +233,22 @@ describe("dovet -p headless", () => {
   });
 
   // spec: AC-TUI-05
+  test("json output on a guard stop emits the JSON reason and exits with the guard code", async () => {
+    const { HeadlessJson } = await import("./headless-output.ts");
+    const { dir, ...r } = await headless(["-p", "hi", "--output", "json", "--budget", "0"]);
+    try {
+      expect(r.code).toBe(4);
+      const parsed = HeadlessJson.safeParse(JSON.parse(r.out));
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.result.toLowerCase()).toContain("budget");
+      }
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TUI-05
   test("a recorded NVIDIA tool session drives the real tools end to end", async () => {
     const fx = (await Bun.file(
       join(import.meta.dir, "..", "..", "test", "fixtures", "nvidia", "session.json"),
