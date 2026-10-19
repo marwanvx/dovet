@@ -17,8 +17,8 @@ Agents run this loop through [build-loop.md](build-loop.md), which also covers p
 
 ## Rules for the agent (the repo's AGENTS.md holds the same rules; CLAUDE.md imports it)
 
-- The specs in `docs/` are the source of truth. If something is unclear or seems wrong, stop and ask; don't invent behavior.
-- Never use a library API from memory. Check the installed package's types or docs. If an external fact isn't in the spec, mark it `[SPIKE]` and ask.
+- The specs in `docs/` are the source of truth. If something is unclear or seems wrong, don't invent behavior silently: decide the best answer, record it in `docs/plan/tasks/QUESTIONS.md` and write it into the spec in the same PR (build loop step 6).
+- Never use a library API from memory. Check the installed package's types or docs. If an external fact isn't in the spec, mark it `[SPIKE]` and resolve it before building on it.
 - No new dependency without an ADR entry in `docs/plan/decisions.md`.
 - No `any`, no `as` casts except at zod-validated boundaries, no `@ts-ignore` (`@ts-expect-error` with a reason only for SDK typing lag, as Anthropic's docs suggest for new beta blocks).
 - No catch-and-ignore. Every caught error is handled, rethrown, or logged with context.
@@ -33,8 +33,8 @@ Agents run this loop through [build-loop.md](build-loop.md), which also covers p
 
 - A requirement is written in the spec of its feature, never only in `docs/plan/` (decisions, roadmap, open questions), the user journeys or `docs/background/`. After editing any of those, or adding a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes` to refresh the "Before you build" boxes, then `bun run docs:check` (CI runs the same check).
 
-- A spec change is a PR touching `docs/` with an ADR when it changes a decision.
-- Code that implements a changed spec goes in a separate PR after the spec PR is merged.
+- An answer to a spec gap (a `QUESTIONS.md` entry) is written into the spec in the same PR as the code that needs it.
+- A change to a decision (an ADR, the roadmap, a product decision) is its own PR touching `docs/`, with an ADR, and waits for the owner; code that depends on it follows after it merges.
 - When an external fact is re-verified, update its `[VERIFIED date]` marker; record the evidence in `docs/background/feature-research.md`.
 
 ## Avoiding wasted tokens while building
