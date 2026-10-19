@@ -558,3 +558,9 @@ Done: three headless jobs on `nvidia/nemotron-3.5-super-vl-120b-a12b` in a throw
 Review: quick (docs only).
 Learned: the M1 exit evidence's "10 real tasks" ran on recorded fixtures; this was the first live run. The key lives in `~/.bashrc` after its non-interactive early return, so load it with `eval "$(grep -E '^export NVIDIA_API_KEY=' ~/.bashrc)"`, never by printing it. Use `--output json`, not `--output-format`.
 Next: F2, then M2-05.
+
+## 2026-10-19 — Close the doc cycle: answers into specs, docs/README, recheck task
+Done: build loop step 6 now writes each spec-gap answer into the spec in the same PR, and the `spec` reviewer lens checks it. The product principles are linked. `docs/README.md` and `dev-workflow.md` no longer say "nothing is implemented", "Anthropic first" or "stop and ask". New task M2-09b re-measures the workflow audit after M2-05 → M2-09. PR: #150 (merged).
+Review: quick (docs only).
+Learned: an audit of the 82 tracked `.md` files against the session logs: 33 are in the cycle and read; `docs/prompts/` is read by the code; the rest are for GitHub visitors, history, or specs for tasks not started yet. 67 of 69 answered questions had never reached a spec; syncing them follows in separate PRs.
+Next: sync the answered questions into the specs, then F2, then M2-05.
