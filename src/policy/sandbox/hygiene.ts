@@ -168,18 +168,16 @@ export function worktreeCommonDenies(commonDir: string): string[] {
 
 /** Deny both the link and its target; missing paths are dropped and never stop the sandbox from starting. */
 export async function expandProtectedSymlinks(paths: readonly string[]): Promise<string[]> {
-  const out = new Set<string>();
+  const out = new Set<string>(paths);
   for (const p of paths) {
-    out.add(p);
-    out.add(p.replace(/\\/g, "/"));
     try {
       const st = await lstat(p);
       if (st.isSymbolicLink()) {
         // Native fs semantics: resolve the target the same way the OS does so the
         // returned string matches what callers passed in on every platform.
-        const target = nativeResolve(nativeDirname(p), await readlink(p));
+        const resolved = nativeResolve(nativeDirname(p), await readlink(p));
+        const target = p.includes("/") && !p.includes("\\") ? resolved.replace(/\\/g, "/") : resolved;
         out.add(target);
-        out.add(target.replace(/\\/g, "/"));
       }
     } catch {}
   }
