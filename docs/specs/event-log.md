@@ -145,6 +145,12 @@ There is no database or second store (ADR-4): two stores that must stay in sync 
 
 **Ephemeral sessions:** `--no-session-persistence` (headless; same flag name as Claude Code, for script compatibility) writes the log to a temp directory removed at exit (no resume, no rewind). The daily budget ledger is still written.
 
+**Decided while building (QUESTIONS Q50):**
+- An interrupted permission prompt is recorded as `{requestId, decision: "no", source: "interrupted"}`; a crashed turn's minimal receipt is `{turn, reason: "crashed", cost: {sessionUsd}}` until the full receipt exists.
+- The resume scan validates every line's envelope, version and core/unknown type but doesn't resolve blob refs; full blob validation stays in `readSession`. The sidecar holds the byte offset and event id of the latest `epoch.start` plus the state just before it (`mode`, `taint`, `turn`, `costUsd`, `provider`, `model`).
+- A provider error is history-related when it is a non-retryable `invalid_request` whose message names history, replay, transcript, tool results, prefix, messages or blocks.
+- A fork copies raw lines through the `turn.end` of the last complete turn, stopping at a corrupt line, a later turn or a later epoch; the original is never touched. `--no-session-persistence` writes the log to a temp folder removed at exit.
+
 ## Disk use
 
 Session logs can grow to gigabytes each, and hundreds of GB in total, when compaction history and raw tool output are stored repeatedly. Dovet:

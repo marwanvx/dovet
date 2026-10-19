@@ -263,6 +263,23 @@ Custom slash commands from `.claude/commands/*.md` / `.dovet/commands/*.md` (pro
 
 **Exit codes:** 0 success (also when open tasks remain after the continuation limit; JSON has `incomplete: true`) · 1 error · 2 usage/config error · 3 loop guard stopped · 4 budget stopped · 5 refusal · 6 history rejected by the provider (repair with `--repair`) · 70 crash (report written) · 129 SIGHUP · 130 interrupted (SIGINT) · 143 SIGTERM.
 
+**Decided while building (QUESTIONS Q49):**
+- Piped stdin with a prompt becomes `<stdin>\n<bytes>\n</stdin>\n\n<prompt>` (10 MB UTF-8 cap, exit 2 over it); with no prompt argument, stdin is the prompt.
+- Output schemas: `schema/headless.schema.json` (`dovet.json/1`: result, stopReason, incomplete, sessionId, receipt, usage, cost) and `schema/stream.schema.json` (`dovet.stream/1`), generated from zod by `gen:schemas`; stream lines escape U+2028/U+2029. `usage` and `cost` cover every request of the turn (follow-up F2).
+- Exit codes: 0 success incl. `incomplete: true`, 1 error, 2 usage/config, 3 guard, 4 budget, 5 refusal, 6 history rejected, 70 crash, 129 SIGHUP, 130 SIGINT, 143 SIGTERM.
+- An unwritable data directory: `Dovet data directory <path> is not writable; sessions won't be saved.` (probed by writing a random-named file, so a read-only directory starts instead of hanging). A damaged `trusted-folders.json` is kept as `.corrupt-<ISO stamp>` and rebuilt as `{}`, with a warning naming the backup.
+- `DOVET`, `DOVET_RUN`, `DOVET_SNAPSHOT` and `AI_AGENT` inherited from a parent run are stripped before directories and settings are read. In `--offline`: `<Tool> is disabled in --offline mode; only model requests leave the machine.`
+- Startup makes no network request; catalog refresh and the update check run only as background tasks after the prompt (15 s timeout).
+
+**Decided while building (QUESTIONS Q52, Q53):**
+- Model: flags win, then settings, then provider `nvidia`; no model anywhere is a usage error, exit 2 (follow-up F3 proposes a default).
+- `cmd:` credential references are refused in headless: it never runs a user-configured key command unattended. Env, keychain and file references resolve as usual.
+- `--permission-mode auto` behaves as `default`; `manual` is a usage error. Any ask is denied (`dontAsk` semantics).
+- `--no-session-persistence` or an unwritable data folder still writes the log, to a temp folder removed at exit, with the `won't be saved` notice: the log is the transcript.
+- Event ids come from a monotonic ULID generator, since same-millisecond random tails sort backwards half the time. Usage is scrubbed to plain JSON before output.
+- The turn tracks the malformed-round, identical-failure, no-progress and doomed-repeat guards across requests and ends with exit 3 and the guard's message; `--max-requests` overrides the 150-request guard. A resume flag that differs from the session's provider or model is a usage error (exit 2), and so is a stray `--repair`.
+- The JSON output carries the final text only; per-event streaming arrives with richer turn events.
+
 ## Terminal compatibility targets
 
 | Terminal | Status target for v0.1 |

@@ -239,6 +239,13 @@ The model asks the user a few multiple-choice questions when a decision is genui
 - The script's first lines are `set +H` and `trap 'pwd -P > <file>' EXIT`, so `exit` still records the cwd; a command that sets its own EXIT trap loses the carry-over for that call.
 - Scratch files live in `<data>/tmp`; the shell snapshot is started by the composition root and skipped when `shell.snapshot` is false.
 
+**Decided while building (QUESTIONS Q38):**
+- Output cap: 64 MB (`outputCapBytes`); past it the command is stopped and the result says `Output exceeded 64 MB; the command was stopped.`
+- The working file `<session dir>/<id>.txt` is written only when sanitized output passes 30,000 characters (a 2,000-character preview plus the path). It holds the text as printed, with no pretty-printing or re-wrapping. `ENOSPC`/`EDQUOT` gives `Disk full: output was cut at N bytes` and removes the partial file. Timeout and interrupt results show the same 10,000-character head-and-tail excerpt as failures.
+- Changed files: snapshots before and after (`Snapshotter.changes(before, after)`, name-status plus numstat of `git diff-tree`); a recognized file view skips them. Read-state entries of changed files are kept, so the next Write is stale and Edit's relaxed rule applies; such a path is marked `re-read before editing`.
+- Interactive commands: editors, pagers, `top`/`htop` without `-b`, `ssh` without a command, `git commit` without a message flag, `git rebase -i`, `git add -p`. Benign exit 1: the last command is grep/rg/egrep/fgrep/find/diff/test/`[`, `git diff` or `git grep`. A view: one listed program, one file, no flags that take values, no globs or expansions.
+- Leftover processes: `Platform.sweep(group, marker)` (Linux `/proc/<pid>/{stat,cmdline,environ}`, macOS `ps` and `ps eww`) finds the group's members and `DOVET_RUN=<uuid>` carriers, sends SIGTERM then SIGKILL after the grace period, and names at most three. It runs right after the shell exits, before the 500 ms pipe drain. If the sweep fails, the result says so and the group is still killed.
+
 ## 6. PowerShell (Windows without Git Bash, or `shell.windows: "powershell"`)
 
 Same contract as Bash (process group/tree, completion on exit, output sanitizing, limits, cwd carry-over, sandbox where available), except:
@@ -261,6 +268,11 @@ Same contract as Bash (process group/tree, completion on exit, output sanitizing
 8. **Startup cost:** each command starts a new PowerShell process (≈0.3–0.5 s for pwsh, more for 5.1); SPIKE-14 measures it. A persistent PowerShell host is a v0.2 option only if the measurements justify it.
 
 **Tool description variants** (prompt files `PowerShell.md` and `PowerShell51.md`): the 5.1 variant adds that `&&`/`||` don't exist (use `; if ($?) { … }`), that `curl`/`wget` are `Invoke-WebRequest` aliases (call `curl.exe` for real curl), that `>` writes UTF-16 (use the Write tool, or `Set-Content -Encoding utf8`), and that embedded double quotes in arguments to native programs are stripped (use single quotes or the `--%` stop-parsing token).
+
+**Decided while building (QUESTIONS Q39):**
+- Git Bash: after a timeout, interrupt or output cap, one more Git Bash kills every `/proc/*` whose environ holds the command's `DOVET_RUN` marker; a plain exit doesn't sweep on Windows, to save a shell start. An unquoted `>nul`/`>>nul` (any fd prefix) is rewritten to `/dev/null` (quotes and backslash escapes respected), and the result says so. `LANG=C.UTF-8` is set when unset.
+- A session cwd that no longer exists: the shell tool returns an error plus a `cwd` effect resetting to the first working directory.
+- PowerShell: one tool, `createBashTool({ powershell })`, named `PowerShell` with `PowerShell.md` or `PowerShell51.md` by edition. The execution-policy retry happens only when the output shows the policy text and no cwd file was written, so a script that ran is never run twice. The wrapper's output line 1 is the final directory, line 2 the language mode. Under 5.1 a native exit 0 with `$?` false counts as success when the newest error record is a `NativeCommandError`.
 
 ## 7. Grep
 
@@ -393,6 +405,12 @@ Further behavior:
 - `/plan <text>` enters it and sends the text as the prompt.
 - In plan mode with a plan already written, `/plan` shows the plan and `/plan open` opens it in the editor.
 
+**Decided while building (QUESTIONS Q48):**
+- EnterPlanMode is a `task-list` action (always allowed); ExitPlanMode and AskUserQuestion are `interaction` actions (always ask, even in bypassPermissions). `ToolContext.planPreviousMode` holds the mode before plan; it falls back to `default`.
+- Plan file: the slug is the first 6 words with `[Pasted text…]`/`[Image…]` removed, slugified to 40 characters plus `-<4-char suffix>`; the file is `<sessionDir>/plans/<slug>.md`, or `<projectRoot>/<plan.directory>/<slug>.md` when set.
+- Headless: ExitPlanMode returns the plan text with the file path, no dialog, and the mode stays `plan`.
+- Results: edited `The user edited the plan; the approved version is in <file>`; approved `Plan approved. Continuing in <mode>.`; Esc `The user hasn't approved the plan yet`; mode change `The user left plan mode without approving the plan`; keep planning returns the feedback verbatim; outside plan mode `Not in plan mode. The plan was already approved; continue with the implementation.`
+
 ## 12. TodoWrite
 
 The task list the model keeps for multi-step work. The user sees it live (TUI panel above the input, [tui](tui.md); headless `dovet.stream/1` events), and in headless runs it drives the open-items continuation ([agent-loop](agent-loop.md)). 
@@ -404,6 +422,8 @@ The task list the model keeps for multi-step work. The user sees it live (TUI pa
 - **Result:** `Task list updated (3/7 completed).` The list is not echoed back (it is in the call), which saves tokens.
 - **Stored** as the tool call itself, so resume, compaction (the current list is included in the summary) and `/diff` see it. It isn't a file, so it never touches the project.
 - **Permission:** none needed (no side effects). Not parallel-safe: list updates apply in the order the model sent them. Available in every mode, including plan.
+
+**Decided while building (QUESTIONS Q48):** `content` and `activeForm` are at most 200 characters, at most 50 items, at most one `in_progress`; the result is `Task list updated (X/Y completed).`
 
 ## Acceptance criteria (each tool has its own test file)
 - [ ] **AC-TOOLS-01** Read: a whole-file read of a 300 KB file returns the first page with the PARTIAL notice (line and token totals); a range read over the limit returns a PARTIAL view; UTF-16LE BOM round-trip; invalid UTF-8 shows U+FFFD and Edit refuses.

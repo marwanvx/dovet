@@ -204,6 +204,12 @@ Before each user turn and each tool batch, Dovet **re-stats** every settings fil
 - **Grants from other sources survive:** removing a directory from `permissions.additionalDirectories` doesn't revoke the same directory added with `--add-dir` or `/add-dir`.
 - Project settings changes from an **untrusted** folder are ignored, as at startup.
 
+**Decided while building (QUESTIONS Q45):**
+- Only top-level `model`, `provider` and `effort` are held back: an edit to one keeps the old value, names both in the notice, and applies through `/model`, `/effort` or a confirmed new epoch.
+- Watched: `stat` (following symlinks) of the six settings files and their four parent folders. A file changed when its existence, `mtimeMs`, `size`, `ino` (exact, bigint) or `isFile` differ; a folder when its existence or `mtimeMs` differ. A same-size rewrite within one mtime tick is invisible to stat alone.
+- Env and flags are frozen session overrides re-applied on every reload, so `--add-dir` and flag grants survive a file removal. An invalid file keeps the previous settings and rules, warning once per edit with file, line and key.
+- `SettingsChangeData {key, old, new, source}` with `source: "file"`; one applied top-level key is one event, and the notice is one line naming the changed files and keys. `LoadInput.projectTrusted: false` skips the repo-supplied project files at load and in the watch list.
+
 ## Settings migration
 
 Settings files carry an optional `"$version": <int>`. When a release renames or removes a key, it ships a migration step: Dovet shows the exact change ("`ui.fullscreen` → `ui.renderer: \"fullscreen\"`"), asks once to rewrite the file (keeping comments via `jsonc-parser` edits), and otherwise applies the mapping in memory with a startup warning. Removed keys produce a warning, never a silent ignore. Each migration has a test with a before/after fixture.
