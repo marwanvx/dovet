@@ -43,7 +43,7 @@ Set its `Status:` to `in-progress` and start a branch `task/<id>`.
 1. Read what `bun run next` printed for the task (its **Read** sections and their "Before you build" boxes); open a linked doc only when those sections point to it for this task. Nothing else unless a test failure points you there.
 2. If the task depends on an unresolved spike, resolve the spike first (its "How to resolve" in [open questions](../plan/open-questions.md), for real, with code and runs); record the result in open questions and [background/feature-research.md](../background/feature-research.md); apply its fallback if the answer is no.
 3. Write the tests for the task's criteria (`// spec: AC-xx-yy`) following the test-quality rules in [testing](../specs/testing.md), **run them before implementing and keep the failing output** (it goes in the PR: a test that passes before the code exists tests nothing), then implement until they pass. Verify every library or provider API against the installed types or official docs.
-4. `bun run check` must pass.
+4. `bun run check` must pass. An export that only tests call yet goes into `scripts/wiring.json` with the task that will call it (`bun run wiring` fails once that task is done and it still isn't).
 
 **When the spec doesn't say:** don't guess and don't go searching beyond the task's Read list for an answer that isn't there. **Answer it yourself.** Choose the best answer (the one that follows the [product principles](../product/principles.md) and the surrounding specs, and is safest and easiest to change later). Write an entry under "Answered" in `QUESTIONS.md`: what was missing, why it matters, your answer and why. **Write the answer into the spec in the same PR**, at the line it fills, followed by `(QUESTIONS Qn)`, and end the entry with `- **Spec:** <spec and section>` (or `none: <why>` for a plan-only answer); `bun run docs:check` fails without it. Later sessions read the specs, not `QUESTIONS.md`, so an answer that lives only there is lost. An answer that changes a decision (an ADR, the roadmap, a product decision) also waits for the owner (step 8.4). Never set a task to `blocked` or stop just to wait for the owner. Only if the answer needs something no agent can provide (an account, money, a secret, a physical device) does the question go under "Waiting for the owner"; then build everything that doesn't depend on it.
 
@@ -54,9 +54,11 @@ Spawn **fresh reviewers** (subagents with no memory of your work), **in parallel
 
 | Tier | When | Reviewers |
 |---|---|---|
-| `quick` | Only docs, Markdown, comments or test data changed | One reviewer, `scope` lens |
-| `standard` | Any other change | `tests` and `spec`, plus `scope` when it touches several modules |
-| `deep` | The diff touches a high-risk path listed in REVIEW.md | All four lenses: `tests`, `spec`, `scope`, `security` |
+| `quick` | Only docs, Markdown, comments or test data changed | None: `bun run check` (docs, coverage, wiring) is the review |
+| `standard` | Any other change | One reviewer covering `tests`, `spec` and `scope` |
+| `deep` | The diff touches a high-risk path listed in REVIEW.md | That reviewer plus the `security` lens |
+
+Scripts check what a script can (types, lint, tests on three OSes, docs, coverage, and `bun run wiring`: built-and-tested code nothing calls, the largest class of bugs that escaped review); the model reviewer spends its tokens on what only reading can judge.
 
 The lenses, split between them:
 

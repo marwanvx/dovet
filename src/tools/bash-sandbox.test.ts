@@ -389,7 +389,7 @@ describe("sandbox leaves no trace", () => {
     await svc.ready;
     expect(captured).toContain(px(join(cwd, ".git", "hooks")));
     expect(captured).toContain(px(join(cwd, ".git", "config")));
-  });
+  }, 60_000); // 50 real git runs through the Bash tool take over 5 s on macOS CI runners
 
   test("in a repo with extensions.worktreeConfig git log works and the common dir stays protected", async () => {
     if (process.platform === "win32") return;
