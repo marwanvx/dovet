@@ -245,11 +245,11 @@ describe("tierFor", () => {
 });
 
 describe("modelFor", () => {
-  test("Sonnet for quick and standard work, Opus at medium for deep work, an explicit --model wins", () => {
-    expect(modelFor("quick")).toEqual({ model: "sonnet", effort: "low" });
-    expect(modelFor("standard")).toEqual({ model: "sonnet", effort: "medium" });
+  test("Sonnet at high for quick and standard work, Opus at medium for deep work, an explicit --model wins", () => {
+    expect(modelFor("quick")).toEqual({ model: "sonnet", effort: "high" });
+    expect(modelFor("standard")).toEqual({ model: "sonnet", effort: "high" });
     expect(modelFor("deep")).toEqual({ model: "opus", effort: "medium" });
-    expect(modelFor("quick", "opus")).toEqual({ model: "opus", effort: "low" });
+    expect(modelFor("quick", "opus")).toEqual({ model: "opus", effort: "high" });
   });
 });
 

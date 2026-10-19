@@ -582,3 +582,9 @@ Done: the security reviewer and deep-tier runs use medium effort instead of high
 Review: quick.
 Learned: effort ceilings follow the owner's plan, not the blog defaults; raise a task to high only with the owner's OK.
 Next: F2, then M2-05.
+
+## 2026-10-20 — Workflow: Sonnet always at high effort (owner)
+Done: the runner runs Sonnet at high effort on quick and standard tasks; Opus (deep tier) stays at medium. PR: #156 (merged).
+Review: quick.
+Learned: effort settings are the owner's call: Sonnet high, Opus medium, reviewer low, security reviewer medium.
+Next: F2, then M2-05.

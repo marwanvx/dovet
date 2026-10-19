@@ -74,11 +74,11 @@ export function tierFor(nextOutput: string, risk: readonly string[]): Tier {
   return "standard";
 }
 
-// Sonnet suits a clear spec plus tests; security work gets Opus. Medium at most: the owner's plan limits (2026-10-20).
+// Owner (2026-10-20): Sonnet always at high effort; Opus, for security work, at medium to spare the plan's limits.
 export function modelFor(tier: Tier, model?: string): Pick {
   const picked: Record<Tier, Pick> = {
-    quick: { model: "sonnet", effort: "low" },
-    standard: { model: "sonnet", effort: "medium" },
+    quick: { model: "sonnet", effort: "high" },
+    standard: { model: "sonnet", effort: "high" },
     deep: { model: "opus", effort: "medium" },
   };
   return model === undefined ? picked[tier] : { model, effort: picked[tier].effort };
