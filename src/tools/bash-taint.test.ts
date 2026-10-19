@@ -37,5 +37,15 @@ describe("sandboxed curl to a non-registry host taints", () => {
       "echo curl https://example.com/x",
     );
     expect(blocked.meta?.effects ?? []).toEqual([]);
+    const unblockedContains = await run(
+      ctxFor(["blocked host: evilexample.com (denied by sandbox)"]),
+      "echo curl https://example.com/x",
+    );
+    expect(unblockedContains.meta?.effects?.some((e) => e.kind === "taint")).toBe(true);
+    const ipv6Tainted = await run(
+      ctxFor(["[denied] some other unrelated violation"]),
+      "echo curl https://[2001:db8::1]/x",
+    );
+    expect(ipv6Tainted.meta?.effects?.some((e) => e.kind === "taint")).toBe(true);
   });
 });

@@ -9,6 +9,7 @@ import {
   type RuleSet,
   type Subcommand,
   strippedArgvs,
+  XARGS_VALUED,
 } from "../rules/index.ts";
 import { shouldRefuseLocalHost } from "../sandbox/network.ts";
 import type { Analysis } from "../shell-parse/analyze.ts";
@@ -308,12 +309,44 @@ function fsCommand(s: Subcommand): boolean {
 
 /** Command names that always need a prompt, even under sandbox auto-allow (permissions §4.0 item 1). */
 const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc"]);
+const SHELL_COMMANDS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+const DYNAMIC_WORD = /[$`]/;
+
+function isDynamicVariant(v: string[]): boolean {
+  const raw = v[0] ?? "";
+  if (raw === "" || DYNAMIC_WORD.test(raw)) return true;
+  const name = program(raw);
+  if (DYNAMIC_NAMES.has(name)) return true;
+  if (name === "xargs") {
+    let i = 1;
+    let cmd: string | undefined;
+    while (i < v.length) {
+      const text = v[i] ?? "";
+      if (text === "--") {
+        cmd = v[i + 1];
+        break;
+      }
+      if (text.startsWith("-") && text.length > 1) {
+        if (text.includes("=")) i += 1;
+        else if (XARGS_VALUED.has(text)) i += 2;
+        else i += 1;
+      } else {
+        cmd = text;
+        break;
+      }
+    }
+    if (cmd === undefined || DYNAMIC_WORD.test(cmd)) return true;
+  }
+  if (SHELL_COMMANDS.has(name)) {
+    const at = v.indexOf("-c");
+    const script = at < 0 ? undefined : v[at + 1];
+    if (script === undefined || DYNAMIC_WORD.test(script)) return true;
+  }
+  return false;
+}
 
 function hasDynamicName(subs: Subcommand[]): boolean {
-  return subs.some((s) => {
-    const name = program(unwrapCmd(s).argv[0] ?? "");
-    return DYNAMIC_NAMES.has(name);
-  });
+  return subs.some((s) => variants(unwrapCmd(s).argv).some(isDynamicVariant));
 }
 
 function shellDefault(
