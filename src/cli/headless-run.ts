@@ -1402,7 +1402,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     }
   } finally {
-    await shellSnapshot?.ready();
+    if (shellSnapshot !== undefined) {
+      // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
+      await input.platform.killTree(`snapshot:${sessionId}`);
+      await shellSnapshot.ready();
+    }
     await writer.close();
   }
 }

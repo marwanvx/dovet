@@ -1885,8 +1885,60 @@ describe("runHeadless", () => {
     expect(on.spawned).toEqual([
       { argv: ["/usr/bin/zsh", "-l", "-i", "-c", "env -0"], group: `snapshot:${on.sessionId}` },
     ]);
-    expect(on.killed).toEqual([`snapshot:${on.sessionId}`]);
+    expect(new Set(on.killed)).toEqual(new Set([`snapshot:${on.sessionId}`]));
     expect((await run(false)).spawned).toEqual([]);
+  });
+
+  // spec: AC-TOOLS-25
+  test("a run that ends while the login shell is still starting stops it instead of waiting out the timeout", async () => {
+    const dir = await tempProject({});
+    const ends: Array<() => void> = [];
+    const stream = () => new ReadableStream<Uint8Array>({ start: (c) => void ends.push(() => c.close()) });
+    let exit: (code: number | null) => void = () => {};
+    const exited = new Promise<number | null>((resolve) => {
+      exit = resolve;
+    });
+    try {
+      const started = Date.now();
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: "linux",
+        settings: settingsFor(),
+        env: { ...TEST_ENV, SHELL: "/usr/bin/zsh" },
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "hi",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("W"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform({
+          resolveShell: () => Promise.resolve({ kind: "bash", path: "/bin/bash" as never }),
+          spawn: () => ({ pid: 1, stdout: stream(), stderr: stream(), exited }),
+          killTree: () => {
+            for (const end of ends.splice(0)) end();
+            exit(null);
+            return Promise.resolve();
+          },
+        }),
+        adapter: stubAdapter([{ stop: "end_turn", text: "done" }]),
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(Date.now() - started).toBeLessThan(5_000);
+    } finally {
+      await dir.dispose();
+    }
   });
 
   // spec: agent-loop "Early execution of read-only tools" (ADR-21)

@@ -563,6 +563,16 @@ describe("project env", () => {
   });
 
   // spec: AC-CLI-12
+  test("the local settings file is refused the same names, since a cloned repo can ship one", async () => {
+    const { input } = await setup({
+      "proj/.dovet/settings.local.json": '{ "env": { "LD_PRELOAD": "/x.so", "SAFE": "1" } }',
+    });
+    const loaded = await loadSettings({ ...input, env: {} });
+    expect(loaded.settings.env).toEqual({ SAFE: "1" });
+    expect(loaded.warnings.map((w) => w.key)).toEqual(["env.LD_PRELOAD"]);
+  });
+
+  // spec: AC-CLI-12
   test("project env is dropped while the folder is untrusted", async () => {
     const { input } = await setup({ "proj/.dovet/settings.json": '{ "env": { "SAFE": "1" } }' });
     expect((await loadSettings({ ...input, env: {}, projectTrusted: false })).settings.env).toBeUndefined();

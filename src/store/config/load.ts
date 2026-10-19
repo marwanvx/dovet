@@ -90,7 +90,7 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
     out.layers.push({
       source,
       file: path,
-      settings: source === "project" ? withoutRefusedEnv(result.value, path, out) : result.value,
+      settings: source === "project" || source === "local" ? withoutRefusedEnv(result.value, path, out) : result.value,
     });
   } catch (err) {
     if (!(err instanceof SettingsError)) throw err;
