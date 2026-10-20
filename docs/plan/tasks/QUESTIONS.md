@@ -1,6 +1,6 @@
 # Questions for the owner
 
-When a spec doesn't decide something, the agent answers it itself and records question and answer here, under "Answered" ([build loop](../../workflow/build-loop.md) step 6). The owner never has to answer. To change an answer, add a line `- **Override (owner, <date>):** <what you want instead>` to that entry; the next session applies it and adds an `**Override applied:**` line. "Waiting for the owner" is only for things no agent can do (an account, money, a secret, a physical device).
+When a spec doesn't decide something, the agent answers it itself and records question and answer here, under "Answered" ([build loop](../../workflow/build-loop.md) step 6). The owner never has to answer. To change an answer, add a line `- **Override (owner, <date>):** <what you want instead>` to that entry; the next session applies it and adds an `**Override applied:**` line. "Waiting for the owner" is only for things no agent can do (an account, money, a secret, a physical device). Owner rule (2026-10-20): never ask the owner a question; the agent decides, with the reviewer checking the evidence.
 
 ## Waiting for the owner
 
@@ -10,12 +10,6 @@ Needed only before the first public release (owner, 2026-10-12: not now); buildi
 2. **Make the key.** Install Bun if you don't have it: on macOS or Linux run `curl -fsSL https://bun.sh/install | bash`; on Windows run `powershell -c "irm bun.sh/install.ps1 | iex"` (then open a new terminal). On the repository's GitHub page click **Code** > **Download ZIP**, unzip it, open a terminal in the unzipped folder and run `bun scripts/sign-release.ts --new-key`. It prints a private key and a public key.
 3. **Store the private key.** In the `release` environment page from step 1, under **Environment secrets** click **Add environment secret**, name `DOVET_RELEASE_KEY`, paste the private key, **Add secret**. Also keep a copy somewhere safe offline (a password manager). Never paste it anywhere else, including to the agent. Then clear the terminal (`clear`, or Cmd+K on macOS) and close it.
 4. **Give the agent the public key.** Paste the public key line into your next message to the agent (it is safe to share). The agent puts it into Dovet (`src/cli/release-signature.ts`); from then on a `v*` tag releases.
-
-### W2 (Q6): may the Windows snapshot speed target be 400 ms instead of 200 ms?
-AC-CKPT-05 says a second snapshot of an unchanged 10,000-file repository takes under 200 ms. CI measured Linux 190 ms, macOS 157 ms and Windows 498 ms (Windows needs about 27 ms just to start each `git` process). The recommendation: keep 200 ms on Linux and macOS, allow 400 ms on Windows. Agents may not loosen a criterion themselves. Reply "yes" or "no"; until then the Windows test keeps the 200 ms target.
-
-### W3 (Q43 item 9): AC-CLI-10 contradicts the permissions spec
-AC-CLI-10 says a file edit in `repo/other/` can be saved with "don't ask again", but permissions §1 makes file-edit grants session-only. The recommendation: reword AC-CLI-10 to "a 'don't ask again' rule from a session started in `repo/pkg/` saves to `repo/.dovet/settings.local.json`", which is what the test checks today. Reply "yes" or "no".
 
 ## Answered
 
@@ -436,3 +430,11 @@ AC-CLI-10 says a file edit in `repo/other/` can be saved with "don't ask again",
 - **Answer:** a local file is personal only when its exact text matches a SHA-256 Dovet recorded in `<data>/local-settings.json` when `saveLocalRule` last wrote it (per project root); `.claude/settings.local.json` never is. Everything else is repo-supplied: ignored except deny/ask rules until the folder is trusted, and part of the trust hash. Fail-closed on a missing or damaged record file. Chosen over "ask once per file" because headless can't ask, and over a signature because nothing outside `<data>` is out of the repo's reach. `saveLocalRule` records the file only when it was missing before the save or already matched the record (review round 1: otherwise one "don't ask again" would bless a repo-supplied file's own entries). The cost is that a hand-edited personal local file needs the trust dialog (M3-10) once per edit.
 - **Built:** `src/store/config/local-record.ts` (new), `trust.ts`, `write.ts`, `atomic.ts` (`writeFileAtomic` moved so the record module can use it without an import cycle), `src/policy/grants/save.ts`, `src/cli/main.ts`; tests in `trust.test.ts`, `load.test.ts`, `grants.test.ts`, `src/cli/main.test.ts`.
 - **Spec:** permissions §11.
+
+### Q72 (Q6, owner delegated 2026-10-20): the Windows target for a repeat snapshot
+- **Answer (agent):** AC-CKPT-05 is under 200 ms on Linux and macOS and under 400 ms on Windows. Measured on CI runners: Linux 190 ms, macOS 157 ms, Windows 498 ms with 20,000 files; a Windows `git` process costs about 27 ms to start and a snapshot starts about six, so 200 ms is below Windows' floor. 400 ms keeps the criterion meaningful (a broken stat cache takes seconds). Fewer processes is the fix if real use needs more.
+- **Spec:** checkpoints "Acceptance criteria" AC-CKPT-05.
+
+### Q73 (Q43 item 9, owner delegated 2026-10-20): AC-CLI-10 contradicted permissions §1
+- **Answer (agent):** permissions §1 makes file-edit grants session-only, so AC-CLI-10 can't save an edit grant. It now says a "don't ask again" rule from a session started in `repo/pkg/` saves to `repo/.dovet/settings.local.json`, which is what its test checks (a shell rule). The criterion still proves the save goes to the project root, not the subfolder.
+- **Spec:** cli-config "Acceptance criteria" AC-CLI-10.

@@ -619,3 +619,9 @@ Review: deep, 2 rounds, 3 fixed (saving a rule blessed a repo-supplied file's ow
 Learned: `writeFileAtomic` moved to `store/config/atomic.ts` to avoid an import cycle. Trade-off recorded in Q71: a hand-edited local file needs the trust dialog (M3-10) once per edit, and a rule saved into a repo-supplied file is written but the file stays untrusted, so M3-05's prompt should say so (and `saveGrant` now takes `{ dataDir, os }`). F8 and F10 (symlinked local file) remain open, both minor.
 Next: M2-05b (sandbox and instruction files in the session boot).
 
+
+## 2026-10-20 — Owner rule: agents answer their own questions; CI required on main
+Done: W2 and W3 decided by the agent (Q72: AC-CKPT-05 is 400 ms on Windows; Q73: AC-CLI-10 reworded to match permissions §1). Owner rule: never ask the owner a question; a criterion changes only with measured evidence in QUESTIONS.md. `src/store/config/trust.ts` is on REVIEW.md's high-risk list. `main` now requires the three CI checks and up-to-date branches. PR: #163 (merged).
+Review: quick (docs only).
+Learned: "Waiting for the owner" holds only what no agent can do (W1, the release key). With strict protection a PR behind `main` must run `gh pr update-branch` before it can merge (build loop step 8.3).
+Next: M2-05b.

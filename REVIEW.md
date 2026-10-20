@@ -13,7 +13,7 @@ Dovet's promise is that the agent can't hide what it did, what it cost, or what 
 
 ## High-risk paths
 
-A diff touching any of these gets the `deep` tier: `src/policy/**`, `src/store/secrets/**`, `src/cli/sandbox.ts`, `src/cli/update.ts`, `src/cli/release-signature.ts`, `src/cli/auth.ts`, `.github/workflows/**`, `scripts/build-release.ts`, `scripts/sign-release.ts`, `docs/prompts/**`.
+A diff touching any of these gets the `deep` tier: `src/policy/**`, `src/store/secrets/**`, `src/store/config/trust.ts`, `src/cli/sandbox.ts`, `src/cli/update.ts`, `src/cli/release-signature.ts`, `src/cli/auth.ts`, `.github/workflows/**`, `scripts/build-release.ts`, `scripts/sign-release.ts`, `docs/prompts/**`.
 
 ## Findings
 

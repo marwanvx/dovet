@@ -11,7 +11,7 @@ bun install   # once per checkout
 bun run next
 ```
 
-It prints where the project stands (owner overrides to apply, the last progress entries, the current milestone), the task to work on, and **the exact spec text that task needs**. Read that output in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `bun run next M0-03`.
+It prints where the project stands, the task to work on and **the exact spec text that task needs**. Read it in full; it replaces "explore the docs". Then follow [docs/workflow/build-loop.md](docs/workflow/build-loop.md) step by step (it starts with fixing anything broken, and ends with a progress entry). Need another task's reading? `bun run next M0-03`.
 
 ## Where things are
 
@@ -41,7 +41,7 @@ Code, tests and files go where `docs/specs/architecture.md` "Repository layout" 
 - **Every requirement lives in its feature's spec.** If you change `docs/plan/` or the user journeys, or add a `[SPIKE-n]`/ADR reference, run `bun run docs:boxes`. After any docs change, `bun run docs:check` must pass.
 - **Never use a library or provider API from memory.** Verify against the installed package's types first, then current docs (Context7 `resolve-library-id` + `query-docs`; DeepWiki for how an open-source repo works). Check the traps table below first.
 - **Every turn resends the whole conversation.** Make independent reads and searches in one turn; search, then read only the lines you need; pipe long output through `tail -n 60`; never read a whole spec (a hook refuses it: `bun run next` printed your sections with their line ranges).
-- **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass.
+- **Tests first, and real tests** (`docs/specs/testing.md` "Test-quality rules"): tag each with its criterion (`// spec: AC-TOOLS-04`), run it and see it fail before implementing, test what a user would see, don't fake the thing being tested. Never weaken a test or a criterion to make it pass; one that measurement shows is wrong changes only with that evidence in QUESTIONS.md, never by asking the owner.
 - **No new runtime dependency** without an entry in ADR-15 (`docs/plan/decisions.md`).
 - TypeScript strict; no `any`; zod-parse every external input; no floating promises; no catch-and-ignore.
 - **Module boundaries and state ownership** (`docs/specs/architecture.md`): tools return effects and never change session state; no module-level mutable state, no `process.chdir`, no `process.env` writes; only `cli/main.ts` touches `process.*`.
