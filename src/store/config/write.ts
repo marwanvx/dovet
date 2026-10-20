@@ -11,8 +11,12 @@ import { readSettingsText } from "./read.ts";
 
 const LOCAL_FILE = join(".dovet", "settings.local.json");
 
-async function addToArray(file: string, path: string[], items: string[]): Promise<string> {
-  const existing = await readSettingsText(file);
+async function addToArray(
+  file: string,
+  existing: string | undefined,
+  path: string[],
+  items: string[],
+): Promise<string> {
   const created = existing === undefined;
   let text = existing ?? "{}\n";
   const { tree } = parseSettingsText(text, file);
@@ -80,7 +84,7 @@ export async function saveLocalRule(
   const before = await readSettingsText(file);
   // A file the repo supplied stays repo-supplied: adding one rule to it must not bless the entries it came with.
   const ours = before === undefined || (await localFileRecorded(record, projectRoot, before));
-  const text = await addToArray(file, ["permissions", kind], [rule]);
+  const text = await addToArray(file, before, ["permissions", kind], [rule]);
   if (ours) await recordLocalFile(record, projectRoot, text);
   await excludeFromGit(projectRoot);
 }
