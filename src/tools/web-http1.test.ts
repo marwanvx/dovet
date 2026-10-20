@@ -98,15 +98,27 @@ describe("HTTP/1.1 over a secured socket", () => {
   });
 
   // spec: AC-TOOLS-51
-  test("malformed replies are refused", async () => {
+  test("a reply that isn't HTTP is refused", async () => {
     await expect(reply(["not http at all\r\n\r\n"])).rejects.toThrow("isn't HTTP/1.x");
+  });
+
+  // spec: AC-TOOLS-51
+  test("headers that never end are cut off at the limit", async () => {
     await expect(reply([`HTTP/1.1 200 OK\r\nX: ${"a".repeat(70000)}`], false)).rejects.toThrow("headers are too long");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a bad Content-Length, an unsupported encoding and a silent server are refused", async () => {
     await expect(reply(["HTTP/1.1 200 OK\r\nContent-Length: abc\r\n\r\n"])).rejects.toThrow("Content-Length");
     await expect(reply(["HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\n"])).rejects.toThrow("unsupported");
     await expect(reply(["HTTP/1.1 200 OK\r\nContent-Encoding: br\r\nContent-Length: 1\r\n\r\nx"])).rejects.toThrow(
       "content encoding",
     );
     await expect(reply([])).rejects.toThrow("before replying");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a chunk size that isn't hexadecimal fails the body", async () => {
     const badChunk = await reply(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n"]);
     await expect(badChunk.text()).rejects.toThrow("malformed chunk size");
   });
