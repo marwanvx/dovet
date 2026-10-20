@@ -25,9 +25,24 @@ export function createMediaBudget(
       if (e.type === "turn.end" && e.turn !== null && TurnEndData.parse(e.data).reason === "cancelled")
         cancelled.add(e.turn);
     }
+    const now = epoch();
+    // A repair epoch resends the earlier epochs' turns (their latest epoch wins), as the transcript builder does.
+    const repair = events.some(
+      (e) => e.type === "epoch.start" && e.epoch === now && (e.data as { reason?: string })?.reason === "repair",
+    );
+    const latest = new Map<number, number>();
+    if (repair) {
+      for (const e of events) {
+        if (e.turn !== null && e.epoch <= now) latest.set(e.turn, Math.max(latest.get(e.turn) ?? 0, e.epoch));
+      }
+    }
+    const sent = (e: EventEnvelope): boolean =>
+      e.epoch <= now &&
+      !(e.turn !== null && cancelled.has(e.turn)) &&
+      (repair && e.turn !== null ? e.epoch === latest.get(e.turn) : e.epoch === now);
     const total = { count: 0, base64: 0 };
     for (const e of events) {
-      if (e.type !== "tool.result" || e.epoch !== epoch() || (e.turn !== null && cancelled.has(e.turn))) continue;
+      if (e.type !== "tool.result" || !sent(e)) continue;
       for (const m of ToolResultData.parse(e.data).media ?? []) {
         total.count += 1;
         total.base64 += base64Size(m.bytes);

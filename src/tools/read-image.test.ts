@@ -233,4 +233,26 @@ describe("media budget", () => {
     const budget = createMediaBudget(events, () => 2, { requestCapBytes: 1_000_000, maxImages: 1 });
     expect(budget.claim(1000)).toBeUndefined();
   });
+
+  // spec: AC-TOOLS-35
+  test("a repair epoch counts the images of the earlier epochs it sends again", () => {
+    const events: EventEnvelope[] = [
+      resultEvent(1, 0, [100_000]),
+      resultEvent(2, 0, [100_000]),
+      {
+        v: 1,
+        id: "R",
+        seq: 9,
+        ts: "2026-10-21T00:00:00.000Z",
+        type: "epoch.start",
+        epoch: 1,
+        turn: null,
+        data: { reason: "repair" },
+      } as unknown as EventEnvelope,
+    ];
+    const repaired = createMediaBudget(events, () => 1, { requestCapBytes: 1_000_000, maxImages: 2 });
+    expect(repaired.claim(1000)).toContain("Too many images in this conversation (2)");
+    const compacted = createMediaBudget(events.slice(0, 2), () => 1, { requestCapBytes: 1_000_000, maxImages: 2 });
+    expect(compacted.claim(1000)).toBeUndefined();
+  });
 });
