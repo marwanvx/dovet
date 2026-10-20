@@ -625,3 +625,9 @@ Done: W2 and W3 decided by the agent (Q72: AC-CKPT-05 is 400 ms on Windows; Q73:
 Review: quick (docs only).
 Learned: "Waiting for the owner" holds only what no agent can do (W1, the release key). With strict protection a PR behind `main` must run `gh pr update-branch` before it can merge (build loop step 8.3).
 Next: M2-05b.
+
+## 2026-10-20 — Runner: a PR left open after review no longer stops `bun run auto`
+Done: `scripts/auto.ts` read the progress log from `origin/main`, so a session that followed build loop step 7.4 (PR left open, entry on the task branch) looked like one that wrote nothing, and the run stopped after one task. It now reads the checkout and goes on to a fresh session that picks up the open PR; it stops if the same task's PR is still open after 3 sessions in a row. PR: see this branch.
+Review: quick (runner script, tests in `scripts/auto.test.ts`).
+Learned: the runner's stop reason ("no new progress entry") hid the real state twice (2026-10-20 03:57 and 11:37 in `auto-runs.log`).
+Next: M2-05b (rethink on PR #164).

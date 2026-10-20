@@ -5,7 +5,8 @@
 //
 // The terminal shows each step as it happens (files read and edited, commands, helper agents, plan usage).
 // Ctrl+C once: stop after the current task. Twice: stop now.
-// It stops when a run fails, records no progress entry, or leaves a task waiting for the owner. A 5-hour usage
+// It stops when a run fails, records no progress entry, leaves a task waiting for the owner, or leaves one task's
+// PR open three sessions in a row (a PR left open after review goes on: the next session rethinks it). A 5-hour usage
 // limit waits for the reset and retries; a weekly limit stops. Each run is logged to auto-runs.log.
 import { appendFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -149,11 +150,27 @@ export function lastEntry(progress: string): { count: number; text: string } {
   return { count: entries.length, text: (entries.at(-1) ?? "").trim() };
 }
 
+const MAX_OPEN_RUNS = 3;
+
+/** Build loop step 7.4 leaves a PR open after three review rounds; this counts sessions in a row that did so for one task. */
+export function openRuns(progress: string): number {
+  const entries = progress.split(/^(?=## )/m).filter((e) => e.startsWith("## "));
+  const taskOf = (e: string) => /^## \S+ — (\S+)/.exec(e)?.[1];
+  const task = taskOf(entries.at(-1) ?? "");
+  let n = 0;
+  for (const e of entries.reverse()) {
+    if (taskOf(e) !== task || !/PR: #\d+ \(open/.test(e)) break;
+    n++;
+  }
+  return n;
+}
+
 export function decide(input: {
   exitCode: number;
   run: RunResult | { unreadable: string };
   before: number;
   after: { count: number; text: string };
+  openRuns?: number;
 }): Decision {
   const { run, after } = input;
   if ("unreadable" in run) return { action: "stop", reason: `couldn't read the run's result: ${run.unreadable}` };
@@ -166,6 +183,10 @@ export function decide(input: {
     return { action: "stop", reason: "the session finished without a new progress entry" };
   const next = /^Next:(.*)$/m.exec(after.text)?.[1] ?? "";
   if (/block|owner|waiting/i.test(next)) return { action: "stop", reason: `the next step needs you: ${next.trim()}` };
+  if ((input.openRuns ?? 0) >= MAX_OPEN_RUNS) {
+    const task = /^## \S+ — (\S+)/.exec(after.text)?.[1] ?? "the task";
+    return { action: "stop", reason: `${task} is still not merged after ${MAX_OPEN_RUNS} sessions` };
+  }
   return { action: "next" };
 }
 
@@ -329,9 +350,9 @@ async function run(argv: string[]): Promise<{ code: number; stdout: string }> {
   return { code, stdout };
 }
 
-async function mainProgress(): Promise<{ count: number; text: string }> {
-  await run(["git", "fetch", "-q", "origin", "main"]);
-  return lastEntry((await run(["git", "show", "origin/main:docs/plan/tasks/PROGRESS.md"])).stdout);
+// The checkout, not origin/main: a task whose PR stays open writes its entry only on its branch.
+async function progress(): Promise<string> {
+  return Bun.file(join(ROOT, "docs/plan/tasks/PROGRESS.md")).text();
 }
 
 function prStateOf(pr: number): string {
@@ -376,7 +397,7 @@ async function main(): Promise<void> {
   const feed = newFeed();
   let total = 0;
   for (let task = 1, waits = 0; task <= opts.tasks; ) {
-    const before = (await mainProgress()).count;
+    const before = lastEntry(await progress()).count;
     const started = Date.now();
     const tier = tierFor(
       (await run(["bun", "run", "next"])).stdout,
@@ -389,8 +410,9 @@ async function main(): Promise<void> {
     console.log(`${DIM}       Ctrl+C: stop after this task · twice: stop now${RESET}`);
     const { code, resultLine } = await session(claudeArgs(opts, pick), feed, control);
     const result = parseRun(resultLine === "" ? "(no result)" : resultLine);
-    const after = await mainProgress();
-    const decided = decide({ exitCode: code, run: result, before, after });
+    const text = await progress();
+    const after = lastEntry(text);
+    const decided = decide({ exitCode: code, run: result, before, after, openRuns: openRuns(text) });
     const decision = decided.action === "next" ? (mergeCheck(after.text, (pr) => prStateOf(pr)) ?? decided) : decided;
     const cost = "unreadable" in result ? 0 : result.costUsd;
     total += cost;
