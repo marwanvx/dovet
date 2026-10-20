@@ -22,6 +22,7 @@ export const SERVICE_HOSTS: Readonly<Record<Exclude<ServiceId, "searxng">, strin
 export const MAX_RESULTS = 10;
 export const MAX_SNIPPET = 300;
 const MAX_TITLE = 200;
+const MAX_URL = 2000;
 
 /** The response did not have the shape the service documents. */
 export class UnexpectedResponse extends Error {}
@@ -120,20 +121,41 @@ const SearxngItem = z.object({ title: Str, url: z.string(), content: Str, publis
 
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
+/** Control, bidirectional and invisible code points: turned into spaces so a page can't hide or reorder text. */
+const INVISIBLE: ReadonlyArray<readonly [number, number]> = [
+  [0x0, 0x1f],
+  [0x7f, 0x9f],
+  [0xad, 0xad],
+  [0x34f, 0x34f],
+  [0x61c, 0x61c],
+  [0x115f, 0x1160],
+  [0x180e, 0x180e],
+  [0x200b, 0x200f],
+  [0x202a, 0x202e],
+  [0x2066, 0x2069],
+  [0x3164, 0x3164],
+  [0xfe00, 0xfe0f],
+  [0xffa0, 0xffa0],
+];
+
+const spaceInvisible = (text: string): string =>
+  Array.from(text, (ch) => {
+    const cp = ch.codePointAt(0) ?? 0;
+    return INVISIBLE.some(([from, to]) => cp >= from && cp <= to) ? " " : ch;
+  }).join("");
+
 function clean(text: string | null | undefined, max: number): string {
-  const plain = (text ?? "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+  const decoded = (text ?? "")
+    .slice(0, max * 8)
+    .replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,10});/gi, (m, e: string) => {
       if (e.startsWith("#")) {
         const code = e[1]?.toLowerCase() === "x" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
         return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
       }
       return ENTITIES[e.toLowerCase()] ?? m;
     })
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters in a page's text must not reach the transcript.
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/<[^<>]*>/g, "");
+  const plain = spaceInvisible(decoded).replace(/\s+/g, " ").trim();
   const shown = stripHidden(plain).text;
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
 }
@@ -158,6 +180,9 @@ function hitOf(
     return undefined;
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+  parsed.username = "";
+  parsed.password = "";
+  if (parsed.href.length > MAX_URL) return undefined;
   const hit: SearchHit = { title: clean(title, MAX_TITLE) || parsed.hostname, url: parsed.href };
   const d = dateOf(date);
   if (d !== undefined) hit.date = d;

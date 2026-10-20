@@ -149,6 +149,8 @@ describe("WebSearch in the headless boot", () => {
       expect(result.status).toBe("ok");
       expect(result.output).toContain("1. Bun 1.4\n   https://bun.sh/blog\n   released");
       expect(result.output).toContain("Search backend: exa");
+      const logged = read.events.find((e) => e.type === "tool.result")?.data as { search?: object };
+      expect(logged.search).toEqual({ backend: "exa", calls: 1 });
       expect(JSON.stringify(read.events)).not.toContain("exa-FAKE-KEY-0123456789");
       const taint = read.events.find((e) => e.type === "taint.change")?.data as { source: string; tainted: boolean };
       expect(taint).toMatchObject({ source: "WebSearch: exa", tainted: true });

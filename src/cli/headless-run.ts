@@ -1521,7 +1521,12 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                   : r.output.status === "timeout"
                     ? "timeout"
                     : "error";
-          push("tool.result", epochNum, turn, { callId: r.callId, status, output: text });
+          push("tool.result", epochNum, turn, {
+            callId: r.callId,
+            status,
+            output: text,
+            ...(r.output.meta?.search === undefined ? {} : { search: r.output.meta.search }),
+          });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
           applyResultTaint(r);
         }

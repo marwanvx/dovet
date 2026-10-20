@@ -9,6 +9,7 @@ import {
   type ToolDefinition,
   type ToolOutput,
 } from "./types.ts";
+import { isLocalHost } from "./web-net.ts";
 import {
   buildRequest,
   FILTERS_NATIVELY,
@@ -94,15 +95,12 @@ const hostOf = (backend: SearchBackendId, settings: Readonly<Settings>): string 
   if (backend === "provider") return "provider";
   if (backend === "searxng") {
     const url = settings.websearch?.searxngUrl;
-    return url !== undefined && URL.canParse(url) && !isLocalName(new URL(url).hostname)
+    return url !== undefined && URL.canParse(url) && !isLocalHost(new URL(url).hostname)
       ? new URL(url).hostname
       : "searxng";
   }
   return SERVICE_HOSTS[backend];
 };
-
-const isLocalName = (host: string): boolean =>
-  host === "localhost" || !host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":");
 
 async function readJson(res: Response, signal: AbortSignal): Promise<unknown> {
   const reader = res.body?.getReader();
