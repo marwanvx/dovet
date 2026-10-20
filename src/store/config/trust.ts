@@ -17,18 +17,7 @@ export type TrustedFolders = Record<string, { hash: string; trusted: boolean }>;
 
 // Only settings that no value in a repo file can turn into less than the user chose: merge lets the higher layer
 // replace scalars and non-rule arrays, so a list or a mode from an untrusted file would wipe the user's own.
-const SAFE_TOP_LEVEL = [
-  "$schema",
-  "$version",
-  "model",
-  "effort",
-  "ui",
-  "compaction",
-  "cache",
-  "read",
-  "webfetch",
-  "git",
-] as const;
+const SAFE_TOP_LEVEL = ["$schema", "$version", "ui"] as const;
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -58,7 +47,6 @@ export function restrictUntrusted(settings: Settings): { kept: Settings; ignored
   for (const key of SAFE_TOP_LEVEL) {
     if (settings[key] !== undefined) kept[key] = settings[key];
   }
-  if (settings.instructions?.files !== undefined) kept.instructions = { files: settings.instructions.files };
   const p = settings.permissions;
   if (p !== undefined) {
     const permissions = present({

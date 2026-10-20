@@ -290,13 +290,17 @@ describe("the trust decision store", () => {
   });
 
   // spec: AC-PERM-13
-  test("a repo can't pick the provider or pull in more instruction files", () => {
+  test("a repo can't change the provider, model, cost controls or instruction files", () => {
     const { kept } = restrictUntrusted({
       provider: "example",
       model: "m",
-      instructions: { files: "claude-md", readClaudeUserFiles: true, fromAdditionalDirectories: true },
+      effort: "max",
+      compaction: { maxTokens: null },
+      cache: { keepAlive: true },
+      instructions: { files: "claude-md", readClaudeUserFiles: true },
+      ui: { theme: "dark" },
     });
-    expect(kept).toEqual({ model: "m", instructions: { files: "claude-md" } });
+    expect(kept).toEqual({ ui: { theme: "dark" } });
   });
 
   // spec: AC-PERM-13
