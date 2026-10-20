@@ -49,6 +49,9 @@
   "src/tools/questions.ts:truncateHeader": "test-only: a helper exported for its unit test",
   "src/tools/read.ts:readTool": "test-only: the default instance tests use; the product builds its tools with create*",
   "src/tools/registry.ts:toolCallData": "M2-16",
+  "src/tools/test-certs.ts:TEST_CERT_LOOPBACK": "test-only: a throwaway certificate fixture for the proxy TLS tests",
+  "src/tools/test-certs.ts:TEST_CERT_PUBLIC_IP": "test-only: a throwaway certificate fixture for the proxy TLS tests",
+  "src/tools/test-certs.ts:TEST_KEY": "test-only: a throwaway certificate fixture for the proxy TLS tests",
   "src/tools/todos.ts:todoWriteTool": "test-only: the default instance tests use; the product builds its tools with create*",
   "src/tools/write.ts:writeTool": "test-only: the default instance tests use; the product builds its tools with create*"
 }
