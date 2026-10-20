@@ -296,16 +296,19 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
         }
       }
     } catch (e) {
+      // A service call that was sent is counted even when it failed or the user stopped it (tools §10 "Cost").
+      const price = priceOf(backend);
+      const meta = reached
+        ? { search: { backend, calls: 1, ...(price === undefined ? {} : { priceUsd: price }) } }
+        : undefined;
       if (ctx.signal.aborted)
         return {
           status: "interrupted",
           content: [{ kind: "text", text: "Interrupted by the user before this tool finished." }],
+          ...(meta === undefined ? {} : { meta }),
         };
       const out = fail(`WebSearch failed (${backend}): ${describeFailure(e, secrets)}`);
-      // A service call that was sent is counted even when it failed (tools §10 "Cost").
-      if (!reached) return out;
-      const price = priceOf(backend);
-      return { ...out, meta: { search: { backend, calls: 1, ...(price === undefined ? {} : { priceUsd: price }) } } };
+      return meta === undefined ? out : { ...out, meta };
     }
 
     if (dropped !== undefined) {

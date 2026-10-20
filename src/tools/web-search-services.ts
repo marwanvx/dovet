@@ -148,21 +148,26 @@ const spaceInvisible = (text: string): string =>
 /** Whole tags go in one pass; any bracket left over is deleted, so nothing can be rebuilt from what remains. */
 const withoutTags = (text: string): string => text.replace(/<[^<>]*>/g, "").replace(/[<>]/g, "");
 
+/** `slice` that never ends on half a surrogate pair. */
+const cut = (text: string, end: number): string => {
+  const head = text.slice(0, end);
+  const last = head.charCodeAt(head.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? head.slice(0, -1) : head;
+};
+
 function clean(text: string | null | undefined, max: number): string {
-  const decoded = (text ?? "")
-    .slice(0, max * 8)
-    .replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,10});/gi, (m, e: string) => {
-      if (e.startsWith("#")) {
-        const code = e[1]?.toLowerCase() === "x" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
-        return Number.isInteger(code) && code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
-          ? String.fromCodePoint(code)
-          : m;
-      }
-      return ENTITIES[e.toLowerCase()] ?? m;
-    });
+  const decoded = cut(text ?? "", max * 8).replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,10});/gi, (m, e: string) => {
+    if (e.startsWith("#")) {
+      const code = e[1]?.toLowerCase() === "x" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
+      return Number.isInteger(code) && code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+        ? String.fromCodePoint(code)
+        : m;
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
   const plain = spaceInvisible(withoutTags(decoded)).replace(/\s+/g, " ").trim();
   const shown = stripHidden(plain).text;
-  return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
+  return shown.length > max ? `${cut(shown, max - 1)}…` : shown;
 }
 
 function dateOf(value: string | null | undefined): string | undefined {

@@ -526,6 +526,41 @@ describe("untrusted result text", () => {
     expect((await sent.run({ query: "q" })).meta?.search).toEqual({ backend: "exa", calls: 1, priceUsd: 0.01 });
   });
 
+  // spec: AC-TOOLS-44
+  test("a search the user stopped after it was sent is still counted", async () => {
+    const ac = new AbortController();
+    const s = scripted(() => {
+      ac.abort();
+      throw new DOMException("aborted", "AbortError");
+    });
+    const { run, ctx } = await rig(
+      { backend: "exa", keys: { exa: new Secret(KEY) }, fetch: s.fetchFn },
+      { websearch: { pricePerSearch: 0.01 } },
+    );
+    const out = await run({ query: "q" }, { ...ctx, signal: ac.signal });
+    expect(out.status).toBe("interrupted");
+    expect(out.meta?.search).toEqual({ backend: "exa", calls: 1, priceUsd: 0.01 });
+  });
+
+  // spec: AC-TOOLS-12
+  test("only the first 50 results are read, and a cut never leaves half a surrogate pair", async () => {
+    const bad = Array.from({ length: 50 }, (_, i) => ({
+      title: `Bad ${i}`,
+      url: `ftp://a.example/${i}`,
+      content: "x",
+    }));
+    const late = { title: "Late result", url: "https://a.example/late", content: "x" };
+    const s = scripted(json({ results: [...bad, late] }));
+    const { run } = await rig({ backend: "tavily", keys: { tavily: new Secret(KEY) }, fetch: s.fetchFn });
+    expect(text(await run({ query: "q" }))).not.toContain("Late result");
+    const smile = await search({
+      title: `${"a".repeat(198)}\u{1F600}zzz`,
+      url: "https://a.example/s",
+      content: `${"<b>".repeat(1000)}\u{1F600}`,
+    });
+    expect(text(smile)).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+  });
+
   // spec: AC-TOOLS-12
   test("an overlong URL drops the hit, and a user-info trick is removed from the URL", async () => {
     const s = scripted(
