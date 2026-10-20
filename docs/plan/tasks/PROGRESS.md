@@ -614,7 +614,7 @@ Learned: the settings merge lets a higher layer replace scalars and non-rule arr
 Next: F9 (major: a local settings file counts as personal only if Dovet wrote it; needs the permissions §11 rule changed), then M2-05b.
 
 ## 2026-10-20 — F9 a local settings file is personal only when Dovet wrote it
-Done: `.dovet/settings.local.json` now applies without the trust dialog only when its exact text matches the hash Dovet stored in `<data>/local-settings.json` when `saveLocalRule` last wrote it (and git doesn't track it); `.claude/settings.local.json` never does. A gitignored file from an unpacked archive is ignored (headless warns) until the folder is trusted. PR: #PR (merged).
+Done: `.dovet/settings.local.json` now applies without the trust dialog only when its exact text matches the hash Dovet stored in `<data>/local-settings.json` when `saveLocalRule` last wrote it (and git doesn't track it); `.claude/settings.local.json` never does. A gitignored file from an unpacked archive is ignored (headless warns) until the folder is trusted. PR: #162 (merged).
 Review: deep, 2 rounds, 3 fixed (saving a rule blessed a repo-supplied file's own entries, found by both lenses; the rule-already-present test gap; the file read twice in `saveLocalRule`), 0 dropped, 1 logged to FOLLOWUPS (F10 minor).
 Learned: `writeFileAtomic` moved to `store/config/atomic.ts` to avoid an import cycle. Trade-off recorded in Q71: a hand-edited local file needs the trust dialog (M3-10) once per edit, and a rule saved into a repo-supplied file is written but the file stays untrusted, so M3-05's prompt should say so (and `saveGrant` now takes `{ dataDir, os }`). F8 and F10 (symlinked local file) remain open, both minor.
 Next: M2-05b (sandbox and instruction files in the session boot).
