@@ -338,7 +338,13 @@ describe("ruleSetFromSettings", () => {
     const dir = (await tempProject()).root;
     mkdirSync(join(dir, ".dovet"), { recursive: true });
     writeFileSync(join(dir, ".dovet", "settings.json"), JSON.stringify(settings));
-    return loadSettings({ dirs: { config: join(dir, "cfg") }, home: dir, projectRoot: dir, env: {} });
+    return loadSettings({
+      dirs: { config: join(dir, "cfg") },
+      home: dir,
+      projectRoot: dir,
+      env: {},
+      trust: { project: true, local: true },
+    });
   }
   const build = (loaded: LoadedSettings) =>
     ruleSetFromSettings({
@@ -353,7 +359,13 @@ describe("ruleSetFromSettings", () => {
     const dir = (await tempProject()).root;
     mkdirSync(join(dir, "cfg"), { recursive: true });
     writeFileSync(join(dir, "cfg", "settings.json"), JSON.stringify({ permissions: { deny: ["Read(/secret/**)"] } }));
-    const loaded = await loadSettings({ dirs: { config: join(dir, "cfg") }, home: dir, projectRoot: dir, env: {} });
+    const loaded = await loadSettings({
+      dirs: { config: join(dir, "cfg") },
+      home: dir,
+      projectRoot: dir,
+      env: {},
+      trust: { project: true, local: true },
+    });
     const { rules } = ruleSetFromSettings({
       loaded,
       env: env(),
@@ -405,6 +417,7 @@ describe("ruleSetFromSettings", () => {
       warnings: [],
       notices: [],
       files: [],
+      untrusted: [],
     };
     const { rules } = build(loaded);
     const paramRule = rules.list.find((r) => r.raw === "Bash(dangerouslyDisableSandbox:true)");
@@ -440,5 +453,6 @@ function loadedWith(allow: string[]): LoadedSettings {
     warnings: [],
     notices: [],
     files: [],
+    untrusted: [],
   };
 }

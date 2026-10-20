@@ -54,6 +54,7 @@ describe("live reload through the decision", () => {
       home: join(dir.root, "home"),
       projectRoot: proj,
       env: {},
+      trust: { project: true, local: true },
     };
     const target = join(proj, "notes.txt");
     const prev = await snapshotSettings(input);
@@ -87,6 +88,7 @@ describe("live reload through the decision", () => {
       home: join(dir.root, "home"),
       projectRoot: join(dir.root, "proj"),
       env: {},
+      trust: { project: true, local: true },
     };
     const prev = await snapshotSettings(input);
     const before = ruleSetFromSettings({ ...ctxFor(dir.root), loaded: prev.loaded }).rules.list;
@@ -110,6 +112,7 @@ describe("live reload through the decision", () => {
       home: join(dir.root, "home"),
       projectRoot: join(dir.root, "proj"),
       env: {},
+      trust: { project: true, local: true },
     };
     const prev = await snapshotSettings(input);
     const { mkdir } = await import("node:fs/promises");
@@ -130,6 +133,7 @@ describe("live reload through the decision", () => {
       home: join(dir.root, "home"),
       projectRoot: join(dir.root, "proj"),
       env: {},
+      trust: { project: true, local: true },
     };
     const prev = await snapshotSettings(input);
     const good = ruleSetFromSettings({ ...ctxFor(dir.root), loaded: prev.loaded });

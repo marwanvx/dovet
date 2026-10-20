@@ -200,6 +200,7 @@ describe("unsandboxed retry", () => {
         warnings: [],
         notices: [],
         files: [],
+        untrusted: [],
       },
       env: {
         os: process.platform as "linux",

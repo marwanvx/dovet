@@ -19,6 +19,12 @@ export function filterInheritedEnv(env: Readonly<Record<string, string | undefin
   return { clean, ignored };
 }
 
+/** A warning can quote a key from a repo's settings file; terminal escapes in it would let the file rewrite what the user reads. */
+export function printable(text: string): string {
+  // Controls, format characters (zero-width, bidi, tags, BOM), line and paragraph separators, lone surrogates.
+  return text.replaceAll(/\p{Cc}|\p{Cf}|\p{Zl}|\p{Zp}|\p{Cs}/gu, (c) => `\\u{${c.codePointAt(0)?.toString(16)}}`);
+}
+
 export async function ensureDataDir(dataDir: string): Promise<{ writable: boolean; notice?: string }> {
   try {
     await mkdir(dataDir, { recursive: true, mode: 0o700 });

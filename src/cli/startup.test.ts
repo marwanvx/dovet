@@ -50,3 +50,13 @@ describe("offline mode", () => {
     expect(offlineRefusal("WebSearch")).toMatch(/--offline/);
   });
 });
+
+describe("printable", () => {
+  // spec: AC-PERM-13
+  test("escapes controls, invisible format characters, separators and lone surrogates", async () => {
+    const { printable } = await import("./startup.ts");
+    const raw = "a\u001b[2K\u0085\u2028\u200b\ufeff\u202e\u{e0041}\ud800b";
+    expect(printable(raw)).toBe("a\\u{1b}[2K\\u{85}\\u{2028}\\u{200b}\\u{feff}\\u{202e}\\u{e0041}\\u{d800}b");
+    expect(printable("plain text, ünïcode ✓")).toBe("plain text, ünïcode ✓");
+  });
+});

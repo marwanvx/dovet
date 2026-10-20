@@ -1,13 +1,20 @@
 // Dovet's entry point and composition root: the only file that touches `process.*` (architecture "Modules").
 import { realpathSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { realpath, rm } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
 import pkg from "../../package.json";
 import { PROVIDER_AUTH } from "../ai/index.ts";
 import { createPlatformCore, type Os, resolveDirs } from "../platform/index.ts";
 import type { SandboxState } from "../policy/index.ts";
 import type { AbsPath, Settings } from "../schema/index.ts";
-import { findProjectRoot, type LoadedSettings, type LoadInput, loadSettings } from "../store/index.ts";
+import {
+  findProjectRoot,
+  type LoadedSettings,
+  type LoadInput,
+  loadSettings,
+  type ProjectTrust,
+  resolveProjectTrust,
+} from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
 import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from "./headless-output.ts";
@@ -15,7 +22,7 @@ import { type HeadlessRunOutput, runHeadless as runHeadlessTurn } from "./headle
 import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
 import { ephemeralDataDir, makeUlid } from "./resume-target.ts";
 import { installSignalHandlers, stopSignalsFor } from "./signals.ts";
-import { ensureDataDir, filterInheritedEnv, loadTrustedFolders } from "./startup.ts";
+import { ensureDataDir, filterInheritedEnv, loadTrustedFolders, printable } from "./startup.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
 // Set by `define` in a pull request's test release only; a normal build has no such identifier (architecture "Distribution").
@@ -152,7 +159,19 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   };
   const home = homedir();
   // One LoadInput for the startup load and the turn's live reload, so env and flags stay frozen session overrides.
-  const loadInput: LoadInput = { dirs, home, projectRoot, env, flags };
+  // projectRoot is a realpath, so the home directory it is compared with must be one too.
+  const trustHome = await realpath(home).catch(() => home);
+  const trustGit = await core.resolve("git");
+  const resolveTrust = (): Promise<ProjectTrust> =>
+    resolveProjectTrust({
+      projectRoot,
+      store: trusted.trusted,
+      home: trustHome,
+      os,
+      env,
+      ...(trustGit === undefined ? {} : { git: trustGit }),
+    });
+  const loadInput: LoadInput = { dirs, home, projectRoot, env, flags, trust: await resolveTrust(), resolveTrust };
   try {
     loaded = await loadSettings(loadInput);
   } catch (err) {
@@ -226,7 +245,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
     process.exitCode = 70;
     return;
   }
-  for (const w of out.warnings) console.error(`dovet: ${w}`);
+  for (const w of out.warnings) console.error(`dovet: ${printable(w)}`);
   if (out.exit.kind !== "ok") {
     if (parsed.output === "json") {
       process.stdout.write(

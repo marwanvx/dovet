@@ -287,6 +287,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     if (!(err instanceof SettingsError)) throw err;
     return errOut("", `invalid settings: ${err.problems.map(describeProblem).join("; ")}`, { kind: "usage" }, warnings);
   }
+  warnings.push(...input.settings.warnings.map(describeProblem));
 
   const configured = input.settings.settings.providers?.[provider];
   const record = (() => {

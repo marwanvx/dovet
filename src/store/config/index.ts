@@ -12,4 +12,15 @@ export {
   snapshotSettings,
   watchedSettingsPaths,
 } from "./reload.ts";
+export {
+  folderTrusted,
+  localSettingsRepoSupplied,
+  type ProjectTrust,
+  projectConfigHash,
+  recordTrust,
+  resolveProjectTrust,
+  type TrustedFolders,
+  UNTRUSTED,
+  type UntrustedSettings,
+} from "./trust.ts";
 export { saveLocalRule, writeFileAtomic } from "./write.ts";

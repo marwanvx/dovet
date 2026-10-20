@@ -3,6 +3,7 @@ import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import { loadSettings, SettingsError } from "./index.ts";
+import { UNTRUSTED } from "./trust.ts";
 
 const open: TempProject[] = [];
 afterEach(async () => {
@@ -16,6 +17,7 @@ async function setup(files: Record<string, string>) {
     dirs: { config: join(dir.root, "cfg") },
     home: join(dir.root, "home"),
     projectRoot: join(dir.root, "proj"),
+    trust: { project: true, local: true },
   };
   return { dir, input };
 }
@@ -575,6 +577,6 @@ describe("project env", () => {
   // spec: AC-CLI-12
   test("project env is dropped while the folder is untrusted", async () => {
     const { input } = await setup({ "proj/.dovet/settings.json": '{ "env": { "SAFE": "1" } }' });
-    expect((await loadSettings({ ...input, env: {}, projectTrusted: false })).settings.env).toBeUndefined();
+    expect((await loadSettings({ ...input, env: {}, trust: UNTRUSTED })).settings.env).toBeUndefined();
   });
 });
