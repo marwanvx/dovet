@@ -340,6 +340,14 @@ describe("AC-CTX-10: an unreadable path is not loadable", () => {
   );
 
   // spec: AC-CTX-10
+  test.skipIf(WINDOWS)("an import token longer than a file name is skipped, not thrown", async () => {
+    const root = await temp({ "AGENTS.md": `ROOT @${"a".repeat(300)}\n` });
+    const set = await discoverInstructions(await context(root));
+    expect(render(set.files)).toContain("ROOT");
+    expect(set.found).toContainEqual({ path: "a".repeat(300), status: "denied", reason: "cannot be read" });
+  });
+
+  // spec: AC-CTX-10
   test.skipIf(WINDOWS || process.getuid?.() === 0)("a locked rules folder is reported, not thrown", async () => {
     const root = await temp({
       "AGENTS.md": "ROOT\n",

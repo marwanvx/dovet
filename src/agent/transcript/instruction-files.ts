@@ -83,7 +83,7 @@ export const fileIdentityKey = (s: { dev: bigint; ino: bigint }): string | undef
   s.ino === 0n ? undefined : `${s.dev}:${s.ino}`;
 
 /** A file the agent can swap for a loop, a vanished path or a locked folder mid-turn counts as not loadable, never as a crash. */
-const UNREADABLE = ["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM", "EISDIR"] as const;
+const UNREADABLE = ["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM", "EISDIR", "ENAMETOOLONG"] as const;
 
 async function statOrNull(p: string): Promise<BigIntStats | null> {
   return stat(p, { bigint: true }).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));

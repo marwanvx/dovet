@@ -15,7 +15,6 @@ import {
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
   type InstructionContext,
-  type InstructionSet,
   instructionsUpdated,
   isEarlyEligible,
   type LoadedInstruction,
@@ -932,42 +931,40 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const seenAt = new Map<string, number | null>();
         for (const path of [...launchFiles.map((f) => f.path), ...[...droppedFiles.values()].map((d) => d.path)])
           seenAt.set(path, await mtimeOf(path));
-        // The one boundary for everything the agent can do to the filesystem mid-turn.
-        const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch(
-          (
-            err: unknown,
-          ): Pick<InstructionSet, "files" | "launchEvent" | "resumeUpdates" | "warnings" | "taintSources"> => {
-            const why = err instanceof Error ? err.message : String(err);
-            const warning = `instruction files could not be re-read (${why}); none of them is loaded now`;
-            return {
-              files: [],
-              launchEvent: { files: [], warnings: [warning] },
-              resumeUpdates: [],
-              warnings: [warning],
-              taintSources: [],
-            };
-          },
-        );
-        const kept = new Set(fresh.files.map((f) => pathKey(f.path, input.os)));
-        const dropped = launchFiles.filter((f) => !kept.has(pathKey(f.path, input.os)));
-        for (const key of kept) droppedFiles.delete(key);
-        for (const f of dropped)
-          droppedFiles.set(pathKey(f.path, input.os), { path: f.path, mtimeMs: seenAt.get(f.path) ?? null });
-        for (const d of droppedFiles.values()) d.mtimeMs = seenAt.get(d.path) ?? null;
-        const event = { ...fresh.launchEvent, dropped: dropped.map((f) => f.path) };
-        known.push(event);
-        launchFiles = fresh.files;
-        warnings.push(...fresh.warnings.filter((w) => !warnings.includes(w)));
-        taintFrom(fresh.taintSources);
-        const updates = [
-          ...fresh.resumeUpdates,
-          ...dropped.map((f) =>
-            instructionsUpdated(f.displayPath, "(the file was deleted or can no longer be loaded)"),
-          ),
-        ];
-        for (const part of updates)
-          push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
-        if (updates.length > 0) push("instructions.loaded", epochNum, null, event);
+        // The one boundary for everything the agent can do to the filesystem mid-turn. A failed reload keeps what already
+        // passed every check (user-level files included) and changes nothing: dropping files would silently lift the user's rules.
+        const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch((err: unknown) => {
+          const why = err instanceof Error ? err.message : String(err);
+          const warning = `instruction files could not be re-read (${why}); the earlier ones stay in force`;
+          if (!warnings.includes(warning)) warnings.push(warning);
+          return null;
+        });
+        if (fresh !== null) {
+          const kept = new Set(fresh.files.map((f) => pathKey(f.path, input.os)));
+          const dropped = launchFiles.filter((f) => !kept.has(pathKey(f.path, input.os)));
+          for (const key of kept) droppedFiles.delete(key);
+          for (const f of dropped)
+            droppedFiles.set(pathKey(f.path, input.os), { path: f.path, mtimeMs: seenAt.get(f.path) ?? null });
+          for (const d of droppedFiles.values()) d.mtimeMs = seenAt.get(d.path) ?? null;
+          const event = { ...fresh.launchEvent, dropped: dropped.map((f) => f.path) };
+          known.push(event);
+          launchFiles = fresh.files;
+          warnings.push(...fresh.warnings.filter((w) => !warnings.includes(w)));
+          taintFrom(fresh.taintSources);
+          const updates = [
+            ...fresh.resumeUpdates,
+            ...dropped.map((f) =>
+              instructionsUpdated(f.displayPath, "(the file was deleted or can no longer be loaded)"),
+            ),
+          ];
+          for (const part of updates)
+            push("system.injected", epochNum, turn, {
+              text: part.text,
+              reason: part.reason,
+              delivery: "reminder-block",
+            });
+          if (updates.length > 0) push("instructions.loaded", epochNum, null, event);
+        }
       }
       const built = buildRequest(events, {
         header,

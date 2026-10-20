@@ -628,7 +628,7 @@ describe("headless boot: instruction files", () => {
 
   // spec: AC-CTX-10
   test.skipIf(process.platform === "win32")(
-    "a reload that fails for a reason discovery does not handle drops the launch files and says why",
+    "a reload that fails for a reason discovery does not handle keeps the earlier files and says why",
     async () => {
       const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
       const outside = await tempProject({ "real.md": "OUTSIDE\n" });
@@ -651,12 +651,8 @@ describe("headless boot: instruction files", () => {
         );
         expect(out.exit).toEqual({ kind: "ok" });
         expect(out.warnings.some((w) => w.startsWith("instruction files could not be re-read"))).toBe(true);
-        const injected = (await eventsOf(dir, out.sessionId))
-          .filter((e) => e.type === "system.injected")
-          .map((e) => (e.data as { text: string }).text);
-        expect(injected).toEqual([
-          "Instructions updated (AGENTS.md):\n(the file was deleted or can no longer be loaded)",
-        ]);
+        const events = await eventsOf(dir, out.sessionId);
+        expect(events.filter((e) => e.type === "system.injected")).toEqual([]);
       } finally {
         await outside.dispose();
         await dir.dispose();
