@@ -1,16 +1,19 @@
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import net from "node:net";
 import { gzipSync } from "node:zlib";
 import { readResponse, requestText } from "./web-http1.ts";
 
 const servers: net.Server[] = [];
-afterAll(() => {
-  for (const s of servers) s.close();
+const sockets: net.Socket[] = [];
+afterEach(() => {
+  for (const c of sockets.splice(0)) c.destroy();
+  for (const s of servers.splice(0)) s.close();
 });
 
 /** Connects to a server that sends `wire` as soon as the request arrives, then optionally closes. */
 async function reply(wire: Array<string | Buffer>, close = true): Promise<Response> {
   const server = net.createServer((c) => {
+    sockets.push(c);
     c.once("data", () => {
       for (const part of wire) c.write(part);
       if (close) c.end();
@@ -20,6 +23,7 @@ async function reply(wire: Array<string | Buffer>, close = true): Promise<Respon
   servers.push(server);
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  sockets.push(socket);
   const res = readResponse(socket);
   socket.write(requestText(new URL("https://a.example/x"), {}));
   return res;
