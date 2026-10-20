@@ -46,6 +46,7 @@ import {
   endpointOf,
   imageSupport,
   type ProviderRequest,
+  pdfSupport,
   providerRecord,
   type RenderInput,
   type SdkCall,
@@ -811,10 +812,17 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       requestCapBytes: requestCapFor(provider),
       maxImages: imageLimits.maxImages,
     });
+    const pdfLimits = pdfSupport(
+      { pdfModels: ep?.pdfModels ?? [], pdfMaxPages: ep?.pdfMaxPages },
+      model,
+      effectiveSettings.models?.[model],
+    );
     const mediaContext: MediaContext = {
-      images: true,
+      images: imageLimits.images,
       longEdge: imageLimits.longEdge,
-      claim: (bytes) => mediaBudget.claim(bytes),
+      pdfs: pdfLimits.pdfs,
+      pdfMaxPages: pdfLimits.maxPages,
+      claim: (bytes, kind) => mediaBudget.claim(bytes, kind),
       store: (bytes) => blobs.putSync(bytes),
     };
     const baseCtx: ToolContext = {
@@ -836,7 +844,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       platform: input.platform as never,
       env: input.env as never,
       ...(sandbox === undefined ? {} : { sandbox }),
-      ...(imageLimits.images ? { media: mediaContext } : {}),
+      media: mediaContext,
       ...(input.searchComplete === undefined
         ? {}
         : { model: { id: `${provider}/${model}`, complete: input.searchComplete } }),

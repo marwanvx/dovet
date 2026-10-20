@@ -5,7 +5,6 @@
 > - **Milestone:** M1 (headless `-p`, output formats, exit codes); M3 (TUI).
 > - **Decisions that apply** ([decisions](../plan/decisions.md)): ADR-5 Vendored pi-tui for the terminal UI; ADR-24 The Vercel / AI SDK ecosystem: what Dovet uses.
 > - **Open questions** ([open questions](../plan/open-questions.md)); build the part that depends on one only after it's resolved, or use its fallback:
->   - **SPIKE-6** (M2): Binary size and startup impact of shiki grammars; a maintained pure-JS PDF library for page counting, page-range splitting and text extraction (pdfjs-dist vs alternatives). Image resize/re-encode is resolved: `Bun.Image`, no dependency (M2-08, QUESTIONS Q77) *If no:* highlight.js for code; PDFs: whole-document only, ranges need `pdftotext`
 >   - **SPIKE-25** (M2): Clipboard image paste per OS (`osascript`, `wl-paste`, `xclip`, PowerShell `Get-Clipboard -Format Image`) from inside the TUI, including over SSH (expected: unavailable) *If no:* Drag-and-drop file paths only
 > - **User journeys served** ([user journeys](../product/user-journeys.md)): steps 5, 6, 9, 9b, 11, 15, 18, 20, 23, 27. A change here must keep those steps working.
 <!-- before-you-build:end -->

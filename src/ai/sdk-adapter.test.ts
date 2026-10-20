@@ -200,6 +200,53 @@ describe("images in tool results", () => {
     ]);
   });
 
+  // spec: AC-TOOLS-02
+  test("a PDF follows the tool messages as a file part with its name, in call order with pictures", async () => {
+    let body = "";
+    const adapter = createSdkAdapter({
+      endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      blobBytes: (id) => (id === sha ? bytes : undefined),
+      fetch: Object.assign(
+        async (_url: string | Request | URL, init?: RequestInit) => {
+          body = String(init?.body);
+          return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    const s = scenario("parallel-tools");
+    const withPdf = [
+      {
+        ...results[0],
+        content: [
+          { kind: "text" as const, text: "PDF a.pdf" },
+          {
+            kind: "document" as const,
+            blob: { store: "blob" as const, id: sha },
+            mediaType: "application/pdf" as const,
+            title: "a.pdf",
+          },
+        ],
+      },
+      results[1],
+    ] as typeof results;
+    const call = adapter.render(
+      input(s, [
+        { kind: "assistant", stored },
+        { kind: "user", parts: withPdf },
+      ]),
+    );
+    await collect(adapter.stream(call, { signal: new AbortController().signal, onRequest: () => {} }));
+    const sent = JSON.parse(body) as { messages: Array<{ role: string; content: unknown }> };
+    expect(sent.messages[sent.messages.length - 1]?.content).toEqual([
+      { type: "text", text: "[Documents returned by the tool calls above, in order]" },
+      {
+        type: "file",
+        file: { filename: "a.pdf", file_data: `data:application/pdf;base64,${Buffer.from(bytes).toString("base64")}` },
+      },
+    ]);
+  });
+
   test("an image whose blob is missing is an error, never a silent drop", () => {
     const adapter = createSdkAdapter({
       endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),

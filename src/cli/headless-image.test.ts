@@ -1,7 +1,14 @@
-// Images read in the headless boot (tools §1.6): logged as media, rendered into the next request, budgeted.
+// Images and PDFs read in the headless boot (tools §1.6, §1.7): logged as media, rendered into the next request, budgeted.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { fakePlatform, scriptedModel, sequentialIds, tempProject, testPng } from "../../test/helpers/index.ts";
+import {
+  fakePlatform,
+  numberedPdf,
+  scriptedModel,
+  sequentialIds,
+  tempProject,
+  testPng,
+} from "../../test/helpers/index.ts";
 import { createSdkAdapter } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import type { EventEnvelope } from "../schema/index.ts";
@@ -122,6 +129,59 @@ describe("Read of an image in the headless boot", () => {
       expect(results[0]?.status).toBe("ok");
       expect(results[1]?.status).toBe("error");
       expect(results[1]?.output).toContain("Too many images in this conversation (1). Run /compact");
+    } finally {
+      await dir.dispose();
+    }
+  });
+});
+
+describe("Read of a PDF in the headless boot", () => {
+  const readPdf = (pages?: string) => ({
+    toolCall: { id: "c1", name: "Read", input: { file_path: "doc.pdf", ...(pages === undefined ? {} : { pages }) } },
+  });
+
+  // spec: AC-TOOLS-02
+  test("a model that takes PDFs gets the document: logged as media and sent as a file part", async () => {
+    const dir = await tempProject(withModels({ "test/model": { capabilities: { pdfs: true } } }));
+    try {
+      await Bun.write(join(dir.root, "doc.pdf"), numberedPdf(3));
+      const { out, model, events } = await run(dir, [readPdf(), { text: "read it" }]);
+      expect(out.exit).toEqual({ kind: "ok" });
+      const media = resultsOf(events)[0]?.media;
+      expect(media).toHaveLength(1);
+      expect(media?.[0]).toMatchObject({ kind: "document", mediaType: "application/pdf" });
+      const second = JSON.stringify(model.doStreamCalls[1]?.prompt);
+      expect(second).toContain('"mediaType":"application/pdf"');
+      expect(second).toContain("Documents returned by the tool calls above");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TOOLS-02
+  test("a model that does not take PDFs gets the text of the pages, and nothing is logged as media", async () => {
+    const dir = await tempProject({});
+    try {
+      await Bun.write(join(dir.root, "doc.pdf"), numberedPdf(30));
+      const { events } = await run(dir, [readPdf("2-3"), { text: "read it" }]);
+      const [only] = resultsOf(events);
+      expect(only?.status).toBe("ok");
+      expect(only?.output).toContain("--- Page 2 ---\nPage 2 of 30");
+      expect(only?.media).toBeUndefined();
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-TOOLS-02
+  test("a long PDF without pages is refused and the error names pages", async () => {
+    const dir = await tempProject({});
+    try {
+      await Bun.write(join(dir.root, "doc.pdf"), numberedPdf(30));
+      const { events } = await run(dir, [readPdf(), { text: "ok" }]);
+      const [only] = resultsOf(events);
+      expect(only?.status).toBe("error");
+      expect(only?.output).toContain("pass pages");
     } finally {
       await dir.dispose();
     }
