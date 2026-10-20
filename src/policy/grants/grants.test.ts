@@ -236,6 +236,20 @@ describe("suggestGrant", () => {
     expect(suggestGrant(fetch, decide(fetch, tainted), tainted)).toBeUndefined();
   });
 
+  // spec: AC-TOOLS-12
+  test('WebSearch asks in Manual mode and "don\'t ask again" saves the bare tool rule, not a domain rule', () => {
+    const st = state();
+    const search: Request = { tool: "WebSearch", action: { kind: "network", host: "api.exa.ai" } };
+    expect(decide(search, st).behavior).toBe("ask");
+    const grant = suggestGrant(search, decide(search, st), st);
+    expect(grant).toEqual({ scope: "permanent", rules: ["WebSearch"] });
+    expect(decide(search, { ...st, rules: rulesFor(grant?.rules) }).behavior).toBe("allow");
+    const local: Request = { tool: "WebSearch", action: { kind: "network", host: "searxng" } };
+    expect(decide(local, st).behavior).toBe("ask");
+    const tainted = { ...st, tainted: true };
+    expect(suggestGrant(search, decide(search, tainted), tainted)).toBeUndefined();
+  });
+
   test("a sensitive read saves an exact Read rule; an outside read saves a directory rule; metacharacters are escaped", () => {
     const st = state();
     const env0 = join(root, ".env");

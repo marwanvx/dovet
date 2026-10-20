@@ -353,15 +353,17 @@ Same contract as Bash (process group/tree, completion on exit, output sanitizing
 - keeps the results that already arrived if the stream drops;
 - for a model the catalog doesn't know, tries the search mechanism once and, if the API rejects it, marks it unsupported for that model for the session and falls back per `auto`.
 
-**Results:** at most 10, each `title`, `url`, `date` if known, and a snippet of ≤ 300 characters, numbered; pages are read with WebFetch. Domain filters are passed to backends that support them; otherwise Dovet filters the results by host and says so.
+**Results:** at most 10, each `title`, `url`, `date` if known, and a snippet of ≤ 300 characters, numbered; pages are read with WebFetch. Domain filters are passed to backends that support them; otherwise Dovet filters the results by host and says so. Exa and Tavily apply the lists themselves; Brave, SearXNG and the provider backend's results are filtered by Dovet (a note names the count removed). Titles and snippets are plain text: tags and entities are removed, hidden characters are marked as for WebFetch, only `http(s)` URLs are kept (QUESTIONS Q76).
 
 **Errors:** reported as errors with the backend and reason, never as empty or "0 results" and never as API-error text dressed up as results.
 
-**Limits:** a refilling budget of **100 searches per hour** (`websearch.perHour`; 0 = unlimited). Remaining searches are shown in `/status`.
+**Limits:** a refilling budget of **100 searches per hour** (`websearch.perHour`; 0 = unlimited). Remaining searches are shown in `/status`. The budget is a sliding window held by the running process: each call that passes validation takes one place, failed ones too; a refused call names the time the oldest place frees up. Every result ends with the backend and the places left (QUESTIONS Q76).
 
 **Cost:** provider per-search fees come from `pricing-rules.jsonc`; search-API calls are counted, and priced only if the user sets `websearch.pricePerSearch`. Both appear in the receipt and budget. **Privacy:** the query goes to the chosen backend ([cli-config "Data and privacy"](cli-config.md)).
 
-**Permission:** bare `WebSearch` rule only; Manual mode prompts (Yes / Yes and don't ask again / No). Results set **taint**.
+**Permission:** bare `WebSearch` rule only; Manual mode prompts (Yes / Yes and don't ask again / No). Results set **taint**. The prompt names the backend's host (`api.exa.ai`, a SearXNG instance's host, or `searxng` when it is a local address, or `provider`); "don't ask again" saves the bare `WebSearch` rule (QUESTIONS Q76).
+
+**Keys and the provider mechanism (QUESTIONS Q76):** the three services' keys come from the stored login (`exa`, `brave`, `tavily`) or `EXA_API_KEY`, `BRAVE_API_KEY`, `TAVILY_API_KEY`. A key is only ever sent to its own service, with redirects refused, and never appears in an error or a result. The `provider` backend is complete on the tool's side (the secondary request, the rejected-mechanism fallback, a dropped stream); the request itself (`ctx.model.complete`) ships with each provider package that has a mechanism, so until one does `auto` picks a service or SearXNG.
 
 ## 11. Plan mode: EnterPlanMode / ExitPlanMode
 

@@ -53,5 +53,6 @@
   "src/tools/test-certs.ts:TEST_CERT_PUBLIC_IP": "test-only: a throwaway certificate fixture for the proxy TLS tests",
   "src/tools/test-certs.ts:TEST_KEY": "test-only: a throwaway certificate fixture for the proxy TLS tests",
   "src/tools/todos.ts:todoWriteTool": "test-only: the default instance tests use; the product builds its tools with create*",
+  "src/tools/types.ts:SearchMechanismRejected": "M4-12",
   "src/tools/write.ts:writeTool": "test-only: the default instance tests use; the product builds its tools with create*"
 }

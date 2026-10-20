@@ -292,7 +292,7 @@ interface ToolContext {
     presentPlan(plan: { text: string; path: AbsPath }, signal: AbortSignal): Promise<PlanAnswer>;
   };
   /** Secondary model call for tools that need one (WebSearch, ADR-25). Costs are attributed to the calling tool. */
-  model: { complete(req: SecondaryRequest, signal: AbortSignal): Promise<SecondaryResult> };
+  model?: { id: string; complete(req: SecondaryRequest, signal: AbortSignal): Promise<SecondaryResult> };  // `id` is provider/model; absent when the endpoint has no search mechanism (QUESTIONS Q76)
 }
 
 /** Tools never mutate session state. They return effects; the agent validates and applies them in order and logs them. */
@@ -309,7 +309,7 @@ type PlanAnswer =
   | { dismissed: true; reason: "esc" | "mode-changed" };
 
 type SecondaryRequest = { purpose: "websearch"; query: string; allowedDomains?: string[]; blockedDomains?: string[] };
-type SecondaryResult = { results: Array<{ title: string; url: string; snippet?: string }>; usage: RawUsage; serverToolCalls: number; requestId?: string };
+type SecondaryResult = { results: Array<{ title: string; url: string; snippet?: string; date?: string }>; usage: RawUsage; serverToolCalls: number; requestId?: string; dropped?: string };  // `dropped`: the stream failed, `results` is what arrived; the API refusing the mechanism for the model is a thrown `SearchMechanismRejected` (QUESTIONS Q76)
 
 type ToolOutput = {
   status: "ok" | "error" | "denied" | "interrupted" | "timeout";
