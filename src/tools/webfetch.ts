@@ -271,11 +271,7 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
     let retried = false;
     for (let hops = 0; ; ) {
       guard.poke();
-      // A same-host redirect can change the port, which a NO_PROXY entry may name.
-      const res = await pickTransport(
-        ctx,
-        url,
-      )({
+      const res = await transport({
         url,
         headers: { "User-Agent": userAgent, Accept: "text/markdown, text/html;q=0.9, */*;q=0.8" },
         signal: guard.signal,

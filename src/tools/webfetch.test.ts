@@ -542,8 +542,8 @@ describe("untrusted robots.txt", () => {
     expect(robotsAllows(rules("Disallow: /docs\nAllow: /docs/public"), "/docs/secret")).toBe(false);
     const longAllow = rules(`Disallow: /\nAllow: /public/${"x".repeat(520)}/only-this$`);
     expect(robotsAllows(longAllow, `/public/${"x".repeat(520)}/private-other`)).toBe(false);
-    const flood = rules(`${"Allow: /zz\n".repeat(600)}Disallow: /secret`);
-    expect(robotsAllows(flood, "/secret")).toBe(false);
+    const flood = rules(`Disallow: /a\n${"Allow: /a/x\n".repeat(600)}Allow: /a/target`);
+    expect(robotsAllows(flood, "/a/target")).toBe(false);
     const hostile = rules(`Disallow: /${"*a".repeat(60)}X`);
     const started = performance.now();
     expect(robotsAllows(hostile, `/${"a".repeat(5000)}`)).toBe(true);
@@ -597,6 +597,9 @@ describe("proxies", () => {
     expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)?.proxy).toBe("http://q:1");
     expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")?.proxy).toBe("http://setting:1");
     expect(proxyFor(url, {}, undefined)).toBeUndefined();
+    const withNoProxy = (no: string) => proxyFor(url, { HTTPS_PROXY: "http://p:3128", NO_PROXY: no }, undefined);
+    expect(withNoProxy("other.example")).toEqual({ proxy: "http://p:3128", strict: true });
+    expect(withNoProxy("  ")?.strict).toBe(false);
   });
 
   // spec: AC-TOOLS-51
