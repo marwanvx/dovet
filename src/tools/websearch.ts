@@ -292,7 +292,9 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
           status: "interrupted",
           content: [{ kind: "text", text: "Interrupted by the user before this tool finished." }],
         };
-      return fail(`WebSearch failed (${backend}): ${describeFailure(e, secrets)}`);
+      const out = fail(`WebSearch failed (${backend}): ${describeFailure(e, secrets)}`);
+      // A service call that was sent is counted even when it failed (tools §10 "Cost").
+      return backend === "provider" ? out : { ...out, meta: { search: { backend, calls: 1 } } };
     }
 
     if (dropped !== undefined) {

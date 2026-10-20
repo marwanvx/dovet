@@ -144,18 +144,28 @@ const spaceInvisible = (text: string): string =>
     return INVISIBLE.some(([from, to]) => cp >= from && cp <= to) ? " " : ch;
   }).join("");
 
+function withoutTags(text: string): string {
+  // One pass can join the brackets around a removed tag into a new one (`<<b>x>`): repeat until nothing changes.
+  for (let current = text; ; ) {
+    const next = current.replace(/<[^<>]*>/g, "");
+    if (next === current) return next.replace(/<[^>]*$/, "");
+    current = next;
+  }
+}
+
 function clean(text: string | null | undefined, max: number): string {
   const decoded = (text ?? "")
     .slice(0, max * 8)
     .replace(/&(#x[0-9a-f]{1,6}|#\d{1,7}|[a-z]{1,10});/gi, (m, e: string) => {
       if (e.startsWith("#")) {
         const code = e[1]?.toLowerCase() === "x" ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
-        return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : m;
+        return Number.isInteger(code) && code > 0 && code <= 0x10ffff && (code < 0xd800 || code > 0xdfff)
+          ? String.fromCodePoint(code)
+          : m;
       }
       return ENTITIES[e.toLowerCase()] ?? m;
-    })
-    .replace(/<[^<>]*>/g, "");
-  const plain = spaceInvisible(decoded).replace(/\s+/g, " ").trim();
+    });
+  const plain = spaceInvisible(withoutTags(decoded)).replace(/\s+/g, " ").trim();
   const shown = stripHidden(plain).text;
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
 }
