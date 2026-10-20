@@ -94,9 +94,13 @@ describe("HTTP/1.1 over a secured socket", () => {
   });
 
   // spec: AC-TOOLS-51
-  test("a connection that ends before the body is complete is an error, not a short page", async () => {
+  test("a short Content-Length body is an error, not a short page", async () => {
     const short = await reply(["HTTP/1.1 200 OK\r\nContent-Length: 20\r\n\r\nonly ten b"]);
     await expect(short.text()).rejects.toThrow("before the response was complete");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a chunked body cut off mid-chunk is an error, not a short page", async () => {
     const cut = await reply(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"]);
     await expect(cut.text()).rejects.toThrow("before the response was complete");
   });
