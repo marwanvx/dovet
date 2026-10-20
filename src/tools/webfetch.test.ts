@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import net from "node:net";
 import { join } from "node:path";
 import { Settings } from "../schema/index.ts";
 import { createGrepTool, createToolRegistry, type ToolContext, type ToolOutput } from "./index.ts";
@@ -594,22 +595,18 @@ describe("proxies", () => {
   const url = new URL("https://intranet.corp.example/admin");
 
   // spec: AC-TOOLS-51
-  test("only a proxy Bun applies to https is used; HTTP_PROXY alone leaves the pinned path", () => {
+  test("only an HTTPS proxy is used; HTTP_PROXY alone leaves the pinned path", () => {
     expect(proxyFor(url, { HTTP_PROXY: "http://p:3128", http_proxy: "http://p:3128" }, undefined)).toBeUndefined();
-    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, undefined)).toEqual({
-      proxy: "http://p:3128",
-      strict: false,
-    });
-    expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)?.proxy).toBe("http://q:1");
-    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")?.proxy).toBe("http://setting:1");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, undefined)).toBe("http://p:3128");
+    expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)).toBe("http://q:1");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")).toBe("http://setting:1");
     expect(proxyFor(url, {}, undefined)).toBeUndefined();
-    const withNoProxy = (no: string) => proxyFor(url, { HTTPS_PROXY: "http://p:3128", NO_PROXY: no }, undefined);
-    expect(withNoProxy("other.example")).toEqual({ proxy: "http://p:3128", strict: true });
-    expect(withNoProxy("  ")?.strict).toBe(false);
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128", NO_PROXY: "other.example" }, undefined)).toBe("http://p:3128");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128", NO_PROXY: "" }, undefined)).toBe("http://p:3128");
   });
 
   // spec: AC-TOOLS-51
-  test("NO_PROXY keeps the pinned path for every form Bun also matches: ports, dots, spaces, wildcards", () => {
+  test("NO_PROXY keeps the pinned path for ports, dots, spaces and wildcards", () => {
     const env = (no: string) => ({ HTTPS_PROXY: "http://p:3128", NO_PROXY: no });
     const direct = (no: string, u = url) => proxyFor(u, env(no), undefined) === undefined;
     expect(direct("corp.example")).toBe(true);
@@ -625,6 +622,15 @@ describe("proxies", () => {
   });
 
   // spec: AC-TOOLS-51
+  test("a host either NO_PROXY or no_proxy names goes direct, whichever variable holds it", () => {
+    const base = { HTTPS_PROXY: "http://p:3128" };
+    expect(proxyFor(url, { ...base, NO_PROXY: "x.example", no_proxy: "corp.example" }, undefined)).toBeUndefined();
+    expect(proxyFor(url, { ...base, NO_PROXY: "corp.example", no_proxy: "x.example" }, undefined)).toBeUndefined();
+    expect(proxyFor(url, { ...base, NO_PROXY: "x.example", no_proxy: "y.example" }, undefined)).toBe("http://p:3128");
+    expect(proxyFor(url, { ...base, NO_PROXY: "", no_proxy: "corp.example" }, undefined)).toBeUndefined();
+  });
+
+  // spec: AC-TOOLS-51
   test("behind a proxy a name that resolves here only to private addresses is refused", async () => {
     const transport = proxiedTransport("http://127.0.0.1:1", { resolve: async () => ["10.1.2.3"] });
     const request = {
@@ -635,24 +641,107 @@ describe("proxies", () => {
     await expect(transport(request)).rejects.toThrow("can't reach local or intranet hosts");
   });
 
+  /** A CONNECT proxy that records the request line and headers, then answers with `reply` or tunnels to `origin`. */
+  async function connectProxy(reply: string | undefined, origin?: number) {
+    const seen: string[] = [];
+    const sockets = new Set<net.Socket>();
+    const server = net.createServer((client) => {
+      sockets.add(client);
+      client.once("close", () => sockets.delete(client));
+      client.once("data", (head) => {
+        seen.push(head.toString("latin1"));
+        if (reply !== undefined) {
+          client.write(reply);
+          return;
+        }
+        const upstream = net.connect(origin ?? 1, "127.0.0.1", () => {
+          client.write("HTTP/1.1 200 Connection established\r\n\r\n");
+          upstream.pipe(client);
+          client.pipe(upstream);
+        });
+        upstream.on("error", () => client.destroy());
+        client.on("close", () => upstream.destroy());
+      });
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    cleanups.push(() => {
+      for (const c of sockets) c.destroy();
+      server.close();
+    });
+    return { seen, url: `http://alice:p%40ss@127.0.0.1:${(server.address() as net.AddressInfo).port}` };
+  }
+  const cleanups: Array<() => void> = [];
+  afterAll(() => {
+    for (const c of cleanups) c();
+  });
+  const live = () => ({ url: new URL("https://intranet.corp.example/admin?q=1"), headers: { "User-Agent": "t" } });
+  const fresh = () => new AbortController();
+
   // spec: AC-TOOLS-51
-  test("with NO_PROXY set, one unsafe address or a failed lookup is refused, because Bun may connect directly", async () => {
-    const request = {
-      url: new URL("https://intranet.corp.example/"),
-      headers: {},
-      signal: new AbortController().signal,
-    };
-    const mixed = proxiedTransport("http://127.0.0.1:1", {
-      strict: true,
-      resolve: async () => ["93.184.216.34", "10.0.0.1"],
+  test("the request goes through a CONNECT tunnel the proxy opens, with the credentials from the proxy URL", async () => {
+    const origin = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (req) =>
+        new Response(`hello ${new URL(req.url).pathname}${new URL(req.url).search} ${req.headers.get("host")}`, {
+          headers: { "X-Seen": "1" },
+        }),
     });
-    await expect(mixed(request)).rejects.toThrow("can't reach local or intranet hosts");
-    const failing = proxiedTransport("http://127.0.0.1:1", {
-      strict: true,
-      resolve: async () => {
-        throw new Error("ENOTFOUND");
-      },
+    servers.push(origin);
+    const proxy = await connectProxy(undefined, origin.port);
+    const transport = proxiedTransport(proxy.url, {
+      resolve: async () => ["93.184.216.34"],
+      secure: (socket) => socket,
     });
-    await expect(failing(request)).rejects.toThrow("can't reach local or intranet hosts");
+    const res = await transport({ ...live(), signal: fresh().signal });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-seen")).toBe("1");
+    expect(await res.text()).toBe("hello /admin?q=1 intranet.corp.example");
+    expect(proxy.seen[0]).toContain("CONNECT intranet.corp.example:443 HTTP/1.1\r\n");
+    expect(proxy.seen[0]).toContain(`Proxy-Authorization: Basic ${btoa("alice:p@ss")}\r\n`);
+  });
+
+  // spec: AC-TOOLS-51
+  test("the tunnel is secured with TLS for the original host name before any request bytes", async () => {
+    const hello = Promise.withResolvers<Buffer>();
+    const origin = net.createServer((c) => c.once("data", (d: Buffer) => hello.resolve(d)));
+    await new Promise<void>((ok) => origin.listen(0, "127.0.0.1", ok));
+    cleanups.push(() => origin.close());
+    const proxy = await connectProxy(undefined, (origin.address() as net.AddressInfo).port);
+    const abort = fresh();
+    const transport = proxiedTransport(proxy.url, { resolve: async () => ["93.184.216.34"] });
+    const pending = transport({ ...live(), signal: abort.signal });
+    const first = await hello.promise;
+    expect(first[0]).toBe(0x16);
+    expect(first.toString("latin1")).toContain("intranet.corp.example");
+    expect(first.toString("latin1")).not.toContain("GET ");
+    abort.abort(new Error("stop"));
+    await expect(pending).rejects.toThrow("stop");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a proxy refusal says what happened, and only a 5xx can be retried", async () => {
+    const authFail = await connectProxy("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
+    const denied = proxiedTransport(authFail.url, { resolve: async () => ["93.184.216.34"] });
+    await expect(denied({ ...live(), signal: fresh().signal })).rejects.toMatchObject({
+      message: expect.stringContaining("407"),
+      retryable: false,
+    });
+    const down = await connectProxy("HTTP/1.1 502 Bad Gateway\r\n\r\n");
+    const bad = proxiedTransport(down.url, { resolve: async () => ["93.184.216.34"] });
+    await expect(bad({ ...live(), signal: fresh().signal })).rejects.toMatchObject({ retryable: true });
+  });
+
+  // spec: AC-TOOLS-51
+  test("bytes the proxy sends after its reply, before TLS, fail the request", async () => {
+    const early = await connectProxy("HTTP/1.1 200 OK\r\n\r\nGET / HTTP/1.1\r\n\r\n");
+    const transport = proxiedTransport(early.url, { resolve: async () => ["93.184.216.34"] });
+    await expect(transport({ ...live(), signal: fresh().signal })).rejects.toThrow("before the tunnel was secured");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a proxy URL that isn't http(s) is refused without a connection", async () => {
+    const transport = proxiedTransport("socks5://127.0.0.1:1080", { resolve: async () => ["93.184.216.34"] });
+    await expect(transport({ ...live(), signal: fresh().signal })).rejects.toThrow("must be an http:// or https://");
   });
 });

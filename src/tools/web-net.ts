@@ -1,8 +1,11 @@
 // WebFetch's network layer (tools §9): which hosts are refused, and the transports that reach the rest.
 
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { isIP, connect as netConnect, type Socket } from "node:net";
+import type { Duplex } from "node:stream";
+import { TLSSocket, connect as tlsConnect } from "node:tls";
 import { isSafeIpAddress } from "guarded-fetch";
+import { readResponse, requestText } from "./web-http1.ts";
 
 export type WebRequest = { url: URL; headers: Record<string, string>; signal: AbortSignal };
 
@@ -111,37 +114,140 @@ export function pinnedTransport(
   };
 }
 
+const PROXY_HEAD_LIMIT = 8192;
+
+function openProxySocket(proxy: URL, signal: AbortSignal, open: Socket[]): Promise<Socket> {
+  const port = Number(proxy.port) || (proxy.protocol === "https:" ? 443 : 80);
+  const host = proxy.hostname.replace(/^\[|\]$/g, "");
+  return new Promise<Socket>((resolve, reject) => {
+    const socket =
+      proxy.protocol === "https:"
+        ? tlsConnect({ host, port, servername: isIP(host) === 0 ? host : undefined })
+        : netConnect({ host, port });
+    open.push(socket);
+    const onAbort = (): void => {
+      socket.destroy();
+      reject(signal.reason ?? new Error("aborted"));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    socket.once("error", reject);
+    socket.once(proxy.protocol === "https:" ? "secureConnect" : "connect", () => {
+      socket.off("error", reject);
+      signal.removeEventListener("abort", onAbort);
+      resolve(socket);
+    });
+  });
+}
+
+/** Asks the proxy to open a tunnel to `authority`; the socket is ready for TLS once this returns. */
+async function openTunnel(proxy: URL, authority: string, signal: AbortSignal, open: Socket[]): Promise<Socket> {
+  const socket = await openProxySocket(proxy, signal, open);
+  const credentials =
+    proxy.username === "" && proxy.password === ""
+      ? ""
+      : `Proxy-Authorization: Basic ${Buffer.from(`${decodeURIComponent(proxy.username)}:${decodeURIComponent(proxy.password)}`).toString("base64")}\r\n`;
+  const head = await new Promise<string>((resolve, reject) => {
+    let buffered = "";
+    const fail = (e: Error): void => {
+      socket.destroy();
+      reject(e);
+    };
+    const onAbort = (): void => fail(signal.reason instanceof Error ? signal.reason : new Error("aborted"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    socket.on("error", fail);
+    socket.on("close", () => fail(new Error("the proxy closed the connection")));
+    socket.on("data", function onData(chunk: Buffer) {
+      buffered += chunk.toString("latin1");
+      const end = buffered.indexOf("\r\n\r\n");
+      if (end === -1) {
+        if (buffered.length > PROXY_HEAD_LIMIT) fail(new Error("the proxy's reply is too long"));
+        return;
+      }
+      socket.off("data", onData);
+      signal.removeEventListener("abort", onAbort);
+      socket.removeAllListeners("error");
+      socket.removeAllListeners("close");
+      if (end + 4 !== buffered.length) fail(new Error("the proxy sent data before the tunnel was secured"));
+      else resolve(buffered.slice(0, end));
+    });
+    socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${credentials}\r\n`);
+  });
+  const status = /^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1];
+  if (status === undefined || !status.startsWith("2")) {
+    socket.destroy();
+    if (status === "407")
+      throw new WebFetchFailed(
+        "The proxy asked for credentials Dovet doesn't have (407). Don't retry this URL.",
+        false,
+      );
+    const retry = status?.startsWith("5") === true;
+    throw new WebFetchFailed(
+      `The proxy refused the connection${status === undefined ? "" : ` (${status})`}.${retry ? "" : " Don't retry this URL."}`,
+      retry,
+    );
+  }
+  return socket;
+}
+
 /**
- * Bun's own fetch through an explicit proxy: the proxy resolves and connects, so DNS isn't required locally. Bun reads
- * `NO_PROXY` itself and then connects directly, whatever Dovet decided, so with `strict` (a `NO_PROXY` is set) a name
- * that doesn't resolve here, or has any unsafe address, is refused. Otherwise only an all-unsafe answer is.
+ * Dovet's own CONNECT tunnel through the proxy, then the request over TLS on it: the proxy resolves and connects, and
+ * no `NO_PROXY` rule of the runtime can send the request somewhere else (Bun's `fetch` applies its own and then
+ * connects directly, whatever the caller chose). A name that resolves here only to unsafe addresses is still refused.
  */
-export function proxiedTransport(proxy: string, deps: { resolve?: Resolver; strict?: boolean } = {}): WebTransport {
+export function proxiedTransport(
+  proxyUrl: string,
+  deps: { resolve?: Resolver; secure?: (socket: Socket, serverName: string | undefined) => Duplex } = {},
+): WebTransport {
   const resolve = deps.resolve ?? systemResolver;
   return async ({ url, headers, signal }) => {
     const host = url.hostname.replace(/^\[|\]$/g, "");
-    let found: string[] | undefined = isIP(host) !== 0 ? [host] : undefined;
+    const literal = isIP(host) !== 0;
+    let found: string[] | undefined = literal ? [host] : undefined;
     if (found === undefined) {
       try {
         found = await resolve(host);
       } catch {
-        if (deps.strict) throw new WebFetchRefused(localHostText(url.hostname));
+        found = undefined;
       }
     }
-    const unsafe =
-      found === undefined ? false : deps.strict ? !found.every(isSafeIpAddress) : !found.some(isSafeIpAddress);
-    if (unsafe) throw new WebFetchRefused(localHostText(url.hostname));
+    if (found !== undefined && !found.some(isSafeIpAddress)) throw new WebFetchRefused(localHostText(url.hostname));
+    let proxy: URL;
     try {
-      return await fetch(url, { headers, signal, redirect: "manual", proxy });
+      proxy = new URL(proxyUrl);
+    } catch {
+      throw new WebFetchFailed("The configured proxy isn't a valid URL. Don't retry this URL.", false);
+    }
+    if (proxy.protocol !== "http:" && proxy.protocol !== "https:")
+      throw new WebFetchFailed("The configured proxy must be an http:// or https:// URL. Don't retry this URL.", false);
+    const open: Socket[] = [];
+    const closeAll = (): void => {
+      for (const s of open) s.destroy();
+    };
+    signal.addEventListener("abort", closeAll, { once: true });
+    try {
+      const raw = await openTunnel(proxy, `${url.hostname}:${url.port === "" ? "443" : url.port}`, signal, open);
+      const serverName = literal ? undefined : host;
+      const secured = deps.secure?.(raw, serverName) ?? tlsConnect({ socket: raw, servername: serverName });
+      open.push(secured as Socket);
+      if (secured instanceof TLSSocket)
+        await new Promise<void>((ok, bad) => {
+          secured.once("secureConnect", ok);
+          secured.once("error", bad);
+          secured.once("close", () => bad(new Error("the connection closed during the TLS handshake")));
+        });
+      const reply = readResponse(secured);
+      secured.write(requestText(url, headers));
+      return await reply;
     } catch (e) {
-      if (signal.aborted) throw e;
+      closeAll();
+      if (signal.aborted) throw signal.reason ?? e;
+      if (e instanceof WebFetchFailed) throw e;
       throw describeFailure(url.hostname, e);
     }
   };
 }
 
-function noProxyMatches(url: URL, noProxy: string | undefined): boolean {
-  if (noProxy === undefined) return false;
+function noProxyMatches(url: URL, noProxy: string): boolean {
   const host = url.hostname.toLowerCase().replace(/\.+$/, "");
   const port = url.port === "" ? "443" : url.port;
   return noProxy.split(/[\s,]+/).some((raw) => {
@@ -155,14 +261,16 @@ function noProxyMatches(url: URL, noProxy: string | undefined): boolean {
   });
 }
 
-/** The proxy a request goes through, or none: every URL is https here, and Bun applies only `HTTPS_PROXY` to https. */
+/**
+ * The proxy a request goes through, or none (the pinned path). Every URL is https here, so only `HTTPS_PROXY` counts.
+ * Dovet alone applies `NO_PROXY`, and a host either `NO_PROXY` or `no_proxy` names goes direct (and pinned).
+ */
 export function proxyFor(
   url: URL,
   env: Readonly<Record<string, string | undefined>>,
   setting: string | undefined,
-): { proxy: string; strict: boolean } | undefined {
+): string | undefined {
   const proxy = setting ?? env.HTTPS_PROXY ?? env.https_proxy;
-  const noProxy = env.NO_PROXY ?? env.no_proxy;
-  if (proxy === undefined || proxy === "" || noProxyMatches(url, noProxy)) return undefined;
-  return { proxy, strict: noProxy !== undefined && noProxy.trim() !== "" };
+  if (proxy === undefined || proxy === "") return undefined;
+  return [env.NO_PROXY, env.no_proxy].some((v) => v !== undefined && noProxyMatches(url, v)) ? undefined : proxy;
 }

@@ -160,7 +160,7 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
   function pickTransport(ctx: ToolContext, url: URL): WebTransport {
     if (opts.transport) return opts.transport;
     const via = proxyFor(url, ctx.env, ctx.settings.network?.proxy);
-    return via === undefined ? pinnedTransport() : proxiedTransport(via.proxy, { strict: via.strict });
+    return via === undefined ? pinnedTransport() : proxiedTransport(via);
   }
 
   async function readBody(res: Response, guard: ReturnType<typeof watchdog>, max: number) {
