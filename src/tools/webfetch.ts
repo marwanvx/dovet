@@ -262,8 +262,7 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
 
   async function fetchPage(start: URL, ctx: ToolContext, guard: ReturnType<typeof watchdog>): Promise<Fetched> {
     let url = start;
-    const transport = pickTransport(ctx, url);
-    if (!(await allowedByRobots(url, transport, guard)))
+    if (!(await allowedByRobots(url, pickTransport(ctx, url), guard)))
       throw new WebFetchFailed(
         `robots.txt on ${url.hostname} disallows ${AGENT} from fetching ${url.href}. Don't retry this URL.`,
         false,
@@ -271,7 +270,10 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
     let retried = false;
     for (let hops = 0; ; ) {
       guard.poke();
-      const res = await transport({
+      const res = await pickTransport(
+        ctx,
+        url,
+      )({
         url,
         headers: { "User-Agent": userAgent, Accept: "text/markdown, text/html;q=0.9, */*;q=0.8" },
         signal: guard.signal,

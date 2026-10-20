@@ -2,8 +2,10 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import net from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 import { Settings } from "../schema/index.ts";
 import { createGrepTool, createToolRegistry, type ToolContext, type ToolOutput } from "./index.ts";
+import { TEST_CERT_LOOPBACK, TEST_CERT_PUBLIC_IP, TEST_KEY } from "./test-certs.ts";
 import { context, searchContext, text, workspace } from "./test-context.ts";
 import { pinnedTransport, proxiedTransport, proxyFor, type WebRequest } from "./web-net.ts";
 import { robotsAllows, robotsRules } from "./web-robots.ts";
@@ -642,10 +644,10 @@ describe("proxies", () => {
   });
 
   /** A CONNECT proxy that records the request line and headers, then answers with `reply` or tunnels to `origin`. */
-  async function connectProxy(reply: string | undefined, origin?: number) {
+  async function connectProxy(reply: string | undefined, origin?: number, secure = false) {
     const seen: string[] = [];
     const sockets = new Set<net.Socket>();
-    const server = net.createServer((client) => {
+    const onClient = (client: net.Socket): void => {
       sockets.add(client);
       client.once("close", () => sockets.delete(client));
       client.once("data", (head) => {
@@ -662,20 +664,33 @@ describe("proxies", () => {
         upstream.on("error", () => client.destroy());
         client.on("close", () => upstream.destroy());
       });
-    });
+    };
+    const server = secure
+      ? tls.createServer({ key: TEST_KEY, cert: TEST_CERT_LOOPBACK }, onClient)
+      : net.createServer(onClient);
     await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
     cleanups.push(() => {
       for (const c of sockets) c.destroy();
       server.close();
     });
-    return { seen, url: `http://alice:p%40ss@127.0.0.1:${(server.address() as net.AddressInfo).port}` };
+    return {
+      seen,
+      url: `${secure ? "https" : "http"}://alice:p%40ss@127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    };
   }
   const cleanups: Array<() => void> = [];
   afterAll(() => {
     for (const c of cleanups) c();
   });
   const live = () => ({ url: new URL("https://intranet.corp.example/admin?q=1"), headers: { "User-Agent": "t" } });
-  const fresh = () => new AbortController();
+  /** A mutant that accepts what it should refuse would otherwise leave the request hanging. */
+  const fresh = () => {
+    const stop = new AbortController();
+    return {
+      abort: (reason?: unknown) => stop.abort(reason),
+      signal: AbortSignal.any([stop.signal, AbortSignal.timeout(3000)]),
+    };
+  };
 
   // spec: AC-TOOLS-51
   test("the request goes through a CONNECT tunnel the proxy opens, with the credentials from the proxy URL", async () => {
@@ -724,7 +739,7 @@ describe("proxies", () => {
     const authFail = await connectProxy("HTTP/1.1 407 Proxy Authentication Required\r\n\r\n");
     const denied = proxiedTransport(authFail.url, { resolve: async () => ["93.184.216.34"] });
     await expect(denied({ ...live(), signal: fresh().signal })).rejects.toMatchObject({
-      message: expect.stringContaining("407"),
+      message: "The proxy asked for credentials Dovet doesn't have (407). Don't retry this URL.",
       retryable: false,
     });
     const down = await connectProxy("HTTP/1.1 502 Bad Gateway\r\n\r\n");
@@ -743,5 +758,47 @@ describe("proxies", () => {
   test("a proxy URL that isn't http(s) is refused without a connection", async () => {
     const transport = proxiedTransport("socks5://127.0.0.1:1080", { resolve: async () => ["93.184.216.34"] });
     await expect(transport({ ...live(), signal: fresh().signal })).rejects.toThrow("must be an http:// or https://");
+  });
+
+  /** A TLS server at the far end of the tunnel that answers any request with 200 and a body. */
+  async function secureOrigin(cert: string): Promise<number> {
+    const server = tls.createServer({ key: TEST_KEY, cert }, (c) => {
+      c.once("data", () => c.end("HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecure"));
+      c.on("error", () => undefined);
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    cleanups.push(() => server.close());
+    return (server.address() as net.AddressInfo).port;
+  }
+  const literal = { url: new URL("https://93.184.216.34/"), headers: {} };
+
+  // spec: AC-TOOLS-51
+  test("an IP-literal target is verified against its own address, not the proxy's", async () => {
+    const proxy = await connectProxy(undefined, await secureOrigin(TEST_CERT_PUBLIC_IP));
+    const transport = proxiedTransport(proxy.url, { tls: { ca: TEST_CERT_PUBLIC_IP } });
+    const res = await transport({ ...literal, signal: fresh().signal });
+    expect(await res.text()).toBe("secure");
+  });
+
+  // spec: AC-TOOLS-51
+  test("a proxy that answers for an IP-literal target with a certificate for its own address is refused", async () => {
+    const proxy = await connectProxy(undefined, await secureOrigin(TEST_CERT_LOOPBACK));
+    const transport = proxiedTransport(proxy.url, { tls: { ca: TEST_CERT_LOOPBACK } });
+    await expect(transport({ ...literal, signal: fresh().signal })).rejects.toThrow(/TLS|certificate|altname/i);
+  });
+
+  // spec: AC-TOOLS-51
+  test("an https:// proxy gets the CONNECT line and the credentials only inside TLS", async () => {
+    const origin = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("via tls proxy") });
+    servers.push(origin);
+    const proxy = await connectProxy(undefined, origin.port, true);
+    const transport = proxiedTransport(proxy.url, {
+      resolve: async () => ["93.184.216.34"],
+      secure: (socket) => socket,
+      tls: { ca: TEST_CERT_LOOPBACK },
+    });
+    const res = await transport({ ...live(), signal: fresh().signal });
+    expect(await res.text()).toBe("via tls proxy");
+    expect(proxy.seen[0]).toContain(`Proxy-Authorization: Basic ${btoa("alice:p@ss")}`);
   });
 });

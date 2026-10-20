@@ -3,7 +3,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP, connect as netConnect, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
-import { TLSSocket, connect as tlsConnect } from "node:tls";
+import { type ConnectionOptions, checkServerIdentity, TLSSocket, connect as tlsConnect } from "node:tls";
 import { isSafeIpAddress } from "guarded-fetch";
 import { readResponse, requestText } from "./web-http1.ts";
 
@@ -116,13 +116,18 @@ export function pinnedTransport(
 
 const PROXY_HEAD_LIMIT = 8192;
 
-function openProxySocket(proxy: URL, signal: AbortSignal, open: Socket[]): Promise<Socket> {
+function openProxySocket(
+  proxy: URL,
+  signal: AbortSignal,
+  open: Socket[],
+  tlsOptions: ConnectionOptions,
+): Promise<Socket> {
   const port = Number(proxy.port) || (proxy.protocol === "https:" ? 443 : 80);
   const host = proxy.hostname.replace(/^\[|\]$/g, "");
   return new Promise<Socket>((resolve, reject) => {
     const socket =
       proxy.protocol === "https:"
-        ? tlsConnect({ host, port, servername: isIP(host) === 0 ? host : undefined })
+        ? tlsConnect({ ...tlsOptions, host, port, servername: isIP(host) === 0 ? host : undefined })
         : netConnect({ host, port });
     open.push(socket);
     const onAbort = (): void => {
@@ -140,8 +145,14 @@ function openProxySocket(proxy: URL, signal: AbortSignal, open: Socket[]): Promi
 }
 
 /** Asks the proxy to open a tunnel to `authority`; the socket is ready for TLS once this returns. */
-async function openTunnel(proxy: URL, authority: string, signal: AbortSignal, open: Socket[]): Promise<Socket> {
-  const socket = await openProxySocket(proxy, signal, open);
+async function openTunnel(
+  proxy: URL,
+  authority: string,
+  signal: AbortSignal,
+  open: Socket[],
+  tlsOptions: ConnectionOptions,
+): Promise<Socket> {
+  const socket = await openProxySocket(proxy, signal, open, tlsOptions);
   const credentials =
     proxy.username === "" && proxy.password === ""
       ? ""
@@ -196,7 +207,12 @@ async function openTunnel(proxy: URL, authority: string, signal: AbortSignal, op
  */
 export function proxiedTransport(
   proxyUrl: string,
-  deps: { resolve?: Resolver; secure?: (socket: Socket, serverName: string | undefined) => Duplex } = {},
+  deps: {
+    resolve?: Resolver;
+    secure?: (socket: Socket, serverName: string | undefined) => Duplex;
+    /** Extra TLS options for both hops (tests pass `ca`); the certificate check against the target stays Dovet's. */
+    tls?: ConnectionOptions;
+  } = {},
 ): WebTransport {
   const resolve = deps.resolve ?? systemResolver;
   return async ({ url, headers, signal }) => {
@@ -225,11 +241,25 @@ export function proxiedTransport(
     };
     signal.addEventListener("abort", closeAll, { once: true });
     try {
-      const raw = await openTunnel(proxy, `${url.hostname}:${url.port === "" ? "443" : url.port}`, signal, open);
+      const raw = await openTunnel(
+        proxy,
+        `${url.hostname}:${url.port === "" ? "443" : url.port}`,
+        signal,
+        open,
+        deps.tls ?? {},
+      );
       const serverName = literal ? undefined : host;
-      const secured = deps.secure?.(raw, serverName) ?? tlsConnect({ socket: raw, servername: serverName });
+      const secured =
+        deps.secure?.(raw, serverName) ??
+        tlsConnect({
+          ...deps.tls,
+          socket: raw,
+          servername: serverName,
+          // without it Bun matches an IP-literal target's certificate against the proxy's host name
+          checkServerIdentity: (_name, cert) => checkServerIdentity(host, cert),
+        });
       open.push(secured as Socket);
-      if (secured instanceof TLSSocket)
+      if (deps.secure === undefined && secured instanceof TLSSocket)
         await new Promise<void>((ok, bad) => {
           secured.once("secureConnect", ok);
           secured.once("error", bad);
