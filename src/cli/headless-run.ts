@@ -15,6 +15,7 @@ import {
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
   type InstructionContext,
+  instructionsUpdated,
   isEarlyEligible,
   type LoadedInstruction,
   MAX_REQUESTS_PER_TURN,
@@ -285,10 +286,11 @@ function skipUnapproved(stored: ExternalImportApprovals): ExternalImportApproval
 /** A cheap check before the full reload: a launch file whose modification time changed, or that is gone. */
 async function instructionFilesMoved(files: readonly LoadedInstruction[]): Promise<boolean> {
   for (const f of files) {
-    const info = await stat(f.path).catch((err: unknown) =>
+    const info = await stat(f.path, { bigint: true }).catch((err: unknown) =>
       isErrno(err, "ENOENT", "ENOTDIR") ? null : Promise.reject(err),
     );
-    if (info === null || info.mtimeMs !== f.mtimeMs) return true;
+    // The same arithmetic discovery used to record it: the double `mtimeMs` of a plain stat differs in its last bits.
+    if (info === null || Number(info.mtimeNs) / 1e6 !== f.mtimeMs) return true;
   }
   return false;
 }
@@ -909,11 +911,20 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         // The full discovery again, so a changed file passes the same policy, size and hidden-character checks as at launch.
         const fresh = await discoverInstructions(instructionContext, { loaded: known });
         known.push(fresh.launchEvent);
+        const kept = new Set(fresh.files.map((f) => f.path));
+        const dropped = launchFiles.filter((f) => !kept.has(f.path));
         launchFiles = fresh.files;
-        warnings.push(...fresh.warnings);
+        warnings.push(...fresh.warnings.filter((w) => !warnings.includes(w)));
         taintFrom(fresh.taintSources);
-        for (const part of fresh.resumeUpdates)
+        const updates = [
+          ...fresh.resumeUpdates,
+          ...dropped.map((f) =>
+            instructionsUpdated(f.displayPath, "(the file was deleted or can no longer be loaded)"),
+          ),
+        ];
+        for (const part of updates)
           push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+        if (updates.length > 0) push("instructions.loaded", epochNum, null, fresh.launchEvent);
       }
       const built = buildRequest(events, {
         header,

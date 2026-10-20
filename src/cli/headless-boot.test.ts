@@ -469,6 +469,48 @@ describe("headless boot: instruction files", () => {
     expect(tainted).toBe("Permission denied: remote action: git push");
     expect(clean).toBe("pushed");
   });
+
+  // spec: AC-CTX-10
+  test("a launch file the agent deletes mid-turn is announced as gone", async () => {
+    const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+    try {
+      const out = await boot(dir, [{ calls: [{ id: "c1", name: "echo", input: { text: "x" } }] }, { text: "done" }], {
+        toolDefs: [tool("echo", () => rm(join(dir.root, "AGENTS.md")))],
+      });
+      const events = await eventsOf(dir, out.sessionId);
+      const injected = events.filter((e) => e.type === "system.injected").map((e) => (e.data as { text: string }).text);
+      expect(injected).toEqual([
+        "Instructions updated (AGENTS.md):\n(the file was deleted or can no longer be loaded)",
+      ]);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CTX-10
+  test("an update made mid-turn is not announced again when the session is resumed", async () => {
+    const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+    try {
+      const ids = sequentialIds("B");
+      const first = await boot(dir, [{ calls: [{ id: "c1", name: "echo", input: { text: "x" } }] }, { text: "one" }], {
+        ids,
+        toolDefs: [
+          tool("echo", async () => {
+            const file = join(dir.root, "AGENTS.md");
+            await writeFile(file, "NEW RULE\n");
+            await utimes(file, new Date(Date.now() + 5000), new Date(Date.now() + 5000));
+          }),
+        ],
+      });
+      const second = await boot(dir, [{ text: "two" }], { ids }, "again", { resume: first.sessionId });
+      const injected = (await eventsOf(dir, second.sessionId))
+        .filter((e) => e.type === "system.injected")
+        .map((e) => (e.data as { text: string }).text);
+      expect(injected).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
 });
 
 describe("headless boot: ending the turn", () => {
