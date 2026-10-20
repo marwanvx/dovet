@@ -540,6 +540,10 @@ describe("untrusted robots.txt", () => {
     expect(robotsAllows(rules("Disallow: /a*/b*c"), "/ax/y/b-z")).toBe(true);
     expect(robotsAllows(rules("Disallow: /docs\nAllow: /docs/public"), "/docs/public/a")).toBe(true);
     expect(robotsAllows(rules("Disallow: /docs\nAllow: /docs/public"), "/docs/secret")).toBe(false);
+    const longAllow = rules(`Disallow: /\nAllow: /public/${"x".repeat(520)}/only-this$`);
+    expect(robotsAllows(longAllow, `/public/${"x".repeat(520)}/private-other`)).toBe(false);
+    const flood = rules(`${"Allow: /zz\n".repeat(600)}Disallow: /secret`);
+    expect(robotsAllows(flood, "/secret")).toBe(false);
     const hostile = rules(`Disallow: /${"*a".repeat(60)}X`);
     const started = performance.now();
     expect(robotsAllows(hostile, `/${"a".repeat(5000)}`)).toBe(true);
@@ -586,29 +590,60 @@ describe("proxies", () => {
   // spec: AC-TOOLS-51
   test("only a proxy Bun applies to https is used; HTTP_PROXY alone leaves the pinned path", () => {
     expect(proxyFor(url, { HTTP_PROXY: "http://p:3128", http_proxy: "http://p:3128" }, undefined)).toBeUndefined();
-    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, undefined)).toBe("http://p:3128");
-    expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)).toBe("http://q:1");
-    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")).toBe("http://setting:1");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, undefined)).toEqual({
+      proxy: "http://p:3128",
+      strict: false,
+    });
+    expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)?.proxy).toBe("http://q:1");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")?.proxy).toBe("http://setting:1");
     expect(proxyFor(url, {}, undefined)).toBeUndefined();
   });
 
   // spec: AC-TOOLS-51
-  test("NO_PROXY entries keep the pinned path, with or without a port", () => {
+  test("NO_PROXY keeps the pinned path for every form Bun also matches: ports, dots, spaces, wildcards", () => {
     const env = (no: string) => ({ HTTPS_PROXY: "http://p:3128", NO_PROXY: no });
-    expect(proxyFor(url, env("corp.example"), undefined)).toBeUndefined();
-    expect(proxyFor(url, env(".corp.example"), undefined)).toBeUndefined();
-    expect(proxyFor(url, env("other.example, intranet.corp.example:443"), undefined)).toBeUndefined();
-    expect(proxyFor(url, env("intranet.corp.example:8443"), undefined)).toBe("http://p:3128");
-    expect(proxyFor(url, env("*"), undefined)).toBeUndefined();
-    expect(proxyFor(url, env("other.example"), undefined)).toBe("http://p:3128");
+    const direct = (no: string, u = url) => proxyFor(u, env(no), undefined) === undefined;
+    expect(direct("corp.example")).toBe(true);
+    expect(direct(".corp.example")).toBe(true);
+    expect(direct("corp.example.")).toBe(true);
+    expect(direct("other.example, intranet.corp.example:443")).toBe(true);
+    expect(direct("other.example intranet.corp.example")).toBe(true);
+    expect(direct("corp.example", new URL("https://intranet.corp.example./x"))).toBe(true);
+    expect(direct("*")).toBe(true);
+    expect(direct("intranet.corp.example:8443")).toBe(false);
+    expect(direct("intranet.corp.example:8443", new URL("https://intranet.corp.example:8443/"))).toBe(true);
+    expect(direct("other.example")).toBe(false);
   });
 
   // spec: AC-TOOLS-51
-  test("behind a proxy a name that resolves here only to private addresses is still refused", async () => {
+  test("behind a proxy a name that resolves here only to private addresses is refused", async () => {
     const transport = proxiedTransport("http://127.0.0.1:1", { resolve: async () => ["10.1.2.3"] });
-    const signal = new AbortController().signal;
-    await expect(transport({ url: new URL("https://intranet.corp.example/"), headers: {}, signal })).rejects.toThrow(
-      "can't reach local or intranet hosts",
-    );
+    const request = {
+      url: new URL("https://intranet.corp.example/"),
+      headers: {},
+      signal: new AbortController().signal,
+    };
+    await expect(transport(request)).rejects.toThrow("can't reach local or intranet hosts");
+  });
+
+  // spec: AC-TOOLS-51
+  test("with NO_PROXY set, one unsafe address or a failed lookup is refused, because Bun may connect directly", async () => {
+    const request = {
+      url: new URL("https://intranet.corp.example/"),
+      headers: {},
+      signal: new AbortController().signal,
+    };
+    const mixed = proxiedTransport("http://127.0.0.1:1", {
+      strict: true,
+      resolve: async () => ["93.184.216.34", "10.0.0.1"],
+    });
+    await expect(mixed(request)).rejects.toThrow("can't reach local or intranet hosts");
+    const failing = proxiedTransport("http://127.0.0.1:1", {
+      strict: true,
+      resolve: async () => {
+        throw new Error("ENOTFOUND");
+      },
+    });
+    await expect(failing(request)).rejects.toThrow("can't reach local or intranet hosts");
   });
 });

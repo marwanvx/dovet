@@ -159,8 +159,8 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
 
   function pickTransport(ctx: ToolContext, url: URL): WebTransport {
     if (opts.transport) return opts.transport;
-    const proxy = proxyFor(url, ctx.env, ctx.settings.network?.proxy);
-    return proxy === undefined ? pinnedTransport() : proxiedTransport(proxy);
+    const via = proxyFor(url, ctx.env, ctx.settings.network?.proxy);
+    return via === undefined ? pinnedTransport() : proxiedTransport(via.proxy, { strict: via.strict });
   }
 
   async function readBody(res: Response, guard: ReturnType<typeof watchdog>, max: number) {
@@ -271,7 +271,11 @@ export function createWebFetchTool(opts: WebFetchOptions): ToolDefinition<WebFet
     let retried = false;
     for (let hops = 0; ; ) {
       guard.poke();
-      const res = await transport({
+      // A same-host redirect can change the port, which a NO_PROXY entry may name.
+      const res = await pickTransport(
+        ctx,
+        url,
+      )({
         url,
         headers: { "User-Agent": userAgent, Accept: "text/markdown, text/html;q=0.9, */*;q=0.8" },
         signal: guard.signal,

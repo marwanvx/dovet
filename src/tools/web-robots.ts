@@ -2,7 +2,8 @@
 
 export type Rule = { allow: boolean; pattern: string; length: number };
 
-const MAX_RULES = 500;
+const MAX_ALLOWS = 500;
+const MAX_DISALLOWS = 2000;
 const MAX_RULE_LENGTH = 512;
 
 /** Linear-time wildcard match (`*` any run, trailing `$` anchors): a rule from a server is untrusted input. */
@@ -29,6 +30,8 @@ function matches(pattern: string, text: string): boolean {
 /** Rules from the group addressed to `agent` only; a generic `*` group is not applied (tools §9). */
 export function robotsRules(text: string, agent: string): Rule[] {
   const rules: Rule[] = [];
+  let allows = 0;
+  let disallows = 0;
   let ours = false;
   let inAgents = false;
   for (const raw of text.split(/\r?\n/)) {
@@ -45,8 +48,12 @@ export function robotsRules(text: string, agent: string): Rule[] {
     }
     inAgents = false;
     if (!ours || (key !== "disallow" && key !== "allow") || value === "") continue;
-    if (rules.length < MAX_RULES)
-      rules.push({ allow: key === "allow", pattern: value.slice(0, MAX_RULE_LENGTH), length: value.length });
+    // Limits may only make the result stricter: a long or surplus Allow is dropped, a long Disallow is cut.
+    const allow = key === "allow";
+    if (allow ? value.length > MAX_RULE_LENGTH || allows >= MAX_ALLOWS : disallows >= MAX_DISALLOWS) continue;
+    if (allow) allows++;
+    else disallows++;
+    rules.push({ allow, pattern: value.slice(0, MAX_RULE_LENGTH), length: value.length });
   }
   return rules;
 }
