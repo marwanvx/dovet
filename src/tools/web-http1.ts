@@ -124,8 +124,11 @@ export function readResponse(socket: Duplex): Promise<Response> {
     let settled = false;
     let over = false;
 
+    const closeSocket = (): void => {
+      if (!socket.destroyed) socket.destroy();
+    };
     const fail = (e: Error): void => {
-      socket.destroy();
+      closeSocket();
       if (!settled) {
         settled = true;
         reject(e);
@@ -138,7 +141,7 @@ export function readResponse(socket: Duplex): Promise<Response> {
       if (controller === undefined || over) return;
       over = true;
       controller.close();
-      socket.destroy();
+      closeSocket();
     };
 
     const start = (rest: Buffer, status: number, headers: Headers): void => {

@@ -18,7 +18,7 @@ jobs:
       - shell: bash
         continue-on-error: true
         run: |
-          for n in 1 2 3; do
+          for n in 1 2; do
             timeout 60 bun test src/tools/web-http1.test.ts > out.txt 2>&1 && code=0 || code=$?
             echo "=== whole file run $n: exit $code; $(grep -cE '^\(pass\)' out.txt) passed; $(grep -c Segmentation out.txt) segfault"
           done
