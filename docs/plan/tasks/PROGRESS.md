@@ -626,6 +626,12 @@ Review: quick (docs only).
 Learned: "Waiting for the owner" holds only what no agent can do (W1, the release key). With strict protection a PR behind `main` must run `gh pr update-branch` before it can merge (build loop step 8.3).
 Next: M2-05b.
 
+## 2026-10-20 — Runner: a PR left open after review no longer stops `bun run auto`
+Done: `scripts/auto.ts` read the progress log from `origin/main`, so a session that followed build loop step 7.4 (PR left open, entry on the task branch) looked like one that wrote nothing, and the run stopped after one task. It now reads the checkout and goes on to a fresh session that picks up the open PR; it stops if the same task's PR is still open after 3 sessions in a row. PR: see this branch.
+Review: quick (runner script, tests in `scripts/auto.test.ts`).
+Learned: the runner's stop reason ("no new progress entry") hid the real state twice (2026-10-20 03:57 and 11:37 in `auto-runs.log`).
+Next: M2-05b (rethink on PR #164).
+
 ## 2026-10-20 — M2-05b Sandbox and instruction files in the session boot
 Done: `dovet -p` now builds the real `SandboxService` when a shell tool is declared (threaded into `ToolContext`, glob warnings and `sandbox: off` reported after a shell command, stopped at the end of the turn), loads the project's and user's instruction files into a new session's system prompt (`instructions.loaded` event, taint from hidden characters, external imports skipped without storing a decision), appends changed files on resume and mid-turn, and treats the project root as part of the project when started below it. PR: #164 (open, not merged).
 Review: deep, 3 rounds, 8 fixed (mid-turn reload skipped the Read-deny/size/hidden-character checks; project root not a working dir; stalled sandbox start holding up the exit; failing `close()` skipping the log close; taint not tested by its effect; deleted file not announced; mtime scale mismatch; reload not logged), 0 dropped, 0 logged to FOLLOWUPS. Round 3 still found 1 major.
