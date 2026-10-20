@@ -15,6 +15,7 @@ import {
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
   type InstructionContext,
+  type InstructionSet,
   instructionsUpdated,
   isEarlyEligible,
   type LoadedInstruction,
@@ -931,7 +932,22 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const seenAt = new Map<string, number | null>();
         for (const path of [...launchFiles.map((f) => f.path), ...[...droppedFiles.values()].map((d) => d.path)])
           seenAt.set(path, await mtimeOf(path));
-        const fresh = await discoverInstructions(instructionContext, { loaded: known });
+        // The one boundary for everything the agent can do to the filesystem mid-turn: a reload that fails drops every launch file, loudly.
+        const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch(
+          (
+            err: unknown,
+          ): Pick<InstructionSet, "files" | "launchEvent" | "resumeUpdates" | "warnings" | "taintSources"> => {
+            const why = err instanceof Error ? err.message : String(err);
+            const warning = `instruction files could not be re-read (${why}); none of them is loaded now`;
+            return {
+              files: [],
+              launchEvent: { files: [], warnings: [warning] },
+              resumeUpdates: [],
+              warnings: [warning],
+              taintSources: [],
+            };
+          },
+        );
         const kept = new Set(fresh.files.map((f) => pathKey(f.path, input.os)));
         const dropped = launchFiles.filter((f) => !kept.has(pathKey(f.path, input.os)));
         for (const key of kept) droppedFiles.delete(key);

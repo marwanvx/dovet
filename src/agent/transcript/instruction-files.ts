@@ -114,9 +114,20 @@ async function build(
   const { os, cwd, settings } = ctx;
   const path = os === "win32" ? win32 : posix;
   const canon = (p: string): AbsPath => canonicalizePath(p, cwd, os);
-  const workingDirs = [cwd, ...(ctx.projectRoot === undefined ? [] : [ctx.projectRoot]), ...ctx.additionalDirs].map(
-    canon,
-  );
+  const workingDirs = [cwd, ...(ctx.projectRoot === undefined ? [] : [ctx.projectRoot])].map(canon);
+  // An additional directory that can't be resolved (a symlink loop, no access) is not a working directory.
+  const additional: { dir: string; canonical: AbsPath }[] = [];
+  const unresolved: string[] = [];
+  for (const dir of ctx.additionalDirs) {
+    try {
+      const canonical = canon(dir);
+      additional.push({ dir, canonical });
+      workingDirs.push(canonical);
+    } catch (e) {
+      if (!(e instanceof PathRefused) && !isErrno(e, ...UNREADABLE)) throw e;
+      unresolved.push(dir);
+    }
+  }
   const inWorkingDirs = (p: string): boolean => workingDirs.some((d) => isWithin(p, d, os));
   const excluded = excludeMatcher(settings.exclude ?? []);
   const scale = Math.min(4, ctx.contextWindow / 200_000);
@@ -136,16 +147,17 @@ async function build(
   };
 
   /** Network paths are refused before anything touches them: Windows would send credentials to a share. */
-  function canonOrRefusal(p: string): AbsPath | { refused: string } {
+  function canonOrRefusal(p: string): AbsPath | { refused: string; status: FoundInstruction["status"] } {
     let canonical: AbsPath;
     try {
       canonical = canon(p);
     } catch (e) {
-      if (e instanceof PathRefused) return { refused: e.message };
-      if (isErrno(e, ...UNREADABLE)) return { refused: "cannot be resolved" };
+      if (e instanceof PathRefused) return { refused: e.message, status: "network" };
+      if (isErrno(e, ...UNREADABLE)) return { refused: "cannot be read", status: "denied" };
       throw e;
     }
-    if (os === "darwin" && /^\/(Network|\.vol)\//i.test(canonical)) return { refused: "network paths are never read" };
+    if (os === "darwin" && /^\/(Network|\.vol)\//i.test(canonical))
+      return { refused: "network paths are never read", status: "network" };
     return canonical;
   }
 
@@ -158,7 +170,7 @@ async function build(
       return undefined;
     };
     const canonical = canonOrRefusal(requested);
-    if (typeof canonical !== "string") return refuse("network", canonical.refused);
+    if (typeof canonical !== "string") return refuse(canonical.status, canonical.refused);
     const info = await statOrNull(requested);
     if (info === null || !info.isFile()) return undefined;
     const identity = fileIdentityKey(info);
@@ -279,7 +291,7 @@ async function build(
   ): Promise<string | undefined> {
     const canonical = canonOrRefusal(target);
     if (typeof canonical !== "string") {
-      found.push({ path: display(target), status: "network", reason: canonical.refused });
+      found.push({ path: display(target), status: canonical.status, reason: canonical.refused });
       return undefined;
     }
     if ((await statOrNull(target)) === null) return undefined;
@@ -305,7 +317,14 @@ async function build(
     const out: string[] = [];
     for (const root of roots) {
       if (!(await statOrNull(root))?.isDirectory()) continue;
-      const names = await Array.fromAsync(new Bun.Glob("**/*.md").scan({ cwd: root, dot: true, followSymlinks: true }));
+      // One locked subfolder aborts the whole scan: the folder's rules count as not loadable rather than crash a reload.
+      const names = await Array.fromAsync(
+        new Bun.Glob("**/*.md").scan({ cwd: root, dot: true, followSymlinks: true }),
+      ).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
+      if (names === null) {
+        found.push({ path: display(root), status: "denied", reason: "cannot be read" });
+        continue;
+      }
       out.push(...names.sort().map((n) => path.join(root, n)));
     }
     return out;
@@ -355,6 +374,7 @@ async function build(
     return out;
   }
 
+  for (const dir of unresolved) found.push({ path: display(dir), status: "denied", reason: "cannot be read" });
   const launch: Loaded[] = [];
   const claudeHome = path.join(ctx.home, ".claude");
   // User-level scoped rules match paths relative to the working directory.
@@ -388,8 +408,8 @@ async function build(
       ...(await loadDir(d, inWorkingDirs(canon(d)), "launch", { main, rules: [path.join(d, ".dovet", "rules")] })),
     );
   }
-  for (const d of ctx.additionalDirs) {
-    if (isWithin(canon(d), workingDirs[0] ?? cwd, os) || settings.fromAdditionalDirectories === true) {
+  for (const { dir: d, canonical } of additional) {
+    if (isWithin(canonical, workingDirs[0] ?? cwd, os) || settings.fromAdditionalDirectories === true) {
       launch.push(...(await loadDir(d, true, "launch")));
       continue;
     }

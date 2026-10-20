@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import type { Os } from "../../platform/index.ts";
@@ -313,6 +313,38 @@ describe("AC-CTX-15: loaded exactly once", () => {
     await writeFile(join(root, "AGENTS.md"), `@${join(upper, "CLAUDE.md")}\n`);
     const set = await discoverInstructions(await context(lower, { additionalDirs: [upper] }));
     expect(count(render(set.files), "ONCE-MARKER")).toBe(1);
+  });
+});
+
+describe("AC-CTX-10: an unreadable path is not loadable", () => {
+  // spec: AC-CTX-10
+  test.skipIf(WINDOWS)("an additional directory that is a symlink loop is reported, not thrown", async () => {
+    const root = await temp({ "AGENTS.md": "ROOT\n" });
+    const loop = join(root, "loop");
+    await symlink("loop", loop);
+    const set = await discoverInstructions(await context(root, { additionalDirs: [loop] }));
+    expect(render(set.files)).toContain("ROOT");
+    expect(set.found).toContainEqual({ path: "loop", status: "denied", reason: "cannot be read" });
+  });
+
+  // spec: AC-CTX-10
+  test.skipIf(WINDOWS || process.getuid?.() === 0)("a locked rules folder is reported, not thrown", async () => {
+    const root = await temp({
+      "AGENTS.md": "ROOT\n",
+      ".claude/rules/a.md": "RULE-A\n",
+      ".claude/rules/sub/b.md": "RULE-B\n",
+    });
+    const sub = join(root, ".claude", "rules", "sub");
+    await chmod(sub, 0);
+    try {
+      const set = await discoverInstructions(await context(root));
+      const text = render(set.files);
+      expect(text).toContain("ROOT");
+      expect(text).not.toContain("RULE-B");
+      expect(set.found).toContainEqual({ path: ".claude/rules", status: "denied", reason: "cannot be read" });
+    } finally {
+      await chmod(sub, 0o755);
+    }
   });
 });
 

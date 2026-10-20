@@ -1,6 +1,6 @@
 // Session boot of a headless turn: the sandbox service and the instruction files (permissions §7, context §3).
 import { describe, expect, test } from "bun:test";
-import { chmod, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { fakePlatform, sequentialIds, type TempProject, tempProject } from "../../test/helpers/index.ts";
@@ -557,6 +557,108 @@ describe("headless boot: instruction files", () => {
         ]);
       } finally {
         await chmod(file, 0o644).catch(() => undefined);
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: AC-CTX-10
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a rules folder or a rules subfolder the agent locks mid-turn is announced as gone and does not crash the turn",
+    async () => {
+      const dir = await tempProject({
+        "AGENTS.md": "BASE\n",
+        ".claude/rules/top.md": "TOP RULE\n",
+        ".dovet/rules/deep/inner.md": "INNER RULE\n",
+      });
+      const top = join(dir.root, ".claude", "rules");
+      const deep = join(dir.root, ".dovet", "rules", "deep");
+      try {
+        const out = await boot(dir, [{ calls: [{ id: "c1", name: "lock", input: { text: "x" } }] }, { text: "done" }], {
+          toolDefs: [
+            tool("lock", async () => {
+              await chmod(top, 0);
+              await chmod(deep, 0);
+            }),
+          ],
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        const injected = (await eventsOf(dir, out.sessionId))
+          .filter((e) => e.type === "system.injected")
+          .map((e) => (e.data as { text: string }).text);
+        expect(injected.sort()).toEqual([
+          "Instructions updated (.claude/rules/top.md):\n(the file was deleted or can no longer be loaded)",
+          "Instructions updated (.dovet/rules/deep/inner.md):\n(the file was deleted or can no longer be loaded)",
+        ]);
+      } finally {
+        await chmod(top, 0o755).catch(() => undefined);
+        await chmod(deep, 0o755).catch(() => undefined);
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: AC-CTX-10
+  test.skipIf(process.platform === "win32")(
+    "a rules folder replaced by a symlink loop mid-turn does not crash the turn",
+    async () => {
+      const dir = await tempProject({ "AGENTS.md": "BASE\n", ".claude/rules/top.md": "TOP RULE\n" });
+      const rules = join(dir.root, ".claude", "rules");
+      try {
+        const out = await boot(dir, [{ calls: [{ id: "c1", name: "loop", input: { text: "x" } }] }, { text: "done" }], {
+          toolDefs: [
+            tool("loop", async () => {
+              await rm(rules, { recursive: true });
+              await symlink("rules", rules);
+            }),
+          ],
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        const injected = (await eventsOf(dir, out.sessionId))
+          .filter((e) => e.type === "system.injected")
+          .map((e) => (e.data as { text: string }).text);
+        expect(injected).toEqual([
+          "Instructions updated (.claude/rules/top.md):\n(the file was deleted or can no longer be loaded)",
+        ]);
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: AC-CTX-10
+  test.skipIf(process.platform === "win32")(
+    "a reload that fails for a reason discovery does not handle drops the launch files and says why",
+    async () => {
+      const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+      const outside = await tempProject({ "real.md": "OUTSIDE\n" });
+      try {
+        const file = join(dir.root, "AGENTS.md");
+        const projects = join(dir.root, "data", "projects");
+        const out = await boot(
+          dir,
+          [{ calls: [{ id: "c1", name: "break", input: { text: "x" } }] }, { text: "done" }],
+          {
+            toolDefs: [
+              tool("break", async () => {
+                // A symlink out of the project makes discovery consult the approvals file, which is now a folder.
+                for (const id of await readdir(projects)) await mkdir(join(projects, id, "external-imports.json"));
+                await rm(file);
+                await symlink(join(outside.root, "real.md"), file);
+              }),
+            ],
+          },
+        );
+        expect(out.exit).toEqual({ kind: "ok" });
+        expect(out.warnings.some((w) => w.startsWith("instruction files could not be re-read"))).toBe(true);
+        const injected = (await eventsOf(dir, out.sessionId))
+          .filter((e) => e.type === "system.injected")
+          .map((e) => (e.data as { text: string }).text);
+        expect(injected).toEqual([
+          "Instructions updated (AGENTS.md):\n(the file was deleted or can no longer be loaded)",
+        ]);
+      } finally {
+        await outside.dispose();
         await dir.dispose();
       }
     },
