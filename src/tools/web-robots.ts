@@ -1,11 +1,29 @@
 // WebFetch robots.txt (tools §9): only rules addressed to Dovet-User apply.
 
-type Rule = { allow: boolean; pattern: RegExp; length: number };
+export type Rule = { allow: boolean; pattern: string; length: number };
 
-function ruleFor(path: string, allow: boolean): Rule {
-  const anchored = path.endsWith("$");
-  const body = (anchored ? path.slice(0, -1) : path).replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return { allow, pattern: new RegExp(`^${body}${anchored ? "$" : ""}`), length: path.length };
+const MAX_RULES = 500;
+const MAX_RULE_LENGTH = 512;
+
+/** Linear-time wildcard match (`*` any run, trailing `$` anchors): a rule from a server is untrusted input. */
+function matches(pattern: string, text: string): boolean {
+  const anchored = pattern.endsWith("$");
+  const parts = (anchored ? pattern.slice(0, -1) : pattern).split("*");
+  const first = parts[0] ?? "";
+  if (!text.startsWith(first)) return false;
+  let at = first.length;
+  if (parts.length === 1) return anchored ? text.length === first.length : true;
+  const last = parts[parts.length - 1] ?? "";
+  for (const part of parts.slice(1, -1)) {
+    if (part === "") continue;
+    const found = text.indexOf(part, at);
+    if (found < 0) return false;
+    at = found + part.length;
+  }
+  if (!anchored) {
+    return last === "" || text.indexOf(last, at) >= 0;
+  }
+  return text.length - last.length >= at && text.endsWith(last);
 }
 
 /** Rules from the group addressed to `agent` only; a generic `*` group is not applied (tools §9). */
@@ -27,7 +45,8 @@ export function robotsRules(text: string, agent: string): Rule[] {
     }
     inAgents = false;
     if (!ours || (key !== "disallow" && key !== "allow") || value === "") continue;
-    rules.push(ruleFor(value, key === "allow"));
+    if (rules.length < MAX_RULES)
+      rules.push({ allow: key === "allow", pattern: value.slice(0, MAX_RULE_LENGTH), length: value.length });
   }
   return rules;
 }
@@ -36,7 +55,7 @@ export function robotsRules(text: string, agent: string): Rule[] {
 export function robotsAllows(rules: readonly Rule[], pathAndQuery: string): boolean {
   let best: Rule | undefined;
   for (const r of rules) {
-    if (!r.pattern.test(pathAndQuery)) continue;
+    if (!matches(r.pattern, pathAndQuery)) continue;
     if (best === undefined || r.length > best.length || (r.length === best.length && r.allow)) best = r;
   }
   return best === undefined || best.allow;

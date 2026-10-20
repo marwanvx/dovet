@@ -111,14 +111,56 @@ export function pinnedTransport(
   };
 }
 
-/** Bun's own fetch, for a configured proxy: the proxy resolves and connects, so only the literal checks apply. */
-export function proxiedTransport(proxy: string | undefined): WebTransport {
+/**
+ * Bun's own fetch through an explicit proxy: the proxy resolves and connects, so DNS isn't required locally. Bun can
+ * still connect directly (its own `NO_PROXY` handling), so a name that resolves here only to unsafe addresses is
+ * refused first.
+ */
+export function proxiedTransport(proxy: string, deps: { resolve?: Resolver } = {}): WebTransport {
+  const resolve = deps.resolve ?? systemResolver;
   return async ({ url, headers, signal }) => {
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    let found: string[] | undefined = isIP(host) !== 0 ? [host] : undefined;
+    if (found === undefined) {
+      try {
+        found = await resolve(host);
+      } catch {
+        // Only the proxy may be able to resolve this name; the answer there is the proxy's to check.
+      }
+    }
+    if (found !== undefined && !found.some((a) => isSafeIpAddress(a)))
+      throw new WebFetchRefused(localHostText(url.hostname));
     try {
-      return await fetch(url, { headers, signal, redirect: "manual", ...(proxy === undefined ? {} : { proxy }) });
+      return await fetch(url, { headers, signal, redirect: "manual", proxy });
     } catch (e) {
       if (signal.aborted) throw e;
       throw describeFailure(url.hostname, e);
     }
   };
+}
+
+function noProxyMatches(url: URL, noProxy: string | undefined): boolean {
+  if (noProxy === undefined) return false;
+  const host = url.hostname.toLowerCase();
+  const port = url.port === "" ? "443" : url.port;
+  return noProxy.split(",").some((raw) => {
+    const entry = raw.trim().toLowerCase();
+    if (entry === "*") return true;
+    const colon = entry.lastIndexOf(":");
+    const named = colon > 0 && !entry.includes("]") && entry.indexOf(":") === colon ? entry.slice(0, colon) : entry;
+    if (named !== entry && entry.slice(colon + 1) !== port) return false;
+    const bare = named.replace(/^\*?\./, "");
+    return bare !== "" && (host === bare || host.endsWith(`.${bare}`));
+  });
+}
+
+/** The proxy a request goes through, or none: every URL is https here, and Bun applies only `HTTPS_PROXY` to https. */
+export function proxyFor(
+  url: URL,
+  env: Readonly<Record<string, string | undefined>>,
+  setting: string | undefined,
+): string | undefined {
+  const proxy = setting ?? env.HTTPS_PROXY ?? env.https_proxy;
+  if (proxy === undefined || proxy === "" || noProxyMatches(url, env.NO_PROXY ?? env.no_proxy)) return undefined;
+  return proxy;
 }

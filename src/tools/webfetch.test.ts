@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { Settings } from "../schema/index.ts";
 import { createGrepTool, createToolRegistry, type ToolContext, type ToolOutput } from "./index.ts";
 import { context, searchContext, text, workspace } from "./test-context.ts";
-import { pinnedTransport, type WebRequest } from "./web-net.ts";
+import { pinnedTransport, proxiedTransport, proxyFor, type WebRequest } from "./web-net.ts";
+import { robotsAllows, robotsRules } from "./web-robots.ts";
 import { createWebFetchTool, IDLE_TIMEOUT_MS, type WebFetchOptions } from "./webfetch.ts";
 
 type Route = (req: Request) => Response | Promise<Response>;
@@ -219,7 +220,7 @@ describe("paging and saving", () => {
   // spec: AC-TOOLS-42
   test("a 400,000-char page returns 30,000 chars inline, saves the whole page and Grep finds its end", async () => {
     const words = "lorem ipsum dolor sit amet\n";
-    const page = `${words.repeat(14_000)}THE-NEEDLE-AT-THE-END\n${words.repeat(1_000)}`;
+    const page = `START-OF-PAGE-MARKER\n${words.repeat(14_000)}THE-NEEDLE-AT-THE-END\n${words.repeat(1_000)}`;
     const total = page.length;
     const dir = await workspace();
     const fx = fixture({ "/robots.txt": () => new Response("", { status: 404 }), "/big": md(page) });
@@ -251,6 +252,7 @@ describe("paging and saving", () => {
     expect(text(grep)).toContain("THE-NEEDLE-AT-THE-END");
     const next = await tool.run({ url: "https://docs.example/big", offset: 30_000 }, ctx);
     expect(text(next)).toContain(page.slice(30_000, 30_500));
+    expect(text(next)).not.toContain("START-OF-PAGE-MARKER");
     expect(text(next)).toContain("showing 30,000–60,000");
     const past = await tool.run({ url: "https://docs.example/big", offset: total }, ctx);
     expect(past.status).toBe("error");
@@ -524,5 +526,89 @@ describe("session effects", () => {
     expect(text(await r.run({ url: "not a url" }))).toContain("is not a valid URL");
     expect(text(await r.run({ url: "file:///etc/passwd" }))).toContain("only http and https");
     expect(text(await r.run({ url: "ftp://example.com/x" }))).toContain("only http and https");
+  });
+});
+
+describe("untrusted robots.txt", () => {
+  // spec: AC-TOOLS-43
+  test("wildcard rules match like robots.txt says, in linear time", () => {
+    const rules = (body: string) => robotsRules(`User-agent: Dovet-User\n${body}\n`, "Dovet-User");
+    expect(robotsAllows(rules("Disallow: /private"), "/private/x")).toBe(false);
+    expect(robotsAllows(rules("Disallow: /*.pdf$"), "/a/b.pdf")).toBe(false);
+    expect(robotsAllows(rules("Disallow: /*.pdf$"), "/a/b.pdf?x=1")).toBe(true);
+    expect(robotsAllows(rules("Disallow: /a*/b*c"), "/ax/y/b-z-c")).toBe(false);
+    expect(robotsAllows(rules("Disallow: /a*/b*c"), "/ax/y/b-z")).toBe(true);
+    expect(robotsAllows(rules("Disallow: /docs\nAllow: /docs/public"), "/docs/public/a")).toBe(true);
+    expect(robotsAllows(rules("Disallow: /docs\nAllow: /docs/public"), "/docs/secret")).toBe(false);
+    const hostile = rules(`Disallow: /${"*a".repeat(60)}X`);
+    const started = performance.now();
+    expect(robotsAllows(hostile, `/${"a".repeat(5000)}`)).toBe(true);
+    expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe("redirects and taint", () => {
+  test("a same-host redirect loop stops after 5 hops", async () => {
+    const r = await rig({
+      "/robots.txt": () => new Response("", { status: 404 }),
+      "/loop": () => new Response(null, { status: 302, headers: { Location: "/loop" } }),
+    });
+    const out = await r.run({ url: "https://docs.example/loop" });
+    expect(out.status).toBe("error");
+    expect(text(out)).toContain("Too many redirects");
+    expect(r.fx.hits.filter((h) => h === "docs.example/loop").length).toBe(6);
+  });
+
+  test("a cross-host redirect result quotes the server's Location, so it taints the session", async () => {
+    const r = await rig({
+      "/robots.txt": () => new Response("", { status: 404 }),
+      "/away": () => new Response(null, { status: 302, headers: { Location: "https://other.example/x" } }),
+    });
+    const out = await r.run({ url: "https://docs.example/away" });
+    expect(out.meta?.effects).toEqual([{ kind: "taint", source: "WebFetch: docs.example" }]);
+  });
+
+  test("a saved binary taints the session too", async () => {
+    const r = await rig({
+      "/robots.txt": () => new Response("", { status: 404 }),
+      "/f.zip": () =>
+        new Response(new Uint8Array([0x50, 0x4b, 3, 4, 0]), { headers: { "Content-Type": "application/zip" } }),
+    });
+    const out = await r.run({ url: "https://docs.example/f.zip" });
+    expect(out.meta?.offloadPath).toMatch(/\.zip$/);
+    expect(out.meta?.effects).toEqual([{ kind: "taint", source: "WebFetch: docs.example" }]);
+  });
+});
+
+describe("proxies", () => {
+  const url = new URL("https://intranet.corp.example/admin");
+
+  // spec: AC-TOOLS-51
+  test("only a proxy Bun applies to https is used; HTTP_PROXY alone leaves the pinned path", () => {
+    expect(proxyFor(url, { HTTP_PROXY: "http://p:3128", http_proxy: "http://p:3128" }, undefined)).toBeUndefined();
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, undefined)).toBe("http://p:3128");
+    expect(proxyFor(url, { https_proxy: "http://q:1" }, undefined)).toBe("http://q:1");
+    expect(proxyFor(url, { HTTPS_PROXY: "http://p:3128" }, "http://setting:1")).toBe("http://setting:1");
+    expect(proxyFor(url, {}, undefined)).toBeUndefined();
+  });
+
+  // spec: AC-TOOLS-51
+  test("NO_PROXY entries keep the pinned path, with or without a port", () => {
+    const env = (no: string) => ({ HTTPS_PROXY: "http://p:3128", NO_PROXY: no });
+    expect(proxyFor(url, env("corp.example"), undefined)).toBeUndefined();
+    expect(proxyFor(url, env(".corp.example"), undefined)).toBeUndefined();
+    expect(proxyFor(url, env("other.example, intranet.corp.example:443"), undefined)).toBeUndefined();
+    expect(proxyFor(url, env("intranet.corp.example:8443"), undefined)).toBe("http://p:3128");
+    expect(proxyFor(url, env("*"), undefined)).toBeUndefined();
+    expect(proxyFor(url, env("other.example"), undefined)).toBe("http://p:3128");
+  });
+
+  // spec: AC-TOOLS-51
+  test("behind a proxy a name that resolves here only to private addresses is still refused", async () => {
+    const transport = proxiedTransport("http://127.0.0.1:1", { resolve: async () => ["10.1.2.3"] });
+    const signal = new AbortController().signal;
+    await expect(transport({ url: new URL("https://intranet.corp.example/"), headers: {}, signal })).rejects.toThrow(
+      "can't reach local or intranet hosts",
+    );
   });
 });
