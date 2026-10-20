@@ -3,7 +3,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { isErrno } from "../../platform/index.ts";
-import { writeFileAtomic } from "./write.ts";
+import { writeFileAtomic } from "./atomic.ts";
 
 const Decisions = z.record(z.string(), z.boolean());
 

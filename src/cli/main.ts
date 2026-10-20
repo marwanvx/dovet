@@ -168,6 +168,7 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       store: trusted.trusted,
       home: trustHome,
       os,
+      dataDir: dirs.data,
       env,
       ...(trustGit === undefined ? {} : { git: trustGit }),
     });

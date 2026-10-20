@@ -22,6 +22,8 @@ async function setup(files: Record<string, string>) {
   return { dir, input };
 }
 
+const record = (input: { home: string }) => ({ dataDir: join(input.home, "..", "data"), os: "linux" as const });
+
 async function failure(promise: Promise<unknown>): Promise<SettingsError> {
   try {
     await promise;
@@ -401,7 +403,7 @@ describe("review fixes", () => {
       "main/.git/worktrees/w/commondir": "../..\n",
     });
     const { saveLocalRule } = await import("./index.ts");
-    await saveLocalRule(input.projectRoot, "deny", "WebFetch");
+    await saveLocalRule(input.projectRoot, "deny", "WebFetch", record(input));
     expect(await readFile(join(dir.root, "main/.git/info/exclude"), "utf8")).toBe("/.dovet/settings.local.json\n");
   });
 });
@@ -505,9 +507,9 @@ describe("writing", () => {
     const claudeFile = '{ "permissions": { "deny": ["Read(.env)"] } }';
     const { dir, input } = await setup({ "proj/.claude/settings.json": claudeFile, "proj/.git/HEAD": "ref: x\n" });
     const { saveLocalRule } = await import("./index.ts");
-    await saveLocalRule(input.projectRoot, "allow", "Bash(npm test)");
-    await saveLocalRule(input.projectRoot, "allow", "Bash(ls)");
-    await saveLocalRule(input.projectRoot, "allow", "Bash(npm test)");
+    await saveLocalRule(input.projectRoot, "allow", "Bash(npm test)", record(input));
+    await saveLocalRule(input.projectRoot, "allow", "Bash(ls)", record(input));
+    await saveLocalRule(input.projectRoot, "allow", "Bash(npm test)", record(input));
     expect(await readFile(join(dir.root, "proj/.claude/settings.json"), "utf8")).toBe(claudeFile);
     const loaded = await loadSettings({ ...input, env: {} });
     expect(loaded.settings.permissions?.allow).toEqual(["Bash(npm test)", "Bash(ls)"]);
@@ -520,7 +522,7 @@ describe("writing", () => {
     const text = '// mine\n{\n  "model": "m", // keep\n  "permissions": { "allow": ["Bash(ls)"] }\n}\n';
     const { dir, input } = await setup({ "proj/.dovet/settings.local.json": text });
     const { saveLocalRule } = await import("./index.ts");
-    await saveLocalRule(input.projectRoot, "allow", "Bash(pwd)");
+    await saveLocalRule(input.projectRoot, "allow", "Bash(pwd)", record(input));
     const after = await readFile(join(dir.root, "proj/.dovet/settings.local.json"), "utf8");
     expect(after).toContain("// mine");
     expect(after).toContain("// keep");
@@ -536,7 +538,7 @@ describe("writing", () => {
       const { symlink, lstat } = await import("node:fs/promises");
       await symlink(join(dir.root, "dotfiles/local.json"), join(dir.root, "proj/.dovet/settings.local.json"));
       const { saveLocalRule } = await import("./index.ts");
-      await saveLocalRule(input.projectRoot, "deny", "WebFetch");
+      await saveLocalRule(input.projectRoot, "deny", "WebFetch", record(input));
       expect((await lstat(join(dir.root, "proj/.dovet/settings.local.json"))).isSymbolicLink()).toBe(true);
       expect(await readFile(join(dir.root, "dotfiles/local.json"), "utf8")).toContain("WebFetch");
       expect((await stat(join(dir.root, "dotfiles/local.json"))).isFile()).toBe(true);

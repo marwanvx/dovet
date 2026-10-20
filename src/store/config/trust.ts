@@ -3,9 +3,10 @@ import { lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isErrno, type Os, pathKey, runHardenedGit } from "../../platform/index.ts";
 import type { AbsPath, Settings } from "../../schema/index.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { SettingsError } from "./errors.ts";
+import { localFileRecorded } from "./local-record.ts";
 import { readSettingsText } from "./read.ts";
-import { writeFileAtomic } from "./write.ts";
 
 /** Which repo-supplied settings files may grant capability (permissions §11). */
 export type ProjectTrust = { project: boolean; local: boolean };
@@ -153,16 +154,32 @@ export async function recordTrust(input: {
   await writeFileAtomic(join(input.dataDir, "trusted-folders.json"), `${JSON.stringify(next, null, 2)}\n`);
 }
 
+/**
+ * permissions §11: a local file is personal only when it is exactly what Dovet last wrote for this project (a hash in
+ * `<data>`). `.claude/settings.local.json` is never written by Dovet, so it never is. No local file: nothing to distrust.
+ */
+async function localFileIsPersonal(input: { projectRoot: string; dataDir: string; os: Os }): Promise<boolean> {
+  const read = (name: string) =>
+    readSettingsText(join(input.projectRoot, ...name.split("/"))).catch((err: unknown) => {
+      if (err instanceof SettingsError) return null;
+      throw err;
+    });
+  const [dovet, claude] = await Promise.all([read(".dovet/settings.local.json"), read(".claude/settings.local.json")]);
+  if (dovet === null || claude === null || claude !== undefined) return false;
+  return dovet === undefined || (await localFileRecorded(input, input.projectRoot, dovet));
+}
+
 /** What a session may take from the repo's own settings: the dialog's decision for the project files, and the local file's own rule. */
 export async function resolveProjectTrust(input: {
   projectRoot: string;
   store: TrustedFolders;
   home: string;
   os: Os;
+  dataDir: string;
   git?: AbsPath;
   env: Readonly<Record<string, string | undefined>>;
 }): Promise<ProjectTrust> {
-  const localSupplied = await localSettingsRepoSupplied(input);
+  const localSupplied = (await localSettingsRepoSupplied(input)) || !(await localFileIsPersonal(input));
   const hash = await projectConfigHash({ projectRoot: input.projectRoot, includeLocal: localSupplied });
   const project = folderTrusted(input.store, input.projectRoot, hash, input.home, input.os);
   return { project, local: project || !localSupplied };

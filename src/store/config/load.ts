@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import type { Settings } from "../../schema/index.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { DEFAULTS } from "./defaults.ts";
 import { envSettings } from "./env.ts";
 import { type Problem, SettingsError } from "./errors.ts";
@@ -16,7 +17,6 @@ import { formatKey, locate, type Parsed, parseSettingsText } from "./parse.ts";
 import { readSettingsText } from "./read.ts";
 import { type ProjectTrust, restrictUntrusted, type UntrustedSettings } from "./trust.ts";
 import { validateSettings } from "./validate.ts";
-import { writeFileAtomic } from "./write.ts";
 
 export type LoadInput = {
   dirs: { config: string };

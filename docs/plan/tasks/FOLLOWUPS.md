@@ -30,10 +30,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/cli/headless-run.ts` (the `usage` event only feeds the cache warning; `done` is the accounting point)
 - A provider may bill a request that ended in an error or an abort; its `usage` event is dropped from `usage` and `cost`. Count the last `usage` event of a request that has no `done`, with a test. Pre-existing in cost, new in `usage`.
 
-### F9 (M2-05 security review): a gitignored `settings.local.json` in an unpacked archive is trusted as personal
-- **Severity:** major · `src/store/config/trust.ts` (`localSettingsRepoSupplied`), permissions §11
-- "Not tracked by git" does not mean "the user wrote it". An archive of a real checkout whose author's `settings.local.json` is gitignored, or an archive with a minimal `.git` (just `HEAD`, `objects/`, `refs/`), gives `{project: false, local: true}` and its `allow: ["Bash(*)"]` applies in an unattended `-p` run. Fix: a local file is personal only when its exact text matches a hash Dovet stored in `<data>` when it wrote the file (`saveLocalRule`, M3-05's saves); anything else goes into the trust hash and the dialog. Needs a spec change to §11 (the owner-set rule is "unless tracked by git").
-
 ### F8 (M2-05 security review): the trust hash and the settings load read the files separately
 - **Severity:** minor · `src/store/config/trust.ts` (`projectConfigHash`), `src/store/config/load.ts`
 - A project file rewritten between the hash read and the load is judged by the earlier hash. It needs write access to the folder at that moment, and the next reload re-resolves trust, so the window is one startup. Fix: hash the exact text `loadSettings` parses.
@@ -55,3 +51,8 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - "on resume, a new launch file or an edited import is sent" gets no resume updates, and "an external file imported by an approved external file is asked about too" leaves `@C:\...\b.md` uninlined (AGENTS.md's import of `a.md` is not inlined either). Both fail together, only on `windows-latest`, in 9 of 20 `main` runs since #127 on 2026-10-19 (e.g. run 39249977478); #127 didn't touch these files, so it is an older bug its extra tests exposed. Contents are compared by sha256, not mtime, so suspect the Windows path handling between builds (approval keys, `pathKey` dedupe of the two importers) rather than timing. Reproduce on a Windows runner with `bun test src/agent/transcript/instruction-files.test.ts --rerun-each 20`.
 - **Cause:** NTFS file IDs exceed 2^53 once their sequence number reaches 32, so neighbouring files rounded to the same `dev:ino` dedupe key and the second one was skipped. Fixed by bigint stats in the instruction loader and settings reload; 30 consecutive Windows runs of the file passed (1 020 pass, 0 fail).
 - **Fixed:** #148
+
+### F9 (M2-05 security review): a gitignored `settings.local.json` in an unpacked archive is trusted as personal
+- **Severity:** major · `src/store/config/trust.ts` (`localSettingsRepoSupplied`), permissions §11
+- "Not tracked by git" does not mean "the user wrote it". An archive of a real checkout whose author's `settings.local.json` is gitignored, or an archive with a minimal `.git` (just `HEAD`, `objects/`, `refs/`), gives `{project: false, local: true}` and its `allow: ["Bash(*)"]` applies in an unattended `-p` run. Fix: a local file is personal only when its exact text matches a hash Dovet stored in `<data>` when it wrote the file (`saveLocalRule`, M3-05's saves); anything else goes into the trust hash and the dialog. Needs a spec change to §11 (the owner-set rule is "unless tracked by git").
+- **Fixed:** #PR (a local file is personal only when its text matches the hash Dovet recorded in `<data>/local-settings.json` when it saved a rule; permissions §11, Q71)
