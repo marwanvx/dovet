@@ -7,7 +7,13 @@ import { PROVIDER_AUTH } from "../ai/index.ts";
 import { createPlatformCore, type Os, resolveDirs } from "../platform/index.ts";
 import type { SandboxState } from "../policy/index.ts";
 import type { AbsPath, Settings } from "../schema/index.ts";
-import { findProjectRoot, type LoadedSettings, type LoadInput, loadSettings } from "../store/index.ts";
+import {
+  findProjectRoot,
+  type LoadedSettings,
+  type LoadInput,
+  loadSettings,
+  resolveProjectTrust,
+} from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
 import { combineStdinAndPrompt, exitCodeFor, formatJson, formatStreamJson } from "./headless-output.ts";
@@ -152,7 +158,15 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   };
   const home = homedir();
   // One LoadInput for the startup load and the turn's live reload, so env and flags stay frozen session overrides.
-  const loadInput: LoadInput = { dirs, home, projectRoot, env, flags };
+  const trust = await resolveProjectTrust({
+    projectRoot,
+    store: trusted.trusted,
+    home,
+    os,
+    env,
+    ...((git) => (git === undefined ? {} : { git }))(await core.resolve("git")),
+  });
+  const loadInput: LoadInput = { dirs, home, projectRoot, env, flags, trust };
   try {
     loaded = await loadSettings(loadInput);
   } catch (err) {

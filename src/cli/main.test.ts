@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import pkg from "../../package.json";
 import { sseBody, startFixtureServer, startScriptedServer, tempProject } from "../../test/helpers/index.ts";
 import { INTERRUPTED_TOOL_TEXT } from "../agent/index.ts";
 import type { Os } from "../platform/index.ts";
-import { CRASH_TOOL_TEXT, listSessions, readSession, resumeSession, sessionPaths } from "../store/index.ts";
+import {
+  CRASH_TOOL_TEXT,
+  listSessions,
+  projectConfigHash,
+  readSession,
+  recordTrust,
+  resumeSession,
+  sessionPaths,
+} from "../store/index.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -13,6 +22,75 @@ function dovet(...args: string[]) {
   const r = Bun.spawnSync([process.execPath, MAIN, ...args]);
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
+
+function toolCallExchange(call: { id: string; name: string; args: unknown }) {
+  const delta = (d: unknown, finish: string | null = null) => ({
+    id: "c",
+    object: "chat.completion.chunk",
+    created: 1,
+    model: "test/model",
+    choices: [{ index: 0, delta: d, finish_reason: finish }],
+  });
+  return {
+    request: { path: "", body: "" },
+    response: {
+      status: 200,
+      contentType: "text/event-stream",
+      body: sseBody([
+        delta({
+          role: "assistant",
+          tool_calls: [
+            {
+              index: 0,
+              id: call.id,
+              type: "function",
+              function: { name: call.name, arguments: JSON.stringify(call.args) },
+            },
+          ],
+        }),
+        delta({}, "tool_calls"),
+      ]),
+    },
+  };
+}
+
+function spawnHeadless(dir: { root: string }, args: string[]) {
+  const proc = Bun.spawn([process.execPath, MAIN, ...args], {
+    cwd: dir.root,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      DOVET_CONFIG_DIR: join(dir.root, "config"),
+      DOVET_DATA_DIR: join(dir.root, "data"),
+      NVIDIA_API_KEY: "nvapi-FAKE-SIGNAL-KEY",
+    },
+  });
+  proc.stdin.end();
+  return proc;
+}
+
+function replyExchange() {
+  return {
+    request: { path: "", body: "" },
+    response: {
+      status: 200,
+      contentType: "text/event-stream",
+      body: sseBody([
+        {
+          id: "c",
+          object: "chat.completion.chunk",
+          created: 1,
+          model: "test/model",
+          choices: [{ index: 0, delta: { content: "done" }, finish_reason: "stop" }],
+        },
+      ]),
+    },
+  };
+}
+
+const hostOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 
 describe("dovet command line", () => {
   test("prints the version", () => {
@@ -587,54 +665,6 @@ describe("dovet -p signals", () => {
   const LONG_COMMAND = `echo $$ > ${PID_FILE}; sleep 30`;
   const TRAP_COMMAND = `trap '' TERM; echo $$ > ${PID_FILE}; sleep 30`;
 
-  function toolCallExchange(call: { id: string; name: string; args: unknown }) {
-    const delta = (d: unknown, finish: string | null = null) => ({
-      id: "c",
-      object: "chat.completion.chunk",
-      created: 1,
-      model: "test/model",
-      choices: [{ index: 0, delta: d, finish_reason: finish }],
-    });
-    return {
-      request: { path: "", body: "" },
-      response: {
-        status: 200,
-        contentType: "text/event-stream",
-        body: sseBody([
-          delta({
-            role: "assistant",
-            tool_calls: [
-              {
-                index: 0,
-                id: call.id,
-                type: "function",
-                function: { name: call.name, arguments: JSON.stringify(call.args) },
-              },
-            ],
-          }),
-          delta({}, "tool_calls"),
-        ]),
-      },
-    };
-  }
-
-  function spawnHeadless(dir: { root: string }, args: string[]) {
-    const proc = Bun.spawn([process.execPath, MAIN, ...args], {
-      cwd: dir.root,
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: {
-        ...process.env,
-        DOVET_CONFIG_DIR: join(dir.root, "config"),
-        DOVET_DATA_DIR: join(dir.root, "data"),
-        NVIDIA_API_KEY: "nvapi-FAKE-SIGNAL-KEY",
-      },
-    });
-    proc.stdin.end();
-    return proc;
-  }
-
   async function until(cond: () => boolean | Promise<boolean>, what: string, ms = 15_000): Promise<void> {
     const deadline = Date.now() + ms;
     for (;;) {
@@ -858,6 +888,143 @@ describe("dovet -p signals", () => {
         const read = await readSession(await lastSessionLoc(dir));
         const ends = read.events.filter((e) => e.type === "turn.end").map((e) => e.data as { reason: string });
         expect(ends.at(-1)?.reason).toBe("cancelled");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+});
+
+describe("dovet -p workspace trust", () => {
+  const ALLOW = JSON.stringify({ permissions: { allow: ["Bash(touch made.txt)"] } });
+
+  const servers: Array<{ stop(): Promise<void> }> = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((x) => x.stop()));
+  });
+
+  async function run(files: Record<string, string>, prepare?: (root: string) => Promise<void>) {
+    const server = startFixtureServer([
+      toolCallExchange({ id: "call_1", name: "Bash", args: { command: "touch made.txt" } }),
+      replyExchange(),
+    ]);
+    servers.push(server);
+    const dir = await tempProject({
+      "config/settings.json": JSON.stringify({
+        provider: "nvidia",
+        model: "test/model",
+        providers: { nvidia: { baseUrl: server.baseURL } },
+      }),
+      ...files,
+    });
+    await prepare?.(dir.root);
+    const proc = spawnHeadless(dir, ["-p", "go"]);
+    const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    const made = await Bun.file(join(dir.root, "made.txt")).exists();
+    return { dir, err, code, made };
+  }
+
+  // spec: AC-CLI-02
+  test.skipIf(process.platform === "win32")(
+    "headless ignores an untrusted project's allow rule and says so on stderr",
+    async () => {
+      const { dir, err, code, made } = await run({ ".dovet/settings.json": ALLOW });
+      try {
+        expect(code).toBe(0);
+        expect(made).toBe(false);
+        expect(err).toContain("this folder isn't trusted, so 1 allow rules");
+        expect(err).toContain("permissions.allow");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-CLI-02
+  test.skipIf(process.platform === "win32")(
+    "the same rule applies once the folder is trusted for exactly that config",
+    async () => {
+      const { dir, err, code, made } = await run({ ".dovet/settings.json": ALLOW }, async (root) => {
+        const hash = await projectConfigHash({ projectRoot: root, includeLocal: false });
+        await recordTrust({
+          dataDir: join(root, "data"),
+          store: {},
+          root,
+          hash,
+          trusted: true,
+          home: homedir(),
+          os: hostOs(),
+        });
+      });
+      try {
+        expect(code).toBe(0);
+        expect(made).toBe(true);
+        expect(err).not.toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "trust recorded for an older version of the config no longer applies",
+    async () => {
+      const { dir, err, made } = await run({ ".dovet/settings.json": ALLOW }, async (root) => {
+        await recordTrust({
+          dataDir: join(root, "data"),
+          store: {},
+          root,
+          hash: "stale",
+          trusted: true,
+          home: homedir(),
+          os: hostOs(),
+        });
+      });
+      try {
+        expect(made).toBe(false);
+        expect(err).toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "a settings.local.json that git tracks is as untrusted as the shared file",
+    async () => {
+      const git = async (cwd: string, ...args: string[]) => {
+        const proc = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "ignore" });
+        expect(await proc.exited).toBe(0);
+      };
+      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW }, async (root) => {
+        await git(root, "init", "-q");
+        await git(root, "add", "-f", ".dovet/settings.local.json");
+      });
+      try {
+        expect(made).toBe(false);
+        expect(err).toContain("settings.local.json");
+        expect(err).toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "a personal settings.local.json is trusted without a dialog",
+    async () => {
+      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW });
+      try {
+        expect(made).toBe(true);
+        expect(err).not.toContain("isn't trusted");
       } finally {
         await dir.dispose();
       }

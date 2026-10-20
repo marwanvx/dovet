@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import { pollSettings, snapshotSettings } from "./reload.ts";
+import { UNTRUSTED } from "./trust.ts";
 
 const projects: TempProject[] = [];
 afterEach(async () => {
@@ -15,6 +16,7 @@ async function setup(files: Record<string, string> = {}) {
     dirs: { config: join(dir.root, "cfg") },
     home: join(dir.root, "home"),
     projectRoot: join(dir.root, "proj"),
+    trust: { project: true, local: true },
   };
   return { dir, input };
 }
@@ -135,7 +137,7 @@ describe("live settings reload", () => {
   });
 
   // spec: AC-PERM-19
-  test("flags survive a file removal and untrusted project changes are ignored", async () => {
+  test("flags survive a file removal and untrusted project edits can only restrict", async () => {
     const { dir, input } = await setup({
       "proj/.dovet/settings.json": '{ "permissions": { "additionalDirectories": ["/a"] } }',
     });
@@ -145,14 +147,14 @@ describe("live settings reload", () => {
     const next = await pollSettings(prev, { ...input, env: {}, flags });
     expect(next.loaded.settings.permissions?.additionalDirectories).toEqual(["/b"]);
 
-    const untrustedPrev = await snapshotSettings({ ...input, env: {}, projectTrusted: false });
+    const untrustedPrev = await snapshotSettings({ ...input, env: {}, trust: UNTRUSTED });
     await writeFile(
       join(dir.root, "proj", ".dovet", "settings.json"),
-      '{ "permissions": { "deny": ["Bash(evil *)"] } }',
+      '{ "permissions": { "allow": ["Bash(evil *)"], "deny": ["Bash(rm *)"] } }',
     );
-    const untrustedNext = await pollSettings(untrustedPrev, { ...input, env: {}, projectTrusted: false });
-    expect(untrustedNext.changed).toBe(false);
-    expect(untrustedNext.loaded.settings.permissions?.deny ?? []).not.toContain("Bash(evil *)");
+    const untrustedNext = await pollSettings(untrustedPrev, { ...input, env: {}, trust: UNTRUSTED });
+    expect(untrustedNext.loaded.rules.allow).toEqual([]);
+    expect(untrustedNext.loaded.rules.deny.map((r) => r.rule)).toEqual(["Bash(rm *)"]);
   });
 
   // spec: AC-PERM-19

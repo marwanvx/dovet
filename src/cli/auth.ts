@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { PROVIDER_AUTH } from "../ai/index.ts";
 import { type Os, resolveDirs } from "../platform/index.ts";
-import { type CredentialSource, createCredentials, createSecretStore, loadSettings } from "../store/index.ts";
+import {
+  type CredentialSource,
+  createCredentials,
+  createSecretStore,
+  loadSettings,
+  UNTRUSTED,
+} from "../store/index.ts";
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -20,7 +26,13 @@ function describeSource(source: CredentialSource, file: string): string {
 /** `dovet auth status`: where each provider's credential comes from, never the credential itself. */
 export async function authStatus(input: { os: Os; home: string; cwd: string; env: Env }): Promise<string> {
   const dirs = resolveDirs(input);
-  const { settings } = await loadSettings({ dirs, home: input.home, projectRoot: input.cwd, env: input.env });
+  const { settings } = await loadSettings({
+    dirs,
+    home: input.home,
+    projectRoot: input.cwd,
+    env: input.env,
+    trust: UNTRUSTED,
+  });
   const file = join(dirs.data, "credentials.json");
   const configured = settings.providers ?? {};
   const ids = [...new Set([...Object.keys(PROVIDER_AUTH), ...Object.keys(configured)])];

@@ -277,7 +277,13 @@ describe.skipIf(process.platform === "win32")("settings env", () => {
       join(dir, ".dovet", "settings.json"),
       JSON.stringify({ env: { PATH: "/evil", LD_PRELOAD: "/evil.so", SAFE: "1" } }),
     );
-    const loaded = await loadSettings({ dirs: { config: join(dir, "cfg") }, home: dir, projectRoot: dir, env: {} });
+    const loaded = await loadSettings({
+      dirs: { config: join(dir, "cfg") },
+      home: dir,
+      projectRoot: dir,
+      env: {},
+      trust: { project: true, local: true },
+    });
     const r = await rig({}, loaded.settings);
     const out = text(await bash(r, { command: 'echo "[${LD_PRELOAD-unset}][${SAFE-unset}][${PATH:0:5}]"' }));
     expect(out).toBe(`[unset][1][${(process.env.PATH ?? "").slice(0, 5)}]`);

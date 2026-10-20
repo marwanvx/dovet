@@ -44,21 +44,18 @@ export type ReloadResult = {
 // settings key in v0.1.
 const MODEL_KEYS = ["model", "provider", "effort"] as const;
 
-export function watchedSettingsPaths(input: Pick<LoadInput, "dirs" | "home" | "projectRoot" | "projectTrusted">): {
+export function watchedSettingsPaths(input: Pick<LoadInput, "dirs" | "home" | "projectRoot">): {
   files: string[];
   dirs: string[];
 } {
-  const trusted = input.projectTrusted ?? true;
   const dovet = join(input.projectRoot, ".dovet");
   const claude = join(input.projectRoot, ".claude");
   const files = [join(input.dirs.config, "settings.json"), join(dovet, "settings.local.json")];
   const dirs = [input.dirs.config, dovet];
   files.push(join(input.home, ".claude", "settings.json"));
   dirs.push(join(input.home, ".claude"));
-  if (trusted) {
-    files.push(join(dovet, "settings.json"), join(claude, "settings.json"), join(claude, "settings.local.json"));
-    dirs.push(claude);
-  }
+  files.push(join(dovet, "settings.json"), join(claude, "settings.json"), join(claude, "settings.local.json"));
+  dirs.push(claude);
   return { files, dirs };
 }
 

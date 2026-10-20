@@ -143,6 +143,7 @@ describe("Claude Code compatibility corpus", () => {
         home: repo.root,
         projectRoot: repo.root,
         env: {},
+        trust: { project: true, local: true },
       });
       const env = envFor();
       const { rules } = ruleSetFromSettings({
@@ -229,6 +230,7 @@ describe("Claude Code compatibility corpus", () => {
           home: repo.root,
           projectRoot: repo.root,
           env: {},
+          trust: { project: true, local: true },
         });
         const base = envFor();
         const env = {

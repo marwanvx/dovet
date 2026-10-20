@@ -47,6 +47,7 @@ function settingsFor(model = "test/model"): LoadedSettings {
     warnings: [],
     notices: [],
     files: [],
+    untrusted: [],
   };
 }
 
@@ -54,7 +55,13 @@ const TEST_ENV: Record<string, string | undefined> = { NVIDIA_API_KEY: "nvapi-FA
 
 /** The same LoadInput main.ts builds, pointing at the test project, so the turn polls real settings files. */
 function loadInputFor(dir: TempProject, env: Record<string, string | undefined>): LoadInput {
-  return { dirs: { config: join(dir.root, "cfg") }, home: join(dir.root, "home"), projectRoot: dir.root, env };
+  return {
+    dirs: { config: join(dir.root, "cfg") },
+    home: join(dir.root, "home"),
+    projectRoot: dir.root,
+    env,
+    trust: { project: true, local: true },
+  };
 }
 
 function echoTool(onRun?: (text: string) => { status: "ok" | "error"; text: string }): ToolDefinition<unknown> {
@@ -2474,6 +2481,7 @@ describe("runHeadless", () => {
           warnings: [],
           notices: [],
           files: [],
+          untrusted: [],
         },
         env: { ...TEST_ENV, BEDROCK_KEY: "fake-key" },
         loadInput: loadInputFor(dir, { ...TEST_ENV, BEDROCK_KEY: "fake-key" }),
@@ -2758,6 +2766,7 @@ describe("runHeadless", () => {
           warnings: [],
           notices: [],
           files: [],
+          untrusted: [],
         },
         env: { HOME: "/tmp" },
         loadInput: loadInputFor(dir, { HOME: "/tmp" }),
@@ -2840,6 +2849,7 @@ describe("runHeadless", () => {
           warnings: [],
           notices: [],
           files: [],
+          untrusted: [],
         } as unknown as LoadedSettings,
         env: TEST_ENV,
         loadInput: loadInputFor(dir, TEST_ENV),

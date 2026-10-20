@@ -14,6 +14,7 @@ import {
 import { fileVersion, MIGRATIONS, type Migration, migrateText, type PendingMigration } from "./migrate.ts";
 import { formatKey, locate, type Parsed, parseSettingsText } from "./parse.ts";
 import { readSettingsText } from "./read.ts";
+import { type ProjectTrust, restrictUntrusted, type UntrustedSettings } from "./trust.ts";
 import { validateSettings } from "./validate.ts";
 import { writeFileAtomic } from "./write.ts";
 
@@ -26,8 +27,8 @@ export type LoadInput = {
   migrations?: readonly Migration[];
   /** Asked once per file that needs a rewrite; without it (or on false) the mapping applies in memory with a warning. */
   confirmMigration?: (pending: PendingMigration) => Promise<boolean>;
-  // ASSUMPTION (QUESTIONS Q45): false skips the repo-supplied project files; the local file stays trusted. Full trust filtering is M2-05.
-  projectTrusted?: boolean;
+  /** Required: a caller that forgets to decide gets a compile error, not silent trust. */
+  trust: ProjectTrust;
 };
 
 export type LoadedSettings = {
@@ -36,6 +37,8 @@ export type LoadedSettings = {
   warnings: Problem[];
   notices: string[];
   files: Array<{ source: SettingsSource; path: string }>;
+  /** Repo-supplied files that lost settings because the folder isn't trusted; the trust dialog lists these. */
+  untrusted: UntrustedSettings[];
 };
 
 type Collected = {
@@ -44,9 +47,32 @@ type Collected = {
   problems: Problem[];
   notices: string[];
   files: LoadedSettings["files"];
+  untrusted: UntrustedSettings[];
 };
 
-async function loadDovetFile(input: LoadInput, source: SettingsSource, path: string, out: Collected): Promise<void> {
+/** Settings from a repo-supplied file: everything in a trusted folder, only what restricts in an untrusted one. */
+function withTrust(settings: Settings, file: string, trusted: boolean, out: Collected): Settings {
+  if (trusted) return settings;
+  const { kept, ignored, allowRules } = restrictUntrusted(settings);
+  if (ignored.length === 0) return kept;
+  out.untrusted.push({ file, allowRules, ignored });
+  const shown =
+    ignored.length > 4 ? `${ignored.slice(0, 4).join(", ")} and ${ignored.length - 4} more` : ignored.join(", ");
+  out.warnings.push({
+    file,
+    key: "",
+    message: `this folder isn't trusted, so ${allowRules} allow rules and these settings are ignored: ${shown}`,
+  });
+  return kept;
+}
+
+async function loadDovetFile(
+  input: LoadInput,
+  source: SettingsSource,
+  path: string,
+  trusted: boolean,
+  out: Collected,
+): Promise<void> {
   try {
     let text = await readSettingsText(path);
     if (text === undefined) return;
@@ -90,7 +116,12 @@ async function loadDovetFile(input: LoadInput, source: SettingsSource, path: str
     out.layers.push({
       source,
       file: path,
-      settings: source === "project" || source === "local" ? withoutRefusedEnv(result.value, path, out) : result.value,
+      settings:
+        source === "project" || source === "local"
+          ? trusted
+            ? withoutRefusedEnv(result.value, path, out)
+            : withTrust(result.value, path, false, out)
+          : result.value,
     });
   } catch (err) {
     if (!(err instanceof SettingsError)) throw err;
@@ -137,7 +168,13 @@ function portableSubset(raw: unknown): unknown {
 }
 
 // ASSUMPTION (QUESTIONS Q20): only the portable subset is read, and anything invalid in it is a warning, not a startup error.
-async function loadClaudeFile(source: SettingsSource, path: string, shown: string, out: Collected): Promise<void> {
+async function loadClaudeFile(
+  source: SettingsSource,
+  path: string,
+  shown: string,
+  trusted: boolean,
+  out: Collected,
+): Promise<void> {
   try {
     const text = await readSettingsText(path);
     if (text === undefined) return;
@@ -150,11 +187,12 @@ async function loadClaudeFile(source: SettingsSource, path: string, shown: strin
       duplicates: parsed.duplicates.filter(([section]) => section === "permissions" || section === "sandbox"),
     });
     out.warnings.push(...result.warnings, ...result.problems);
-    const permissions = result.value.permissions;
+    const settings = source.endsWith("-user") ? result.value : withTrust(result.value, path, trusted, out);
+    const permissions = settings.permissions;
     const count =
       (permissions?.allow?.length ?? 0) + (permissions?.ask?.length ?? 0) + (permissions?.deny?.length ?? 0);
     out.files.push({ source, path });
-    out.layers.push({ source, file: path, settings: result.value });
+    out.layers.push({ source, file: path, settings });
     if (count > 0) out.notices.push(`Using ${count} permission rules from ${shown}`);
   } catch (err) {
     if (!(err instanceof SettingsError)) throw err;
@@ -164,13 +202,12 @@ async function loadClaudeFile(source: SettingsSource, path: string, shown: strin
 
 /** Reads every level of the precedence chain (cli-config "Config files and precedence") and merges them, lowest first. */
 export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
-  const trusted = input.projectTrusted ?? true;
   const dovet = join(input.projectRoot, ".dovet");
   const claude = join(input.projectRoot, ".claude");
-  const own: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [] };
-  await loadDovetFile(input, "user", join(input.dirs.config, "settings.json"), own);
-  if (trusted) await loadDovetFile(input, "project", join(dovet, "settings.json"), own);
-  await loadDovetFile(input, "local", join(dovet, "settings.local.json"), own);
+  const own: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [], untrusted: [] };
+  await loadDovetFile(input, "user", join(input.dirs.config, "settings.json"), true, own);
+  await loadDovetFile(input, "project", join(dovet, "settings.json"), input.trust.project, own);
+  await loadDovetFile(input, "local", join(dovet, "settings.local.json"), input.trust.local, own);
 
   const env = envSettings(input.env);
   const top: Layer[] = [{ source: "env", settings: env.settings }];
@@ -180,18 +217,31 @@ export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
   const userCompat = compatOf([...own.layers.filter((l) => l.source === "user"), ...top]);
   const projectCompat = compatOf([...own.layers, ...top]);
 
-  const theirs: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [] };
+  const theirs: Collected = { layers: [], warnings: [], problems: [], notices: [], files: [], untrusted: [] };
   if (userCompat) {
     await loadClaudeFile(
       "claude-user",
       join(input.home, ".claude", "settings.json"),
       "~/.claude/settings.json",
+      true,
       theirs,
     );
   }
-  if (projectCompat && trusted) {
-    await loadClaudeFile("claude-project", join(claude, "settings.json"), ".claude/settings.json", theirs);
-    await loadClaudeFile("claude-local", join(claude, "settings.local.json"), ".claude/settings.local.json", theirs);
+  if (projectCompat) {
+    await loadClaudeFile(
+      "claude-project",
+      join(claude, "settings.json"),
+      ".claude/settings.json",
+      input.trust.project,
+      theirs,
+    );
+    await loadClaudeFile(
+      "claude-local",
+      join(claude, "settings.local.json"),
+      ".claude/settings.local.json",
+      input.trust.local,
+      theirs,
+    );
   }
 
   const problems = [...own.problems, ...env.problems];
@@ -207,5 +257,6 @@ export async function loadSettings(input: LoadInput): Promise<LoadedSettings> {
     warnings: [...own.warnings, ...theirs.warnings, ...env.warnings],
     notices: theirs.notices,
     files: [...theirs.files, ...own.files],
+    untrusted: [...theirs.untrusted, ...own.untrusted],
   };
 }
