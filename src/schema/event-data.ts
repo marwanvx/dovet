@@ -38,6 +38,8 @@ export const InstructionsLoadedData = z.object({
     }),
   ),
   warnings: z.array(z.string()),
+  /** Canonical paths of launch files that were loaded before and no longer are; resume forgets them. */
+  dropped: z.array(z.string().min(1)).optional(),
 });
 
 export const UserMessageData = z.object({ text: z.string() });

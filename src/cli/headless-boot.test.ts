@@ -177,10 +177,11 @@ describe("headless boot: the sandbox", () => {
         sandboxStarter: fakeManager({ reset: () => (resets += 1) }),
       });
       expect(out.exit).toEqual({ kind: "ok" });
-      expect(seen?.state).toBe("on");
+      // Windows keeps the sandbox off until its escape suite passes (QUESTIONS Q59, Q68).
+      expect(seen?.state).toBe(testOs() === "win32" ? "off" : "on");
       expect(seen?.backend).toBe(testOs() === "linux" ? "bubblewrap" : testOs() === "darwin" ? "seatbelt" : "none");
-      expect(wrapped.join(" ")).toContain("echo WRAPPED; 'echo' 'hi'");
-      expect(resets).toBe(1);
+      if (testOs() !== "win32") expect(wrapped.join(" ")).toContain("echo WRAPPED; 'echo' 'hi'");
+      expect(resets).toBe(testOs() === "win32" ? 0 : 1);
     } finally {
       await dir.dispose();
     }
@@ -488,6 +489,51 @@ describe("headless boot: instruction files", () => {
   });
 
   // spec: AC-CTX-10
+  test("a launch file deleted and restored with the same text within a turn is announced again", async () => {
+    const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+    try {
+      const file = join(dir.root, "AGENTS.md");
+      const steps: Step[] = [
+        { calls: [{ id: "c1", name: "gone", input: { text: "x" } }] },
+        { calls: [{ id: "c2", name: "back", input: { text: "x" } }] },
+        { text: "done" },
+      ];
+      const out = await boot(dir, steps, {
+        toolDefs: [tool("gone", () => rm(file)), tool("back", () => writeFile(file, "OLD RULE\n"))],
+      });
+      const events = await eventsOf(dir, out.sessionId);
+      const injected = events.filter((e) => e.type === "system.injected").map((e) => (e.data as { text: string }).text);
+      expect(injected).toHaveLength(2);
+      expect(injected[0]).toContain("the file was deleted");
+      expect(injected[1]).toContain("OLD RULE");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CTX-10
+  test("a file deleted mid-turn and back with the same text is injected again on resume", async () => {
+    const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+    try {
+      const ids = sequentialIds("B");
+      const file = join(dir.root, "AGENTS.md");
+      const first = await boot(dir, [{ calls: [{ id: "c1", name: "gone", input: { text: "x" } }] }, { text: "one" }], {
+        ids,
+        toolDefs: [tool("gone", () => rm(file))],
+      });
+      await writeFile(file, "OLD RULE\n");
+      const second = await boot(dir, [{ text: "two" }], { ids }, "again", { resume: first.sessionId });
+      const injected = (await eventsOf(dir, second.sessionId))
+        .filter((e) => e.type === "system.injected")
+        .map((e) => (e.data as { text: string }).text);
+      expect(injected).toHaveLength(2);
+      expect(injected[1]).toContain("OLD RULE");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-CTX-10
   test("an update made mid-turn is not announced again when the session is resumed", async () => {
     const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
     try {
@@ -515,51 +561,57 @@ describe("headless boot: instruction files", () => {
 
 describe("headless boot: ending the turn", () => {
   // spec: permissions §7.1
-  test("a sandbox that never finishes starting does not hold up a turn that ran no shell command", async () => {
-    const dir = await tempProject({});
-    try {
-      let resets = 0;
-      let release: () => void = () => {};
-      const stalled = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      const starter = async () => {
-        await stalled;
-        return fakeManager({ reset: () => (resets += 1) })();
-      };
-      const out = await boot(dir, [{ text: "done" }], {
-        toolDefs: [tool("Bash", () => undefined)],
-        sandboxStarter: starter,
-      });
-      expect(out.exit).toEqual({ kind: "ok" });
-      expect(resets).toBe(0);
-      release();
-      await Bun.sleep(20);
-      expect(resets).toBe(1);
-    } finally {
-      await dir.dispose();
-    }
-  });
+  test.skipIf(process.platform === "win32")(
+    "a sandbox that never finishes starting does not hold up a turn that ran no shell command",
+    async () => {
+      const dir = await tempProject({});
+      try {
+        let resets = 0;
+        let release: () => void = () => {};
+        const stalled = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const starter = async () => {
+          await stalled;
+          return fakeManager({ reset: () => (resets += 1) })();
+        };
+        const out = await boot(dir, [{ text: "done" }], {
+          toolDefs: [tool("Bash", () => undefined)],
+          sandboxStarter: starter,
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        expect(resets).toBe(0);
+        release();
+        await Bun.sleep(20);
+        expect(resets).toBe(1);
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
 
   // spec: permissions §7.1
-  test("a sandbox that fails to stop still lets the session log close", async () => {
-    const dir = await tempProject({});
-    try {
-      const ids = sequentialIds("B");
-      const failing = boot(dir, [{ calls: [{ id: "c1", name: "Bash", input: { text: "x" } }] }, { text: "done" }], {
-        ids,
-        toolDefs: [tool("Bash", async (_i, ctx) => void (await ctx.sandbox?.ready))],
-        sandboxStarter: fakeManager({
-          reset: () => {
-            throw new Error("reset boom");
-          },
-        }),
-      });
-      await expect(failing).rejects.toThrow("reset boom");
-      const again = await boot(dir, [{ text: "ok" }], { ids }, "again", { continued: true });
-      expect(again.exit).toEqual({ kind: "ok" });
-    } finally {
-      await dir.dispose();
-    }
-  });
+  test.skipIf(process.platform === "win32")(
+    "a sandbox that fails to stop still lets the session log close",
+    async () => {
+      const dir = await tempProject({});
+      try {
+        const ids = sequentialIds("B");
+        const failing = boot(dir, [{ calls: [{ id: "c1", name: "Bash", input: { text: "x" } }] }, { text: "done" }], {
+          ids,
+          toolDefs: [tool("Bash", async (_i, ctx) => void (await ctx.sandbox?.ready))],
+          sandboxStarter: fakeManager({
+            reset: () => {
+              throw new Error("reset boom");
+            },
+          }),
+        });
+        await expect(failing).rejects.toThrow("reset boom");
+        const again = await boot(dir, [{ text: "ok" }], { ids }, "again", { continued: true });
+        expect(again.exit).toEqual({ kind: "ok" });
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
 });

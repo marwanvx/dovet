@@ -436,6 +436,20 @@ describe("resume, home, approvals and network paths", () => {
   });
 
   // spec: AC-CTX-15
+  test("a file recorded as dropped is sent again when it is back with the same text", async () => {
+    const root = await temp({ "AGENTS.md": "SAME\n" });
+    const ctx = await context(root);
+    const first = await discoverInstructions(ctx);
+    const tombstone = { files: [], warnings: [], dropped: first.launchEvent.files.map((f) => f.path) };
+    const back = await discoverInstructions(ctx, { loaded: [first.launchEvent, tombstone] });
+    expect(back.resumeUpdates.map((p) => [p.reason, p.text])).toEqual([
+      ["lazy-instructions", expect.stringContaining("SAME")],
+    ]);
+    const without = await discoverInstructions(ctx, { loaded: [first.launchEvent] });
+    expect(without.resumeUpdates).toEqual([]);
+  });
+
+  // spec: AC-CTX-15
   test("on resume, a new launch file or an edited import is sent", async () => {
     const root = await temp({ "AGENTS.md": "@shared.md\n", "shared.md": "V1\n" });
     const ctx = await context(root);

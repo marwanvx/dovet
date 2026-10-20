@@ -283,15 +283,20 @@ function skipUnapproved(stored: ExternalImportApprovals): ExternalImportApproval
   };
 }
 
-/** A cheap check before the full reload: a launch file whose modification time changed, or that is gone. */
-async function instructionFilesMoved(files: readonly LoadedInstruction[]): Promise<boolean> {
-  for (const f of files) {
-    const info = await stat(f.path, { bigint: true }).catch((err: unknown) =>
-      isErrno(err, "ENOENT", "ENOTDIR") ? null : Promise.reject(err),
-    );
+const mtimeOf = (path: string): Promise<number | null> =>
+  stat(path, { bigint: true }).then(
     // The same arithmetic discovery used to record it: the double `mtimeMs` of a plain stat differs in its last bits.
-    if (info === null || Number(info.mtimeNs) / 1e6 !== f.mtimeMs) return true;
-  }
+    (info) => Number(info.mtimeNs) / 1e6,
+    (err: unknown) => (isErrno(err, "ENOENT", "ENOTDIR") ? null : Promise.reject(err)),
+  );
+
+/** A cheap check before the full reload: a launch file whose modification time changed or that is gone, or a dropped one that changed. */
+async function instructionFilesMoved(
+  files: readonly LoadedInstruction[],
+  dropped: ReadonlyMap<string, number | null>,
+): Promise<boolean> {
+  for (const f of files) if ((await mtimeOf(f.path)) !== f.mtimeMs) return true;
+  for (const [path, was] of dropped) if ((await mtimeOf(path)) !== was) return true;
   return false;
 }
 
@@ -603,6 +608,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     known.push(instructions.launchEvent);
     warnings.push(...instructions.warnings);
     let launchFiles: LoadedInstruction[] = instructions.files;
+    // Launch files dropped mid-turn stay watched, so one restored with its old text is announced again.
+    const droppedFiles = new Map<string, number | null>();
     let header: RenderInput["header"];
     let params: RenderInput["params"];
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
@@ -907,12 +914,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     for (;;) {
       await pollAndApply();
       ctx = buildCtx();
-      if (await instructionFilesMoved(launchFiles)) {
+      if (await instructionFilesMoved(launchFiles, droppedFiles)) {
         // The full discovery again, so a changed file passes the same policy, size and hidden-character checks as at launch.
         const fresh = await discoverInstructions(instructionContext, { loaded: known });
-        known.push(fresh.launchEvent);
         const kept = new Set(fresh.files.map((f) => f.path));
         const dropped = launchFiles.filter((f) => !kept.has(f.path));
+        for (const path of kept) droppedFiles.delete(path);
+        for (const f of dropped) droppedFiles.set(f.path, null);
+        for (const path of droppedFiles.keys()) droppedFiles.set(path, await mtimeOf(path));
+        const event = { ...fresh.launchEvent, dropped: dropped.map((f) => f.path) };
+        known.push(event);
         launchFiles = fresh.files;
         warnings.push(...fresh.warnings.filter((w) => !warnings.includes(w)));
         taintFrom(fresh.taintSources);
@@ -924,7 +935,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         ];
         for (const part of updates)
           push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
-        if (updates.length > 0) push("instructions.loaded", epochNum, null, fresh.launchEvent);
+        if (updates.length > 0) push("instructions.loaded", epochNum, null, event);
       }
       const built = buildRequest(events, {
         header,

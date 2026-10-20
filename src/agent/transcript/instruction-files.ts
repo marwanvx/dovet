@@ -395,9 +395,12 @@ async function build(
   }
   launching = false;
   const resumed = new Map<string, string>();
-  for (const f of (resume.loaded ?? []).flatMap((e) => e.files)) resumed.set(pathKey(f.path, os), f.sha256);
+  for (const e of resume.loaded ?? []) {
+    for (const f of e.files) resumed.set(pathKey(f.path, os), f.sha256);
+    for (const gone of e.dropped ?? []) resumed.delete(pathKey(gone, os));
+  }
   const resumeUpdates: InstructionPart[] = [];
-  if (resumed.size > 0) {
+  if ((resume.loaded?.length ?? 0) > 0) {
     for (const l of launch) {
       const before = l.records.map((r) => resumed.get(pathKey(r.path, os)));
       if (before[0] === undefined) resumeUpdates.push(lazyInstructions(l.file.displayPath, l.file.content));
