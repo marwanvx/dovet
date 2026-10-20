@@ -512,6 +512,28 @@ describe("headless boot: instruction files", () => {
   });
 
   // spec: AC-CTX-10
+  test.skipIf(process.platform === "win32")(
+    "a launch file replaced by a symlink loop after it was dropped does not crash the turn",
+    async () => {
+      const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+      try {
+        const file = join(dir.root, "AGENTS.md");
+        const steps: Step[] = [
+          { calls: [{ id: "c1", name: "gone", input: { text: "x" } }] },
+          { calls: [{ id: "c2", name: "loop", input: { text: "x" } }] },
+          { text: "done" },
+        ];
+        const out = await boot(dir, steps, {
+          toolDefs: [tool("gone", () => rm(file)), tool("loop", () => symlink("AGENTS.md", file))],
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: AC-CTX-10
   test("a file deleted mid-turn and back with the same text is injected again on resume", async () => {
     const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
     try {

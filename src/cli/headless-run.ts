@@ -49,7 +49,15 @@ import {
   type SdkCall,
   type StreamEvent,
 } from "../ai/index.ts";
-import { canonicalizePath, isErrno, type Os, type Platform, readGitHead, type ShellChoice } from "../platform/index.ts";
+import {
+  canonicalizePath,
+  isErrno,
+  type Os,
+  type Platform,
+  pathKey,
+  readGitHead,
+  type ShellChoice,
+} from "../platform/index.ts";
 import {
   analyzeShell,
   createDotEnvSecrets,
@@ -283,20 +291,23 @@ function skipUnapproved(stored: ExternalImportApprovals): ExternalImportApproval
   };
 }
 
+/** `null` for any path that can't be stat'ed (gone, a symlink loop, no access): discovery decides whether it still loads. */
 const mtimeOf = (path: string): Promise<number | null> =>
   stat(path, { bigint: true }).then(
     // The same arithmetic discovery used to record it: the double `mtimeMs` of a plain stat differs in its last bits.
     (info) => Number(info.mtimeNs) / 1e6,
-    (err: unknown) => (isErrno(err, "ENOENT", "ENOTDIR") ? null : Promise.reject(err)),
+    () => null,
   );
+
+type DroppedFile = { path: string; mtimeMs: number | null };
 
 /** A cheap check before the full reload: a launch file whose modification time changed or that is gone, or a dropped one that changed. */
 async function instructionFilesMoved(
   files: readonly LoadedInstruction[],
-  dropped: ReadonlyMap<string, number | null>,
+  dropped: ReadonlyMap<string, DroppedFile>,
 ): Promise<boolean> {
   for (const f of files) if ((await mtimeOf(f.path)) !== f.mtimeMs) return true;
-  for (const [path, was] of dropped) if ((await mtimeOf(path)) !== was) return true;
+  for (const d of dropped.values()) if ((await mtimeOf(d.path)) !== d.mtimeMs) return true;
   return false;
 }
 
@@ -609,7 +620,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     warnings.push(...instructions.warnings);
     let launchFiles: LoadedInstruction[] = instructions.files;
     // Launch files dropped mid-turn stay watched, so one restored with its old text is announced again.
-    const droppedFiles = new Map<string, number | null>();
+    const droppedFiles = new Map<string, DroppedFile>();
     let header: RenderInput["header"];
     let params: RenderInput["params"];
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
@@ -916,12 +927,17 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       ctx = buildCtx();
       if (await instructionFilesMoved(launchFiles, droppedFiles)) {
         // The full discovery again, so a changed file passes the same policy, size and hidden-character checks as at launch.
+        // Modification times are read before discovery: a file restored while it runs then reads as changed next time.
+        const seenAt = new Map<string, number | null>();
+        for (const path of [...launchFiles.map((f) => f.path), ...[...droppedFiles.values()].map((d) => d.path)])
+          seenAt.set(path, await mtimeOf(path));
         const fresh = await discoverInstructions(instructionContext, { loaded: known });
-        const kept = new Set(fresh.files.map((f) => f.path));
-        const dropped = launchFiles.filter((f) => !kept.has(f.path));
-        for (const path of kept) droppedFiles.delete(path);
-        for (const f of dropped) droppedFiles.set(f.path, null);
-        for (const path of droppedFiles.keys()) droppedFiles.set(path, await mtimeOf(path));
+        const kept = new Set(fresh.files.map((f) => pathKey(f.path, input.os)));
+        const dropped = launchFiles.filter((f) => !kept.has(pathKey(f.path, input.os)));
+        for (const key of kept) droppedFiles.delete(key);
+        for (const f of dropped)
+          droppedFiles.set(pathKey(f.path, input.os), { path: f.path, mtimeMs: seenAt.get(f.path) ?? null });
+        for (const d of droppedFiles.values()) d.mtimeMs = seenAt.get(d.path) ?? null;
         const event = { ...fresh.launchEvent, dropped: dropped.map((f) => f.path) };
         known.push(event);
         launchFiles = fresh.files;

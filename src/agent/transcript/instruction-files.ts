@@ -396,8 +396,8 @@ async function build(
   launching = false;
   const resumed = new Map<string, string>();
   for (const e of resume.loaded ?? []) {
-    for (const f of e.files) resumed.set(pathKey(f.path, os), f.sha256);
     for (const gone of e.dropped ?? []) resumed.delete(pathKey(gone, os));
+    for (const f of e.files) resumed.set(pathKey(f.path, os), f.sha256);
   }
   const resumeUpdates: InstructionPart[] = [];
   if ((resume.loaded?.length ?? 0) > 0) {
