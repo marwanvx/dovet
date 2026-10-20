@@ -18,7 +18,11 @@ jobs:
       - shell: bash
         continue-on-error: true
         run: |
-          for t in "the request names the host" "Content-Length body split" "chunked body" "until the server closes" "gzip body" "redirect without a body" "304" "ends before the body" "malformed replies"; do
+          for t in "skips a 1xx" ; do
             echo "=== $t"
-            bun test src/tools/web-http1.test.ts -t "$t" 2>&1 | grep -E "^\((pass|fail)\)|panic|Segmentation|^ *[0-9]+ (pass|fail)" || echo "NO RESULT (crash?)"
+            bun test src/tools/web-http1.test.ts -t "$t" 2>&1 | tail -n 12
           done
+          echo "=== whole file"
+          bun test src/tools/web-http1.test.ts 2>&1 | grep -E "^\((pass|fail)\)|panic|Segmentation|^ *[0-9]+ (pass|fail)" || echo "NO RESULT (crash?)"
+          echo "=== whole file with webfetch"
+          bun test src/tools/web-http1.test.ts src/tools/webfetch.test.ts 2>&1 | grep -E "^\((pass|fail)\)|panic|Segmentation|^ *[0-9]+ (pass|fail)" | tail -n 30 || echo "NO RESULT (crash?)"
