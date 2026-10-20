@@ -15,6 +15,8 @@ export type InstructionContext = {
   configDir: AbsPath;
   /** The session's primary working directory. */
   cwd: AbsPath;
+  /** The project root when the session starts below it: its files count as part of the project, not as folders above it. */
+  projectRoot?: AbsPath;
   additionalDirs: readonly AbsPath[];
   settings: NonNullable<Settings["instructions"]>;
   contextWindow: number;
@@ -107,7 +109,9 @@ async function build(
   const { os, cwd, settings } = ctx;
   const path = os === "win32" ? win32 : posix;
   const canon = (p: string): AbsPath => canonicalizePath(p, cwd, os);
-  const workingDirs = [cwd, ...ctx.additionalDirs].map(canon);
+  const workingDirs = [cwd, ...(ctx.projectRoot === undefined ? [] : [ctx.projectRoot]), ...ctx.additionalDirs].map(
+    canon,
+  );
   const inWorkingDirs = (p: string): boolean => workingDirs.some((d) => isWithin(p, d, os));
   const excluded = excludeMatcher(settings.exclude ?? []);
   const scale = Math.min(4, ctx.contextWindow / 200_000);

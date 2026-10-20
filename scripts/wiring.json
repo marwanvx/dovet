@@ -25,6 +25,7 @@
   "src/agent/loop.ts:shellStatusLine": "M3-01",
   "src/agent/loop.ts:shutdownResults": "M3-01",
   "src/agent/transcript/fingerprint.ts:firstDivergence": "M3-09",
+  "src/agent/transcript/instructions.ts:changedInstructions": "M3-01",
   "src/platform/os-label.ts:describeOs": "M2-16",
   "src/policy/decide/decide.ts:planExitChoices": "M3-06",
   "src/policy/decide/paths.ts:PROTECTED_VERSION": "test-only: a data-version pin the corpus tests check",

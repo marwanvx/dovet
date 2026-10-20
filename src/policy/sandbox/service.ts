@@ -41,7 +41,7 @@ export interface SandboxService {
   wrap(cmd: SandboxWrapRequest, opts: { unsandboxed: boolean }): Promise<SandboxWrapped>;
   violations(since: number): string[];
   globWarnings(): string[];
-  /** Stops the proxies once the sandbox has finished starting; call once, when the session ends (QUESTIONS Q74). */
+  /** Stops the proxies, or right after a start still in progress finishes; call once, when the session ends (QUESTIONS Q74). */
   close(): Promise<void>;
 }
 
@@ -199,6 +199,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
   let state: SandboxState = "off";
   const tmp = join(opts.tmpBase ?? tmpdir(), `dovet-${opts.sessionId}`);
   let manager: ManagerType | undefined;
+  let closed = false;
   let warnings: string[] = [];
   const rejectedHosts: string[] = [];
   let sessionAllowWrite: string[] = [...opts.workingDirs, tmp];
@@ -246,6 +247,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
           ask: (host) => opts.onAskHost?.(host) ?? Promise.resolve(false),
         });
         manager = await starter({ ...base, denyWrite: expandedWrite, denyRead: expandedRead, ask });
+        if (closed) await manager.reset();
         const deps = manager.checkDependencies();
         try {
           warnings = manager.getLinuxGlobPatternWarnings() ?? [];
@@ -343,7 +345,7 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
     },
     globWarnings: (): string[] => [...warnings, ...rejectedHosts.map((h) => `ambiguous host ${h} (see /doctor)`)],
     close: async (): Promise<void> => {
-      await ready;
+      closed = true;
       await manager?.reset();
     },
   };

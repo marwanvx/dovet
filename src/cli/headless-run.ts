@@ -4,7 +4,6 @@ import {
   buildRequest,
   cacheReadOf,
   cacheWarning,
-  changedInstructions,
   checkTranscriptPairing,
   decideStopAction,
   discoverInstructions,
@@ -15,6 +14,7 @@ import {
   historyRepairOffer,
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
+  type InstructionContext,
   isEarlyEligible,
   type LoadedInstruction,
   MAX_REQUESTS_PER_TURN,
@@ -282,6 +282,17 @@ function skipUnapproved(stored: ExternalImportApprovals): ExternalImportApproval
   };
 }
 
+/** A cheap check before the full reload: a launch file whose modification time changed, or that is gone. */
+async function instructionFilesMoved(files: readonly LoadedInstruction[]): Promise<boolean> {
+  for (const f of files) {
+    const info = await stat(f.path).catch((err: unknown) =>
+      isErrno(err, "ENOENT", "ENOTDIR") ? null : Promise.reject(err),
+    );
+    if (info === null || info.mtimeMs !== f.mtimeMs) return true;
+  }
+  return false;
+}
+
 export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunOutput> {
   const warnings: string[] = [];
   if (input.args.repair && input.args.resume === undefined && !input.args.continued)
@@ -545,7 +556,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       });
     }
     // A rule set that fails to compile is reported below; until then no instruction file counts as readable.
-    const instructionRules = ((): RuleSet | undefined => {
+    let instructionRules = ((): RuleSet | undefined => {
       try {
         return ruleSetFromSettings({
           loaded: snapshot.loaded,
@@ -559,34 +570,35 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         throw err;
       }
     })();
-    const instructions = await discoverInstructions(
-      {
-        os: input.os,
-        home: home as AbsPath,
-        configDir: input.dirs.config as AbsPath,
-        cwd: input.cwd as AbsPath,
-        additionalDirs: [],
-        settings: input.settings.settings.instructions ?? {},
-        contextWindow: 200_000,
-        blockReadsOutsideWorkingDirectories:
-          input.settings.settings.permissions?.blockReadsOutsideWorkingDirectories === true,
-        readDenied: (canonical) =>
-          instructionRules === undefined ||
-          decide(
-            { tool: "Read", action: { kind: "read", paths: [canonical] } },
-            { mode, rules: instructionRules, env: policyEnv, tainted: false },
-          ).behavior === "deny",
-        approvals: skipUnapproved(
-          externalImportApprovals(
-            `${input.dirs.data}/projects/${projectId(input.projectRoot, input.os)}/external-imports.json`,
-          ),
+    const instructionContext: InstructionContext = {
+      os: input.os,
+      home: home as AbsPath,
+      configDir: input.dirs.config as AbsPath,
+      cwd: input.cwd as AbsPath,
+      projectRoot: input.projectRoot as AbsPath,
+      additionalDirs: [],
+      settings: input.settings.settings.instructions ?? {},
+      contextWindow: 200_000,
+      blockReadsOutsideWorkingDirectories:
+        input.settings.settings.permissions?.blockReadsOutsideWorkingDirectories === true,
+      readDenied: (canonical) =>
+        instructionRules === undefined ||
+        decide(
+          { tool: "Read", action: { kind: "read", paths: [canonical] } },
+          { mode, rules: instructionRules, env: policyEnv, tainted: false },
+        ).behavior === "deny",
+      approvals: skipUnapproved(
+        externalImportApprovals(
+          `${input.dirs.data}/projects/${projectId(input.projectRoot, input.os)}/external-imports.json`,
         ),
-        askExternal: () => Promise.resolve(false),
-      },
-      {
-        loaded: prior.filter((e) => e.type === "instructions.loaded").map((e) => InstructionsLoadedData.parse(e.data)),
-      },
-    );
+      ),
+      askExternal: () => Promise.resolve(false),
+    };
+    const known = prior
+      .filter((e) => e.type === "instructions.loaded")
+      .map((e) => InstructionsLoadedData.parse(e.data));
+    const instructions = await discoverInstructions(instructionContext, { loaded: known });
+    known.push(instructions.launchEvent);
     warnings.push(...instructions.warnings);
     let launchFiles: LoadedInstruction[] = instructions.files;
     let header: RenderInput["header"];
@@ -728,11 +740,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const readState = createReadState(input.os);
     const baseSignal = input.signal ?? new AbortController().signal;
     const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
-    for (const source of instructions.taintSources) {
-      if (sessionTaint.includes(source)) continue;
-      sessionTaint.push(source);
-      push("taint.change", epochNum, turn, { source, tainted: true });
-    }
+    const taintFrom = (sources: readonly string[]): void => {
+      for (const source of sources) {
+        if (sessionTaint.includes(source)) continue;
+        sessionTaint.push(source);
+        push("taint.change", epochNum, turn, { source, tainted: true });
+      }
+    };
+    taintFrom(instructions.taintSources);
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
@@ -776,6 +791,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             configDir: input.dirs.config,
           });
           rules = compiled.rules;
+          instructionRules = compiled.rules;
           warnings.push(...compiled.warnings.map((w) => w.message));
         } catch (err) {
           const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
@@ -889,10 +905,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     for (;;) {
       await pollAndApply();
       ctx = buildCtx();
-      const changed = await changedInstructions(launchFiles);
-      launchFiles = changed.loaded;
-      for (const part of changed.instructions)
-        push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+      if (await instructionFilesMoved(launchFiles)) {
+        // The full discovery again, so a changed file passes the same policy, size and hidden-character checks as at launch.
+        const fresh = await discoverInstructions(instructionContext, { loaded: known });
+        known.push(fresh.launchEvent);
+        launchFiles = fresh.files;
+        warnings.push(...fresh.warnings);
+        taintFrom(fresh.taintSources);
+        for (const part of fresh.resumeUpdates)
+          push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+      }
       const built = buildRequest(events, {
         header,
         params,
@@ -1528,22 +1550,25 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     }
   } finally {
-    if (sandbox !== undefined) {
-      const ranShell = events.some(
-        (e) => e.type === "tool.call" && SHELL_TOOLS.includes((e.data as { name?: string }).name ?? ""),
-      );
-      if (ranShell) {
-        await sandbox.ready;
-        warnings.push(...sandbox.globWarnings());
-        if (sandbox.state === "off") warnings.push(sandboxStatus(sandbox.state, sandbox.backend));
+    try {
+      if (sandbox !== undefined) {
+        const ranShell = events.some(
+          (e) => e.type === "tool.call" && SHELL_TOOLS.includes((e.data as { name?: string }).name ?? ""),
+        );
+        if (ranShell) {
+          await sandbox.ready;
+          warnings.push(...sandbox.globWarnings());
+          if (sandbox.state === "off") warnings.push(sandboxStatus(sandbox.state, sandbox.backend));
+        }
+        await sandbox.close();
       }
-      await sandbox.close();
+    } finally {
+      if (shellSnapshot !== undefined) {
+        // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
+        await input.platform.killTree(`snapshot:${sessionId}`);
+        await shellSnapshot.ready();
+      }
+      await writer.close();
     }
-    if (shellSnapshot !== undefined) {
-      // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
-      await input.platform.killTree(`snapshot:${sessionId}`);
-      await shellSnapshot.ready();
-    }
-    await writer.close();
   }
 }
