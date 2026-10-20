@@ -23,6 +23,7 @@ export const MAX_RESULTS = 10;
 export const MAX_SNIPPET = 300;
 const MAX_TITLE = 200;
 const MAX_URL = 2000;
+const MAX_PARSED = 50;
 
 /** The response did not have the shape the service documents. */
 export class UnexpectedResponse extends Error {}
@@ -144,14 +145,8 @@ const spaceInvisible = (text: string): string =>
     return INVISIBLE.some(([from, to]) => cp >= from && cp <= to) ? " " : ch;
   }).join("");
 
-function withoutTags(text: string): string {
-  // One pass can join the brackets around a removed tag into a new one (`<<b>x>`): repeat until nothing changes.
-  for (let current = text; ; ) {
-    const next = current.replace(/<[^<>]*>/g, "");
-    if (next === current) return next.replace(/<[^>]*$/, "");
-    current = next;
-  }
-}
+/** Whole tags go in one pass; any bracket left over is deleted, so nothing can be rebuilt from what remains. */
+const withoutTags = (text: string): string => text.replace(/<[^<>]*>/g, "").replace(/[<>]/g, "");
 
 function clean(text: string | null | undefined, max: number): string {
   const decoded = (text ?? "")
@@ -205,7 +200,7 @@ function hitOf(
 export const sanitizeHit = (h: SearchHit): SearchHit | undefined => hitOf(h.title, h.url, h.snippet, h.date);
 
 function items<T>(raw: unknown[], schema: z.ZodType<T>, map: (item: T) => SearchHit | undefined): SearchHit[] {
-  const hits = raw.flatMap((r) => {
+  const hits = raw.slice(0, MAX_PARSED).flatMap((r) => {
     const parsed = schema.safeParse(r);
     const hit = parsed.success ? map(parsed.data) : undefined;
     return hit === undefined ? [] : [hit];

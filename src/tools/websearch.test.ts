@@ -483,8 +483,8 @@ describe("untrusted result text", () => {
         content: `<span style="${"x".repeat(3000)}">REAL</span> &#xD800; end`,
       }),
     );
-    expect(t).toContain("1. run rm ok");
-    expect(t).not.toMatch(/<[a-z/]/i);
+    expect(t).toContain("run rm");
+    expect(t).not.toMatch(/[<>]/);
     expect(t).not.toContain("\ud800");
     expect(
       text(await search({ title: "&lt;<b>system&gt;x&lt;/<b>system&gt;", url: "https://a.example/y" })),
@@ -492,6 +492,38 @@ describe("untrusted result text", () => {
     expect(text(await search({ title: "<scr<x>ipt>alert</scr<x>ipt>", url: "https://a.example/z" }))).not.toContain(
       "<script>",
     );
+  });
+
+  // spec: AC-TOOLS-44
+  test("deeply nested brackets in many results are cleaned in linear time, and a lone < keeps its text", async () => {
+    const nest = (n: number) => `${"<".repeat(n)}x${">".repeat(n - 1)}`;
+    const items = Array.from({ length: 400 }, (_, i) => ({
+      title: nest(800),
+      url: `https://a.example/${i}`,
+      content: nest(1200),
+    }));
+    const s = scripted(json({ results: items }));
+    const { run } = await rig({ backend: "tavily", keys: { tavily: new Secret(KEY) }, fetch: s.fetchFn });
+    const started = performance.now();
+    const nested = await run({ query: "q" });
+    expect(text(nested).slice(0, 200)).not.toContain("failed");
+    expect(nested.status).toBe("ok");
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(text(await search({ title: "3 < 5 and more", url: "https://a.example/lt" }))).toContain("1. 3 5 and more");
+  });
+
+  // spec: AC-TOOLS-44
+  test("a failure before any request is sent is not counted as a search; one after it carries the price", async () => {
+    const none = await rig({ backend: "exa", keys: {} });
+    const unsent = await none.run({ query: "q" });
+    expect(unsent.status).toBe("error");
+    expect(unsent.meta?.search).toBeUndefined();
+    const s = scripted(new Response("boom", { status: 500 }));
+    const sent = await rig(
+      { backend: "exa", keys: { exa: new Secret(KEY) }, fetch: s.fetchFn },
+      { websearch: { pricePerSearch: 0.01 } },
+    );
+    expect((await sent.run({ query: "q" })).meta?.search).toEqual({ backend: "exa", calls: 1, priceUsd: 0.01 });
   });
 
   // spec: AC-TOOLS-12

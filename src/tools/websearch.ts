@@ -154,6 +154,7 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
     id: ServiceId,
     ctx: ToolContext,
     q: { query: string; allowed: string[]; blocked: string[] },
+    onSend: () => void,
   ): Promise<SearchHit[]> {
     const secret = id === "searxng" ? undefined : opts.keys[id];
     if (id !== "searxng" && secret === undefined) throw new Error(`no ${id} key is connected`);
@@ -162,6 +163,7 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
     const key = secret?.reveal();
     const req = buildRequest(id, { ...q, key, searxngUrl });
     const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(timeoutMs)]);
+    onSend();
     const res = await net(req.url, { ...req.init, signal });
     if (res.status < 200 || res.status >= 300) {
       await res.body?.cancel();
@@ -257,8 +259,15 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
     const secrets = Object.values(opts.keys).map((s) => s.reveal());
     let hits: SearchHit[];
     let dropped: string | undefined;
+    let reached = false;
+    const markSent = (): void => {
+      reached = true;
+    };
+    const priceOf = (b: SearchBackendId): number | undefined =>
+      b === "provider" ? undefined : ctx.settings.websearch?.pricePerSearch;
     try {
-      if (backend !== "provider") hits = await searchService(backend, ctx, { query: input.query, allowed, blocked });
+      if (backend !== "provider")
+        hits = await searchService(backend, ctx, { query: input.query, allowed, blocked }, markSent);
       else if (model === undefined) throw new Error("this session's model has no search mechanism");
       else {
         try {
@@ -283,7 +292,7 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
             return fail(`WebSearch failed (provider): ${e.message}.${hint}`);
           }
           backend = next;
-          hits = await searchService(next, ctx, { query: input.query, allowed, blocked });
+          hits = await searchService(next, ctx, { query: input.query, allowed, blocked }, markSent);
         }
       }
     } catch (e) {
@@ -294,7 +303,9 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
         };
       const out = fail(`WebSearch failed (${backend}): ${describeFailure(e, secrets)}`);
       // A service call that was sent is counted even when it failed (tools §10 "Cost").
-      return backend === "provider" ? out : { ...out, meta: { search: { backend, calls: 1 } } };
+      if (!reached) return out;
+      const price = priceOf(backend);
+      return { ...out, meta: { search: { backend, calls: 1, ...(price === undefined ? {} : { priceUsd: price }) } } };
     }
 
     if (dropped !== undefined) {
@@ -314,7 +325,7 @@ export function createWebSearchTool(opts: WebSearchOptions): WebSearchTool {
         );
     }
     const shown = kept.slice(0, MAX_RESULTS);
-    const price = backend === "provider" ? undefined : ctx.settings.websearch?.pricePerSearch;
+    const price = priceOf(backend);
     return {
       status: "ok",
       content: [{ kind: "text", text: present(input.query, backend, shown, notes, remaining(ctx.settings), limit) }],
