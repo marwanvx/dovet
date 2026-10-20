@@ -15,6 +15,8 @@ export type InstructionContext = {
   configDir: AbsPath;
   /** The session's primary working directory. */
   cwd: AbsPath;
+  /** The project root when the session starts below it: its files count as part of the project, not as folders above it. */
+  projectRoot?: AbsPath;
   additionalDirs: readonly AbsPath[];
   settings: NonNullable<Settings["instructions"]>;
   contextWindow: number;
@@ -80,10 +82,15 @@ const lineCount = (text: string): number => (text === "" ? 0 : text.replace(/\n$
 export const fileIdentityKey = (s: { dev: bigint; ino: bigint }): string | undefined =>
   s.ino === 0n ? undefined : `${s.dev}:${s.ino}`;
 
+/** A file the agent can swap for a loop, a vanished path or a locked folder mid-turn counts as not loadable, never as a crash. */
+const UNREADABLE = ["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM", "EISDIR", "ENAMETOOLONG"] as const;
+
 async function statOrNull(p: string): Promise<BigIntStats | null> {
-  return stat(p, { bigint: true }).catch((e: unknown) =>
-    isErrno(e, "ENOENT", "ENOTDIR", "ELOOP") ? null : Promise.reject(e),
-  );
+  return stat(p, { bigint: true }).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
+}
+
+async function readOrNull(p: string): Promise<Buffer | null> {
+  return readFile(p).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
 }
 
 export async function discoverInstructions(
@@ -107,7 +114,19 @@ async function build(
   const { os, cwd, settings } = ctx;
   const path = os === "win32" ? win32 : posix;
   const canon = (p: string): AbsPath => canonicalizePath(p, cwd, os);
-  const workingDirs = [cwd, ...ctx.additionalDirs].map(canon);
+  const workingDirs = [cwd, ...(ctx.projectRoot === undefined ? [] : [ctx.projectRoot])].map(canon);
+  const additional: { dir: string; canonical: AbsPath }[] = [];
+  const unresolved: string[] = [];
+  for (const dir of ctx.additionalDirs) {
+    try {
+      const canonical = canon(dir);
+      additional.push({ dir, canonical });
+      workingDirs.push(canonical);
+    } catch (e) {
+      if (!(e instanceof PathRefused) && !isErrno(e, ...UNREADABLE)) throw e;
+      unresolved.push(dir);
+    }
+  }
   const inWorkingDirs = (p: string): boolean => workingDirs.some((d) => isWithin(p, d, os));
   const excluded = excludeMatcher(settings.exclude ?? []);
   const scale = Math.min(4, ctx.contextWindow / 200_000);
@@ -127,15 +146,17 @@ async function build(
   };
 
   /** Network paths are refused before anything touches them: Windows would send credentials to a share. */
-  function canonOrRefusal(p: string): AbsPath | { refused: string } {
+  function canonOrRefusal(p: string): AbsPath | { refused: string; status: FoundInstruction["status"] } {
     let canonical: AbsPath;
     try {
       canonical = canon(p);
     } catch (e) {
-      if (!(e instanceof PathRefused)) throw e;
-      return { refused: e.message };
+      if (e instanceof PathRefused) return { refused: e.message, status: "network" };
+      if (isErrno(e, ...UNREADABLE)) return { refused: "cannot be read", status: "denied" };
+      throw e;
     }
-    if (os === "darwin" && /^\/(Network|\.vol)\//i.test(canonical)) return { refused: "network paths are never read" };
+    if (os === "darwin" && /^\/(Network|\.vol)\//i.test(canonical))
+      return { refused: "network paths are never read", status: "network" };
     return canonical;
   }
 
@@ -148,7 +169,7 @@ async function build(
       return undefined;
     };
     const canonical = canonOrRefusal(requested);
-    if (typeof canonical !== "string") return refuse("network", canonical.refused);
+    if (typeof canonical !== "string") return refuse(canonical.status, canonical.refused);
     const info = await statOrNull(requested);
     if (info === null || !info.isFile()) return undefined;
     const identity = fileIdentityKey(info);
@@ -193,7 +214,12 @@ async function build(
   ): Promise<Loaded | undefined> {
     const admitted = opts.admitted ?? (await admit(requested, opts.project));
     if (admitted === undefined) return undefined;
-    const bytes = new Uint8Array(await readFile(requested));
+    const read = await readOrNull(requested);
+    if (read === null) {
+      found.push({ path: display(requested), status: "denied", reason: "cannot be read" });
+      return undefined;
+    }
+    const bytes = new Uint8Array(read);
     if (bytes.subarray(0, 8000).includes(0)) {
       warnings.push(`${display(requested)} skipped: binary file`);
       found.push({ path: display(requested), status: "binary", reason: "binary file" });
@@ -264,7 +290,7 @@ async function build(
   ): Promise<string | undefined> {
     const canonical = canonOrRefusal(target);
     if (typeof canonical !== "string") {
-      found.push({ path: display(target), status: "network", reason: canonical.refused });
+      found.push({ path: display(target), status: canonical.status, reason: canonical.refused });
       return undefined;
     }
     if ((await statOrNull(target)) === null) return undefined;
@@ -290,7 +316,14 @@ async function build(
     const out: string[] = [];
     for (const root of roots) {
       if (!(await statOrNull(root))?.isDirectory()) continue;
-      const names = await Array.fromAsync(new Bun.Glob("**/*.md").scan({ cwd: root, dot: true, followSymlinks: true }));
+      // One locked subfolder aborts the whole scan: the folder's rules count as not loadable rather than crash a reload.
+      const names = await Array.fromAsync(
+        new Bun.Glob("**/*.md").scan({ cwd: root, dot: true, followSymlinks: true }),
+      ).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
+      if (names === null) {
+        found.push({ path: display(root), status: "denied", reason: "cannot be read" });
+        continue;
+      }
       out.push(...names.sort().map((n) => path.join(root, n)));
     }
     return out;
@@ -324,7 +357,12 @@ async function build(
     for (const f of await ruleFiles(files?.rules ?? RULE_DIRS.map((r) => path.join(dir, r)))) {
       const admitted = await admit(f, project);
       if (admitted === undefined) continue;
-      const rule = parseRule(await readFile(f, "utf8"));
+      const ruleBytes = await readOrNull(f);
+      if (ruleBytes === null) {
+        found.push({ path: display(f), status: "denied", reason: "cannot be read" });
+        continue;
+      }
+      const rule = parseRule(ruleBytes.toString("utf8"));
       if (rule.paths !== undefined) {
         scoped.push({ requested: f, base: dir, globs: rule.paths.map((p) => new Bun.Glob(p)), project });
         continue;
@@ -335,6 +373,7 @@ async function build(
     return out;
   }
 
+  for (const dir of unresolved) found.push({ path: display(dir), status: "denied", reason: "cannot be read" });
   const launch: Loaded[] = [];
   const claudeHome = path.join(ctx.home, ".claude");
   // User-level scoped rules match paths relative to the working directory.
@@ -368,8 +407,8 @@ async function build(
       ...(await loadDir(d, inWorkingDirs(canon(d)), "launch", { main, rules: [path.join(d, ".dovet", "rules")] })),
     );
   }
-  for (const d of ctx.additionalDirs) {
-    if (isWithin(canon(d), workingDirs[0] ?? cwd, os) || settings.fromAdditionalDirectories === true) {
+  for (const { dir: d, canonical } of additional) {
+    if (isWithin(canonical, workingDirs[0] ?? cwd, os) || settings.fromAdditionalDirectories === true) {
       launch.push(...(await loadDir(d, true, "launch")));
       continue;
     }
@@ -391,9 +430,12 @@ async function build(
   }
   launching = false;
   const resumed = new Map<string, string>();
-  for (const f of (resume.loaded ?? []).flatMap((e) => e.files)) resumed.set(pathKey(f.path, os), f.sha256);
+  for (const e of resume.loaded ?? []) {
+    for (const gone of e.dropped ?? []) resumed.delete(pathKey(gone, os));
+    for (const f of e.files) resumed.set(pathKey(f.path, os), f.sha256);
+  }
   const resumeUpdates: InstructionPart[] = [];
-  if (resumed.size > 0) {
+  if ((resume.loaded?.length ?? 0) > 0) {
     for (const l of launch) {
       const before = l.records.map((r) => resumed.get(pathKey(r.path, os)));
       if (before[0] === undefined) resumeUpdates.push(lazyInstructions(l.file.displayPath, l.file.content));

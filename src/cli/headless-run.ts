@@ -1,10 +1,12 @@
 // Headless agent turn (tui "Headless mode", agent-loop "Turn state machine", event-log "Resume", providers §1).
+import { stat } from "node:fs/promises";
 import {
   buildRequest,
   cacheReadOf,
   cacheWarning,
   checkTranscriptPairing,
   decideStopAction,
+  discoverInstructions,
   ENDED_NOT_RUN,
   type ExecutedResult,
   executeTools,
@@ -12,7 +14,10 @@ import {
   historyRepairOffer,
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
+  type InstructionContext,
+  instructionsUpdated,
   isEarlyEligible,
+  type LoadedInstruction,
   MAX_REQUESTS_PER_TURN,
   modelRequestBody,
   modelRequestData,
@@ -44,10 +49,19 @@ import {
   type SdkCall,
   type StreamEvent,
 } from "../ai/index.ts";
-import { canonicalizePath, type Os, type Platform, readGitHead, type ShellChoice } from "../platform/index.ts";
+import {
+  canonicalizePath,
+  isErrno,
+  type Os,
+  type Platform,
+  pathKey,
+  readGitHead,
+  type ShellChoice,
+} from "../platform/index.ts";
 import {
   analyzeShell,
   createDotEnvSecrets,
+  createSandboxService,
   decide,
   expandGlob,
   isDirectory,
@@ -55,21 +69,27 @@ import {
   type NamedSecret,
   type RuleSet,
   ruleSetFromSettings,
+  type SandboxService,
+  type SandboxServiceOptions,
   type State,
+  sandboxStatus,
   secretsFromEnv,
 } from "../policy/index.ts";
 import type { AbsPath, EventEnvelope, StoredResponse } from "../schema/index.ts";
-import { PermissionMode } from "../schema/index.ts";
+import { InstructionsLoadedData, PermissionMode } from "../schema/index.ts";
 import {
   createCredentials,
   createSecretStore,
   describeProblem,
+  type ExternalImportApprovals,
+  externalImportApprovals,
   forkSession,
   isHistoryRelated,
   type LoadedSettings,
   type LoadInput,
   openSession,
   pollSettings,
+  projectId,
   REPAIR_HINT,
   readSession,
   repairEpochEvent,
@@ -128,6 +148,8 @@ export type HeadlessRunInput = {
   signal?: AbortSignal;
   /** The open writer, so the CLI's signal handling can flush it before the process exits. */
   onSession?(handle: { shutdown(): Promise<void>; eventTypes(): readonly string[] }): void;
+  /** Starts sandbox-runtime; tests pass a fake manager, the product leaves it unset. */
+  sandboxStarter?: SandboxServiceOptions["starter"];
 };
 
 export type HeadlessRunOutput = {
@@ -253,6 +275,40 @@ export function openTasksFromEvents(events: readonly EventEnvelope[]): number {
     }
   }
   return 0;
+}
+
+const SHELL_TOOLS: readonly string[] = ["Bash", "PowerShell"];
+
+/** Headless asks no one: an external import is skipped for this run and the skip is not stored, so the dialog can still ask later. */
+function skipUnapproved(stored: ExternalImportApprovals): ExternalImportApprovals {
+  const thisRun = new Map<string, boolean>();
+  return {
+    decision: async (path) => thisRun.get(path) ?? (await stored.decision(path)),
+    record: (paths, approved) => {
+      for (const p of paths) thisRun.set(p, approved);
+      return Promise.resolve();
+    },
+  };
+}
+
+/** `null` for any path that can't be stat'ed (gone, a symlink loop, no access): discovery decides whether it still loads. */
+const mtimeOf = (path: string): Promise<number | null> =>
+  stat(path, { bigint: true }).then(
+    // The same arithmetic discovery used to record it: the double `mtimeMs` of a plain stat differs in its last bits.
+    (info) => Number(info.mtimeNs) / 1e6,
+    () => null,
+  );
+
+type DroppedFile = { path: string; mtimeMs: number | null };
+
+/** A cheap check before the full reload: a launch file whose modification time changed or that is gone, or a dropped one that changed. */
+async function instructionFilesMoved(
+  files: readonly LoadedInstruction[],
+  dropped: ReadonlyMap<string, DroppedFile>,
+): Promise<boolean> {
+  for (const f of files) if ((await mtimeOf(f.path)) !== f.mtimeMs) return true;
+  for (const d of dropped.values()) if ((await mtimeOf(d.path)) !== d.mtimeMs) return true;
+  return false;
 }
 
 export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunOutput> {
@@ -436,6 +492,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   if (opened.mode !== "write")
     return errOut(sessionId, `session ${sessionId} is read-only (${opened.reason})`, { kind: "error" }, warnings);
   const writer = opened.writer;
+  let sandbox: SandboxService | undefined;
   // Attached before readSession: the lock exists now, so a signal during the read can still flush and close.
   const events: EventEnvelope[] = [];
   let shuttingDown = false;
@@ -484,6 +541,86 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         snapshot: shellSnapshot,
         offline: input.args.offline,
       });
+    const parsers = await loadShellParsers().catch(() => undefined);
+    const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
+    const policyEnv = {
+      os: input.os,
+      home,
+      cwd: input.cwd,
+      workingDirs: [input.projectRoot] as readonly string[],
+      canonicalize: (p: string) => canonicalizePath(p, input.cwd as AbsPath, input.os),
+      pid: input.pid,
+      ppid: input.pid,
+      selfNames: ["dovet", "bun"] as readonly string[],
+    };
+    if (defs.some((d) => SHELL_TOOLS.includes(d.name)) && input.settings.settings.sandbox?.enabled !== false) {
+      const rg = input.platform.libexec("rg");
+      const rgPath = await stat(rg).then(
+        () => rg,
+        (err: unknown) => (isErrno(err, "ENOENT", "ENOTDIR") ? undefined : Promise.reject(err)),
+      );
+      sandbox = createSandboxService({
+        os: input.os,
+        srtDir: input.platform.libexec("srt"),
+        rgPath,
+        settings: input.settings.settings,
+        workingDirs: [input.projectRoot],
+        sessionId,
+        configDir: input.dirs.config,
+        dataDir: input.dirs.data,
+        home,
+        getMode: () => mode,
+        ...(input.sandboxStarter === undefined ? {} : { starter: input.sandboxStarter }),
+      });
+    }
+    // A rule set that fails to compile is reported below; until then no instruction file counts as readable.
+    let instructionRules = ((): RuleSet | undefined => {
+      try {
+        return ruleSetFromSettings({
+          loaded: snapshot.loaded,
+          env: policyEnv,
+          parsers: parsers as never,
+          ruleContext: { os: input.os, home, canonicalize: policyEnv.canonicalize },
+          configDir: input.dirs.config,
+        }).rules;
+      } catch (err) {
+        if (err instanceof SettingsError) return undefined;
+        throw err;
+      }
+    })();
+    const instructionContext: InstructionContext = {
+      os: input.os,
+      home: home as AbsPath,
+      configDir: input.dirs.config as AbsPath,
+      cwd: input.cwd as AbsPath,
+      projectRoot: input.projectRoot as AbsPath,
+      additionalDirs: [],
+      settings: input.settings.settings.instructions ?? {},
+      contextWindow: 200_000,
+      blockReadsOutsideWorkingDirectories:
+        input.settings.settings.permissions?.blockReadsOutsideWorkingDirectories === true,
+      readDenied: (canonical) =>
+        instructionRules === undefined ||
+        decide(
+          { tool: "Read", action: { kind: "read", paths: [canonical] } },
+          { mode, rules: instructionRules, env: policyEnv, tainted: false },
+        ).behavior === "deny",
+      approvals: skipUnapproved(
+        externalImportApprovals(
+          `${input.dirs.data}/projects/${projectId(input.projectRoot, input.os)}/external-imports.json`,
+        ),
+      ),
+      askExternal: () => Promise.resolve(false),
+    };
+    const known = prior
+      .filter((e) => e.type === "instructions.loaded")
+      .map((e) => InstructionsLoadedData.parse(e.data));
+    const instructions = await discoverInstructions(instructionContext, { loaded: known });
+    known.push(instructions.launchEvent);
+    warnings.push(...instructions.warnings);
+    let launchFiles: LoadedInstruction[] = instructions.files;
+    // Launch files dropped mid-turn stay watched, so one restored with its old text is announced again.
+    const droppedFiles = new Map<string, DroppedFile>();
     let header: RenderInput["header"];
     let params: RenderInput["params"];
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
@@ -514,7 +651,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           model,
           provider,
         },
-        [],
+        instructions.files.map((f) => ({ displayPath: f.displayPath, content: f.content })),
       );
       const started = startEpoch({
         epoch: 0,
@@ -529,6 +666,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       params = { maxTokens: 4096, ...(effort === undefined ? {} : { effort }) };
       push("session.start", 0, null, { mode });
       push("epoch.start", 0, null, started.event);
+      if (instructions.launchEvent.files.length > 0 || instructions.launchEvent.warnings.length > 0)
+        push("instructions.loaded", 0, null, instructions.launchEvent);
       push("user.message", 0, 1, { text: input.prompt });
       epochNum = 0;
       turn = 1;
@@ -592,22 +731,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       };
       params = { maxTokens: 4096, ...(effort === undefined ? {} : { effort }) };
       turn = resumed.state.turn + 1;
+      for (const part of instructions.resumeUpdates)
+        push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+      if (instructions.resumeUpdates.length > 0) push("instructions.loaded", epochNum, null, instructions.launchEvent);
       push("user.message", epochNum, turn, { text: input.prompt });
     }
 
     const registry = createToolRegistry(defs);
-    const parsers = await loadShellParsers().catch(() => undefined);
-    const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
-    const policyEnv = {
-      os: input.os,
-      home,
-      cwd: input.cwd,
-      workingDirs: [input.projectRoot] as readonly string[],
-      canonicalize: (p: string) => canonicalizePath(p, input.cwd as AbsPath, input.os),
-      pid: input.pid,
-      ppid: input.pid,
-      selfNames: ["dovet", "bun"] as readonly string[],
-    };
     // A malformed rule set fails the run closed (permissions §3.1): guessing would run tools under wrong rules.
     let rules: RuleSet;
     try {
@@ -630,6 +760,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const readState = createReadState(input.os);
     const baseSignal = input.signal ?? new AbortController().signal;
     const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
+    const taintFrom = (sources: readonly string[]): void => {
+      for (const source of sources) {
+        if (sessionTaint.includes(source)) continue;
+        sessionTaint.push(source);
+        push("taint.change", epochNum, turn, { source, tainted: true });
+      }
+    };
+    taintFrom(instructions.taintSources);
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
@@ -648,6 +786,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       emit: () => undefined,
       platform: input.platform as never,
       env: input.env as never,
+      ...(sandbox === undefined ? {} : { sandbox }),
     };
 
     const guards = new GuardTracker();
@@ -672,6 +811,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             configDir: input.dirs.config,
           });
           rules = compiled.rules;
+          instructionRules = compiled.rules;
           warnings.push(...compiled.warnings.map((w) => w.message));
         } catch (err) {
           const problems = err instanceof SettingsError ? err.problems.map(describeProblem).join("; ") : String(err);
@@ -785,6 +925,47 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     for (;;) {
       await pollAndApply();
       ctx = buildCtx();
+      if (await instructionFilesMoved(launchFiles, droppedFiles)) {
+        // The full discovery again, so a changed file passes the same policy, size and hidden-character checks as at launch.
+        // Modification times are read before discovery: a file restored while it runs then reads as changed next time.
+        const seenAt = new Map<string, number | null>();
+        for (const path of [...launchFiles.map((f) => f.path), ...[...droppedFiles.values()].map((d) => d.path)])
+          seenAt.set(path, await mtimeOf(path));
+        // The one boundary for everything the agent can do to the filesystem mid-turn. A failed reload keeps what already
+        // passed every check (user-level files included) and changes nothing: dropping files would silently lift the user's rules.
+        const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch((err: unknown) => {
+          const why = err instanceof Error ? err.message : String(err);
+          const warning = `instruction files could not be re-read (${why}); the earlier ones stay in force`;
+          if (!warnings.some((w) => w.startsWith("instruction files could not be re-read"))) warnings.push(warning);
+          return null;
+        });
+        if (fresh !== null) {
+          const kept = new Set(fresh.files.map((f) => pathKey(f.path, input.os)));
+          const dropped = launchFiles.filter((f) => !kept.has(pathKey(f.path, input.os)));
+          for (const key of kept) droppedFiles.delete(key);
+          for (const f of dropped)
+            droppedFiles.set(pathKey(f.path, input.os), { path: f.path, mtimeMs: seenAt.get(f.path) ?? null });
+          for (const d of droppedFiles.values()) d.mtimeMs = seenAt.get(d.path) ?? null;
+          const event = { ...fresh.launchEvent, dropped: dropped.map((f) => f.path) };
+          known.push(event);
+          launchFiles = fresh.files;
+          warnings.push(...fresh.warnings.filter((w) => !warnings.includes(w)));
+          taintFrom(fresh.taintSources);
+          const updates = [
+            ...fresh.resumeUpdates,
+            ...dropped.map((f) =>
+              instructionsUpdated(f.displayPath, "(the file was deleted or can no longer be loaded)"),
+            ),
+          ];
+          for (const part of updates)
+            push("system.injected", epochNum, turn, {
+              text: part.text,
+              reason: part.reason,
+              delivery: "reminder-block",
+            });
+          if (updates.length > 0) push("instructions.loaded", epochNum, null, event);
+        }
+      }
       const built = buildRequest(events, {
         header,
         params,
@@ -1420,11 +1601,25 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     }
   } finally {
-    if (shellSnapshot !== undefined) {
-      // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
-      await input.platform.killTree(`snapshot:${sessionId}`);
-      await shellSnapshot.ready();
+    try {
+      if (sandbox !== undefined) {
+        const ranShell = events.some(
+          (e) => e.type === "tool.call" && SHELL_TOOLS.includes((e.data as { name?: string }).name ?? ""),
+        );
+        if (ranShell) {
+          await sandbox.ready;
+          warnings.push(...sandbox.globWarnings());
+          if (sandbox.state === "off") warnings.push(sandboxStatus(sandbox.state, sandbox.backend));
+        }
+        await sandbox.close();
+      }
+    } finally {
+      if (shellSnapshot !== undefined) {
+        // Stopped, not waited for: a run that ends (or is interrupted) while the rc files still run must not wait out the 10 s timeout.
+        await input.platform.killTree(`snapshot:${sessionId}`);
+        await shellSnapshot.ready();
+      }
+      await writer.close();
     }
-    await writer.close();
   }
 }

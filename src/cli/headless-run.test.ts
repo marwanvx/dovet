@@ -1999,8 +1999,8 @@ describe("runHeadless", () => {
     try {
       const out = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
-        projectRoot: dir.root,
-        cwd: dir.root,
+        projectRoot: "C:\\work",
+        cwd: "C:\\work",
         os: "win32",
         settings: settingsFor(),
         env: TEST_ENV,
@@ -2027,7 +2027,12 @@ describe("runHeadless", () => {
         adapter: stubAdapter([{ stop: "end_turn", text: "done" }]),
       });
       expect(out.exit).toEqual({ kind: "ok" });
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: "win32" as const, session: out.sessionId };
+      const loc = {
+        data: join(dir.root, "data"),
+        projectRoot: "C:\\work",
+        os: "win32" as const,
+        session: out.sessionId,
+      };
       const read = await readSession(loc);
       const epochStart = read.events.find((e) => e.type === "epoch.start");
       if (epochStart === undefined) throw new Error("no epoch.start event");

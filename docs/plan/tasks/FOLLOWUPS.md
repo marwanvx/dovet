@@ -38,6 +38,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/store/config/atomic.ts:6` (follows the link), `src/store/config/trust.ts` (`localSettingsRepoSupplied` lstats `.dovet` and `.claude` but not the file)
 - A repo-supplied untracked `.dovet/settings.local.json -> ~/.config/dovet/settings.json`: `saveLocalRule` writes the rule into the user's global settings, and the text then matches the record. Fix: treat a symlinked local file as repo-supplied and have `saveLocalRule` refuse to write through it. Pre-existing for the write; the record is new.
 
+### F11 (M2-05b security review): the mid-turn instruction reload trusts modification times only
+- **Severity:** minor · `src/cli/headless-run.ts` (`instructionFilesMoved`)
+- An agent that rewrites a launch file and sets its modification time back (`utimes`) hides the change for the rest of the turn; resume's hash check catches it later. Fix: hash the launch files at the reload check, or accept it as inside the threat model and say so in context §3.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
@@ -60,3 +64,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major · `src/store/config/trust.ts` (`localSettingsRepoSupplied`), permissions §11
 - "Not tracked by git" does not mean "the user wrote it". An archive of a real checkout whose author's `settings.local.json` is gitignored, or an archive with a minimal `.git` (just `HEAD`, `objects/`, `refs/`), gives `{project: false, local: true}` and its `allow: ["Bash(*)"]` applies in an unattended `-p` run. Fix: a local file is personal only when its exact text matches a hash Dovet stored in `<data>` when it wrote the file (`saveLocalRule`, M3-05's saves); anything else goes into the trust hash and the dialog. Needs a spec change to §11 (the owner-set rule is "unless tracked by git").
 - **Fixed:** #162 (a local file is personal only when its text matches the hash Dovet recorded in `<data>/local-settings.json` when it saved a rule; permissions §11, Q71)
+
+### F12 (M2-05b security review): instruction-file size check and read are separate steps
+- **Severity:** minor · `src/agent/transcript/instruction-files.ts` (`admit` size check, `load` `readOrNull`)
+- A file grown after the 4 MiB `stat` check is read in full, and a FIFO swapped in between the `isFile()` check and `readFile` hangs the reload. Fix: read through one opened handle (`fstat` then bounded read).
+
+### F13 (M2-05b security review): a failed mid-turn instruction reload is not in the session log
+- **Severity:** minor · `src/cli/headless-run.ts` (the `discoverInstructions(...).catch` in the request loop)
+- The warning reaches stderr and the output's `warnings`, but no event records that a changed instruction file was not applied. The log still matches what the model was told. Fix: a warning-only `instructions.loaded` event (needs the current records kept next to `launchFiles`).
