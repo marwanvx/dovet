@@ -42,6 +42,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/cli/headless-run.ts` (`instructionFilesMoved`)
 - An agent that rewrites a launch file and sets its modification time back (`utimes`) hides the change for the rest of the turn; resume's hash check catches it later. Fix: hash the launch files at the reload check, or accept it as inside the threat model and say so in context §3.
 
+### F14 (M2-07 security review): the hidden-character set WebFetch and tool results share misses some invisible characters
+- **Severity:** minor · `src/tools/hidden.ts:2`
+- `HIDDEN` marks Unicode tag characters and U+2060–2064/206A–206F only. U+061C, U+00AD, U+034F, U+FE00–FE0F, U+180E, U+3164 and U+115F pass through WebFetch pages and tool results unmarked. WebSearch results turn these into spaces (`web-search-services.ts`); WebFetch and the generic taint-on-hidden-characters check (permissions §8) should treat them the same. Pre-existing.
+
+### F15 (M2-07 round 4): look-alike angle brackets survive the WebSearch cleaner
+- **Severity:** minor · `src/tools/web-search-services.ts` (`withoutTags`)
+- Fullwidth `＜`/`＞`, small-form `﹤`/`﹥` and `〈`/`〉` are not removed, so `＜system＞` reaches the model as text. Same family as F14: fix both with one shared normalisation (NFKC before cleaning, or add the look-alikes to the removed set) in the same task.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage

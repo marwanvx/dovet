@@ -129,7 +129,7 @@ export const Settings = z.strictObject({
     .strictObject({
       backend: z.enum(["auto", "provider", "exa", "brave", "tavily", "searxng", "off"]).optional(),
       searxngUrl: z.url().optional(),
-      perHour: Count.optional(),
+      perHour: z.number().int().min(0).optional(),
       pricePerSearch: Usd.optional(),
     })
     .optional(),

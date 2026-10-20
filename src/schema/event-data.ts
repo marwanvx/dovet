@@ -56,6 +56,8 @@ export const ToolResultData = z.object({
   callId: z.string().min(1),
   status: z.enum(["ok", "error", "denied", "interrupted", "timeout"]),
   output: z.string(),
+  /** WebSearch: the backend that answered and what the search cost (tools §10). */
+  search: z.object({ backend: z.string(), calls: z.number().int(), priceUsd: z.number().optional() }).optional(),
 });
 
 export const TurnEndData = z.object({

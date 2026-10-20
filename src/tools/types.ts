@@ -26,6 +26,8 @@ export type ToolOutput = {
     offloadPath?: AbsPath;
     sandboxViolations?: string[];
     effects?: SessionEffect[];
+    /** WebSearch: which backend answered and what the search cost (receipts-budgets "Web search"). */
+    search?: { backend: string; calls: number; priceUsd?: number };
     fileChanges?: Array<{
       path: AbsPath;
       op: "create" | "modify";
@@ -76,6 +78,28 @@ export type PlanAnswer =
 
 export class NoUserAvailable extends Error {}
 
+export type SearchHit = { title: string; url: string; snippet?: string; date?: string };
+
+/** The secondary request WebSearch's `provider` backend makes (ADR-25, interfaces §4). */
+export type SecondaryRequest = {
+  purpose: "websearch";
+  query: string;
+  allowedDomains?: string[];
+  blockedDomains?: string[];
+};
+
+export type SecondaryResult = {
+  results: SearchHit[];
+  usage: Record<string, unknown>;
+  serverToolCalls: number;
+  requestId?: string;
+  /** Set when the stream dropped: `results` holds what arrived before it (tools §10). */
+  dropped?: string;
+};
+
+/** The API refused the search mechanism for this model (tools §10: marked unsupported for the session). */
+export class SearchMechanismRejected extends Error {}
+
 export interface ToolInteract {
   askQuestions(q: AskUserQuestionInput, signal: AbortSignal): Promise<QuestionAnswers>;
   presentPlan(plan: { text: string; path: AbsPath }, signal: AbortSignal): Promise<PlanAnswer>;
@@ -105,6 +129,8 @@ export interface ToolContext {
   keepHardLink?: boolean;
   /** User interaction (tools §4, §11); absent in unit tests that never prompt. */
   interact?: ToolInteract;
+  /** The session model's secondary requests (WebSearch's provider backend); absent when its endpoint has no search mechanism. `id` is `provider/model`. */
+  model?: { id: string; complete(req: SecondaryRequest, signal: AbortSignal): Promise<SecondaryResult> };
   /** Mode active before plan mode; used when ExitPlanMode approves to `previous` (tools §11.4). */
   planPreviousMode?: PermissionMode;
 }

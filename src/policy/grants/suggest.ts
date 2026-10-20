@@ -228,9 +228,11 @@ export function suggestGrant(req: Request, decision: Decision, st: State): Grant
     case "edit":
       return fileGrant(req, decision, st);
     case "network":
-      return st.tainted === true || !HOST.test(a.host) || decision.rule?.behavior === "ask"
-        ? undefined
-        : { scope: "permanent", rules: [`WebFetch(domain:${a.host.toLowerCase()})`] };
+      if (st.tainted === true || decision.rule?.behavior === "ask") return undefined;
+      if (req.tool === "WebSearch") return { scope: "permanent", rules: ["WebSearch"] };
+      return HOST.test(a.host)
+        ? { scope: "permanent", rules: [`WebFetch(domain:${a.host.toLowerCase()})`] }
+        : undefined;
     default:
       return undefined;
   }

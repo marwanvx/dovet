@@ -114,11 +114,13 @@ import {
   type ToolDefinition,
   type ToolOutput,
   toolInputSchema,
+  type WebSearchTool,
 } from "../tools/index.ts";
 import type { HeadlessArgs } from "./args.ts";
 import type { HeadlessOutcome } from "./headless-output.ts";
 import { resolveResumeTarget } from "./resume-target.ts";
 import { offlineRefusal } from "./startup.ts";
+import { SEARCH_SERVICE_AUTH, setupWebSearch } from "./web-search-setup.ts";
 
 export type HeadlessAdapter = {
   render(input: RenderInput): SdkCall;
@@ -150,6 +152,10 @@ export type HeadlessRunInput = {
   signal?: AbortSignal;
   /** The open writer, so the CLI's signal handling can flush it before the process exits. */
   onSession?(handle: { shutdown(): Promise<void>; eventTypes(): readonly string[] }): void;
+  /** WebSearch's provider backend: the secondary request to the session's model. Absent when the endpoint has no search mechanism. */
+  searchComplete?: NonNullable<ToolContext["model"]>["complete"];
+  /** Replaces the network the search services are called through; tests only. */
+  searchFetch?: typeof fetch;
   /** Starts sandbox-runtime; tests pass a fake manager, the product leaves it unset. */
   sandboxStarter?: SandboxServiceOptions["starter"];
 };
@@ -184,6 +190,7 @@ export function headlessToolDefs(input: {
   tmpDir: string;
   snapshot?: ShellSnapshot | undefined;
   offline?: boolean;
+  search?: WebSearchTool | undefined;
   baseTools?: readonly ToolDefinition<unknown>[];
 }): ToolDefinition<unknown>[] {
   const base = [...(input.baseTools ?? builtinTools)];
@@ -195,6 +202,7 @@ export function headlessToolDefs(input: {
       return true;
     }),
     shellToolFor(input.shell, input.tmpDir, input.snapshot),
+    ...(input.search === undefined || input.offline ? [] : [input.search as ToolDefinition<unknown>]),
     ...(input.offline
       ? []
       : [createWebFetchTool({ outputDir: `${input.tmpDir}/out`, version: pkg.version }) as ToolDefinition<unknown>]),
@@ -368,6 +376,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     env: input.env,
     runCommand: () => Promise.reject(new Error("cmd: keys are not resolved in headless mode")),
     providers: {
+      ...Object.fromEntries(Object.entries(SEARCH_SERVICE_AUTH).map(([id, auth]) => [id, { auth }])),
       [provider]: {
         auth:
           record !== undefined
@@ -392,11 +401,23 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     return errOut("", err instanceof Error ? err.message : String(err), { kind: "usage" }, warnings);
   }
 
+  const search =
+    input.toolDefs === undefined && !input.args.offline
+      ? await setupWebSearch({
+          settings: input.settings.settings,
+          credentials,
+          providerSearch: input.searchComplete !== undefined,
+          ...(input.searchFetch === undefined ? {} : { fetch: input.searchFetch }),
+        })
+      : undefined;
+  warnings.push(...(search?.warnings ?? []));
+
   // The output-redaction set (permissions §8, §4.7): the provider credential, secret-named env vars
   // and workspace `.env*` values, re-read regularly so edited files are picked up.
   const dotEnvSecrets = createDotEnvSecrets([input.projectRoot]);
   const outputSecrets = (): NamedSecret[] => [
     { name: "CREDENTIAL", value: secretValue },
+    ...(search?.keys ?? []).map((k, i) => ({ name: `SEARCH_KEY_${i + 1}`, value: k.reveal() })),
     ...secretsFromEnv(input.env),
     ...dotEnvSecrets.current(),
   ];
@@ -546,6 +567,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         tmpDir: `${input.dirs.data}/tmp`,
         snapshot: shellSnapshot,
         offline: input.args.offline,
+        ...(search?.tool === undefined ? {} : { search: search.tool }),
       });
     const parsers = await loadShellParsers().catch(() => undefined);
     const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
@@ -644,7 +666,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           mode,
           sandbox: input.settings.settings.sandbox?.enabled !== false,
           headless: true,
-          webSearch: false,
+          webSearch: defs.some((d) => d.name === "WebSearch"),
           attribution: input.settings.settings.git?.attribution ?? "none",
           modelName: model,
         },
@@ -793,6 +815,9 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       platform: input.platform as never,
       env: input.env as never,
       ...(sandbox === undefined ? {} : { sandbox }),
+      ...(input.searchComplete === undefined
+        ? {}
+        : { model: { id: `${provider}/${model}`, complete: input.searchComplete } }),
     };
 
     const guards = new GuardTracker();
@@ -1496,7 +1521,12 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                   : r.output.status === "timeout"
                     ? "timeout"
                     : "error";
-          push("tool.result", epochNum, turn, { callId: r.callId, status, output: text });
+          push("tool.result", epochNum, turn, {
+            callId: r.callId,
+            status,
+            output: text,
+            ...(r.output.meta?.search === undefined ? {} : { search: r.output.meta.search }),
+          });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
           applyResultTaint(r);
         }
