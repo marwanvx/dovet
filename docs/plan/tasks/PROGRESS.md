@@ -606,3 +606,9 @@ Done: `usage` in `--output json` is now the sum of every request of the turn (ne
 Review: standard, 1 round, 1 fixed (guard-exit test), 1 dropped (SIGINT-exit test; same helper as the guard test), 2 logged to FOLLOWUPS (F6, F7).
 Learned: `receipt` still comes back `{}` in JSON output; nothing builds it yet, so check the receipts task before calling M1 output complete. On a resumed session `cost` is the session total while `usage` is this turn only (F6).
 Next: M2-05 (workspace trust).
+
+## 2026-10-20 — M2-05 Workspace trust (trust half; wiring split to M2-05b)
+Done: an untrusted project's settings files (and a repo-supplied `settings.local.json`) keep only deny/ask rules, tightening sandbox booleans and `ui`; `dovet -p` warns on stderr and ignores the rest. Trust decisions are stored by repo root and config hash (`recordTrust`, used by the M3-10 dialog); live reload re-asks. The sandbox and instruction-file wiring is now M2-05b. PR: #161 (merged).
+Review: deep, 2 security rounds + 1 standard reviewer, 9 fixed, 0 dropped, 2 logged to FOLLOWUPS (F8 minor, F9 major).
+Learned: the settings merge lets a higher layer replace scalars and non-rule arrays, so any "restricting" key from an untrusted file can wipe the user's own value; the allowlist keeps only what can't (rules add up). "Not tracked by git" can't prove a local file is personal (F9: a gitignored file in an archive is trusted; needs a spec change). Headless used to drop all startup settings warnings; it prints them now.
+Next: F9 (major: a local settings file counts as personal only if Dovet wrote it; needs the permissions §11 rule changed), then M2-05b.
