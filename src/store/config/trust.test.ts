@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
+import { pathKey } from "../../platform/index.ts";
 import type { AbsPath } from "../../schema/index.ts";
 import { loadSettings } from "./index.ts";
 import {
@@ -269,7 +270,7 @@ describe("the trust decision store", () => {
 
     await recordTrust({ dataDir: data, store: {}, root, hash, trusted: true, home, os });
     const store = JSON.parse(await readFile(join(data, "trusted-folders.json"), "utf8"));
-    expect(store).toEqual({ [root]: { hash, trusted: true } });
+    expect(store).toEqual({ [pathKey(root, os)]: { hash, trusted: true } });
     expect(folderTrusted(store, root, hash, home, os)).toBe(true);
 
     await writeFile(join(root, ".dovet", "settings.json"), '{ "permissions": { "allow": ["Bash(curl *)"] } }');
