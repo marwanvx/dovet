@@ -94,7 +94,10 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
         kind: "tool_result",
         callId: r.callId,
         isError: r.status !== "ok",
-        content: [{ kind: "text", text: escapeReservedMarkers(r.output) }],
+        content: [
+          { kind: "text", text: escapeReservedMarkers(r.output) },
+          ...(r.media ?? []).map(({ bytes: _bytes, ...part }) => part),
+        ],
       });
     } else if (e.type === "system.injected") {
       const s = SystemInjectedData.parse(e.data);

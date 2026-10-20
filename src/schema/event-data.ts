@@ -1,6 +1,6 @@
 // `data` of the events whose first writer exists (event-log "Event types (v0.1)", QUESTIONS Q22).
 import { z } from "zod";
-import { InstructionReason } from "./parts.ts";
+import { DocumentPart, ImagePart, InstructionReason } from "./parts.ts";
 import { JsonValue } from "./primitives.ts";
 
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/);
@@ -52,10 +52,17 @@ export const ToolCallData = z.object({
   input: JsonValue,
 });
 
+/** An image or PDF a tool returned; `bytes` is the size before base64, which the request budget counts (tools §1.6). */
+export const ToolMedia = z.discriminatedUnion("kind", [
+  ImagePart.extend({ bytes: z.number().int().nonnegative() }),
+  DocumentPart.extend({ bytes: z.number().int().nonnegative() }),
+]);
+
 export const ToolResultData = z.object({
   callId: z.string().min(1),
   status: z.enum(["ok", "error", "denied", "interrupted", "timeout"]),
   output: z.string(),
+  media: z.array(ToolMedia).optional(),
   /** WebSearch: the backend that answered and what the search cost (tools §10). */
   search: z.object({ backend: z.string(), calls: z.number().int(), priceUsd: z.number().optional() }).optional(),
 });
@@ -88,6 +95,7 @@ export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;
 export type UserMessageData = z.infer<typeof UserMessageData>;
 export type ToolCallData = z.infer<typeof ToolCallData>;
+export type ToolMedia = z.infer<typeof ToolMedia>;
 export type ToolResultData = z.infer<typeof ToolResultData>;
 export type TurnEndData = z.infer<typeof TurnEndData>;
 export type PrefixFingerprint = z.infer<typeof PrefixFingerprint>;

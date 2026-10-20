@@ -7,6 +7,7 @@ export { createEditTool, editTool } from "./edit.ts";
 export { createGlobTool, globTool } from "./glob.ts";
 export { createGrepTool, grepTool } from "./grep.ts";
 export { stripHidden } from "./hidden.ts";
+export { createMediaBudget, MEDIA_BYTES_SHARE, type MediaBudget } from "./media-budget.ts";
 export { limitOutput, type OffloadTarget, OUTPUT_LIMIT } from "./output.ts";
 export {
   createEnterPlanModeTool,
@@ -42,6 +43,7 @@ export type {
   AskUserQuestionInput,
   Effects,
   InputNormalization,
+  MediaContext,
   PlanAnswer,
   QuestionAnswers,
   SearchHit,

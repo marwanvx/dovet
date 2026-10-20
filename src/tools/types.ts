@@ -105,6 +105,16 @@ export interface ToolInteract {
   presentPlan(plan: { text: string; path: AbsPath }, signal: AbortSignal): Promise<PlanAnswer>;
 }
 
+/** What the session model can take as images, and the budget of the epoch (tools §1.6). */
+export type MediaContext = {
+  images: boolean;
+  /** The model's native long edge in px; Read sends at most min(2,000, this). */
+  longEdge: number;
+  claim(bytes: number): string | undefined;
+  /** Stores the bytes where the log refers to them; returns the SHA-256. */
+  store(bytes: Uint8Array): string;
+};
+
 export interface ToolContext {
   session: Readonly<SessionInfo>;
   settings: Readonly<Settings>;
@@ -131,6 +141,8 @@ export interface ToolContext {
   interact?: ToolInteract;
   /** The session model's secondary requests (WebSearch's provider backend); absent when its endpoint has no search mechanism. `id` is `provider/model`. */
   model?: { id: string; complete(req: SecondaryRequest, signal: AbortSignal): Promise<SecondaryResult> };
+  /** Absent when the session cannot take images (unit tests, models without image input). */
+  media?: MediaContext;
   /** Mode active before plan mode; used when ExitPlanMode approves to `previous` (tools §11.4). */
   planPreviousMode?: PermissionMode;
 }

@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isErrno } from "../../platform/index.ts";
@@ -8,6 +8,13 @@ export interface BlobStore {
   putSync(bytes: Uint8Array): string;
   /** Undefined when missing; throws when the bytes don't match the name. */
   get(sha: string): Promise<Uint8Array | undefined>;
+  /** `get` for the request renderer, which cannot wait. */
+  getSync(sha: string): Uint8Array | undefined;
+}
+
+function verified(sha: string, bytes: Uint8Array): Uint8Array {
+  if (new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== sha) throw new Error(`blob ${sha} is damaged`);
+  return bytes;
 }
 
 /** Content-addressed blob store at `<data>/blobs/<sha256[0..2]>/<sha256>` (event-log "Blob store"). */
@@ -45,8 +52,16 @@ export function createBlobStore(data: string): BlobStore {
         if (isErrno(err, "ENOENT")) return undefined;
         throw err;
       }
-      if (new Bun.CryptoHasher("sha256").update(bytes).digest("hex") !== sha) throw new Error(`blob ${sha} is damaged`);
-      return bytes;
+      return verified(sha, bytes);
+    },
+
+    getSync(sha) {
+      try {
+        return verified(sha, readFileSync(pathOf(sha)));
+      } catch (err) {
+        if (isErrno(err, "ENOENT")) return undefined;
+        throw err;
+      }
     },
   };
 }

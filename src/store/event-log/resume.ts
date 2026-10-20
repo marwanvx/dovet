@@ -79,7 +79,12 @@ export function validateTranscriptItems(items: readonly Item[]): void {
       if (p.kind === "tool_result") {
         const content = (p as { content?: unknown }).content;
         if (Array.isArray(content)) {
-          if (content.length === 0 || content.some((c) => c?.kind !== "text" || typeof c?.text !== "string"))
+          const media = (c: { kind?: string }): boolean => c?.kind === "image" || c?.kind === "document";
+          if (
+            content.length === 0 ||
+            !content.some((c) => c?.kind === "text") ||
+            content.some((c) => !media(c) && (c?.kind !== "text" || typeof c?.text !== "string"))
+          )
             throw new Error("InvariantViolation: non-text tool output");
         }
       }

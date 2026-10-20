@@ -22,7 +22,11 @@
           "effortField": "reasoning_effort",
           "reasoningReplay": "always"
         },
-        "capabilities": { "effortLevels": ["minimal", "low", "medium", "high", "xhigh", "max"] }
+        "capabilities": {
+          "effortLevels": ["minimal", "low", "medium", "high", "xhigh", "max"],
+          // ASSUMPTION (QUESTIONS Q77): the catalog gives no per-model input types yet, so only models known to take images are listed.
+          "imageModels": ["nvidia/nemotron-3.5-super-vl-120b-a12b"]
+        }
       }
     ],
     "auth": [{ "method": "api-key", "envVars": ["NVIDIA_API_KEY"] }]
