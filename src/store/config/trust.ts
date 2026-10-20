@@ -15,23 +15,20 @@ export type UntrustedSettings = { file: string; allowRules: number; ignored: str
 
 export type TrustedFolders = Record<string, { hash: string; trusted: boolean }>;
 
+// Only settings that no value in a repo file can turn into less than the user chose: merge lets the higher layer
+// replace scalars and non-rule arrays, so a list or a mode from an untrusted file would wipe the user's own.
 const SAFE_TOP_LEVEL = [
   "$schema",
   "$version",
-  "provider",
   "model",
   "effort",
   "ui",
   "compaction",
   "cache",
-  "instructions",
   "read",
-  "glob",
   "webfetch",
-  "compat",
   "git",
 ] as const;
-const CAUTIOUS_MODES: readonly string[] = ["default", "plan", "dontAsk"];
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -61,34 +58,25 @@ export function restrictUntrusted(settings: Settings): { kept: Settings; ignored
   for (const key of SAFE_TOP_LEVEL) {
     if (settings[key] !== undefined) kept[key] = settings[key];
   }
+  if (settings.instructions?.files !== undefined) kept.instructions = { files: settings.instructions.files };
   const p = settings.permissions;
   if (p !== undefined) {
     const permissions = present({
       deny: p.deny,
       ask: p.ask,
-      examples: p.examples,
       disableBypassPermissionsMode: p.disableBypassPermissionsMode,
       blockReadsOutsideWorkingDirectories: p.blockReadsOutsideWorkingDirectories === true ? true : undefined,
-      defaultMode: p.defaultMode !== undefined && CAUTIOUS_MODES.includes(p.defaultMode) ? p.defaultMode : undefined,
-      sensitiveFiles: p.sensitiveFiles?.add === undefined ? undefined : { add: p.sensitiveFiles.add },
     });
     if (Object.keys(permissions).length > 0) kept.permissions = permissions;
   }
   const s = settings.sandbox;
   if (s !== undefined) {
-    const network = present({
-      deniedDomains: s.network?.deniedDomains,
-      strictAllowlist: s.network?.strictAllowlist === true ? true : undefined,
-    });
-    const filesystem = present({ denyWrite: s.filesystem?.denyWrite, denyRead: s.filesystem?.denyRead });
     const sandbox = present({
       enabled: s.enabled === true ? true : undefined,
       failIfUnavailable: s.failIfUnavailable === true ? true : undefined,
       allowUnsandboxedCommands: s.allowUnsandboxedCommands === false ? false : undefined,
       autoAllowBashIfSandboxed: s.autoAllowBashIfSandboxed === false ? false : undefined,
-      credentials: s.credentials,
-      network: Object.keys(network).length > 0 ? network : undefined,
-      filesystem: Object.keys(filesystem).length > 0 ? filesystem : undefined,
+      network: s.network?.strictAllowlist === true ? { strictAllowlist: true } : undefined,
     });
     if (Object.keys(sandbox).length > 0) kept.sandbox = sandbox;
   }
@@ -102,22 +90,38 @@ const missing = (err: unknown): undefined => {
   throw err;
 };
 
-/** permissions §11: the local files are personal unless git tracks one or `.dovet` / `.claude` is a symlink (a repo can ship either). */
+// `ls-files -s` prints `<mode> <object> <stage>\t<path>`; mode 160000 is a submodule, whose files git doesn't list.
+const GITLINK = /^160000 /;
+
+/**
+ * permissions §11: the local files are personal unless the repo can ship them: `.dovet` / `.claude` is a symlink or a
+ * submodule, git tracks a `settings.local.json`, or there is no git to tell (an unpacked archive).
+ * A repository whose git can't answer counts as repo-supplied too: trust is never granted by a failure.
+ */
 export async function localSettingsRepoSupplied(input: {
   projectRoot: string;
   git?: AbsPath;
   env: Readonly<Record<string, string | undefined>>;
 }): Promise<boolean> {
   for (const dir of [".dovet", ".claude"]) {
-    if ((await lstat(join(input.projectRoot, dir)).catch(missing))?.isSymbolicLink()) return true;
+    const info = await lstat(join(input.projectRoot, dir)).catch(missing);
+    if (info?.isSymbolicLink()) return true;
+    if (info !== undefined && (await lstat(join(input.projectRoot, dir, ".git")).catch(missing)) !== undefined) {
+      return true;
+    }
   }
-  if ((await lstat(join(input.projectRoot, ".git")).catch(missing)) === undefined) return false;
-  // A repository whose git can't answer is treated as repo-supplied: trust is never granted by a failure.
+  if ((await lstat(join(input.projectRoot, ".git")).catch(missing)) === undefined) return true;
   if (input.git === undefined) return true;
   const call = { git: input.git, cwd: input.projectRoot as AbsPath, env: input.env };
   for (const dir of [".dovet", ".claude"]) {
-    const tracked = await runHardenedGit(call, ["ls-files", "--error-unmatch", "--", `${dir}/settings.local.json`]);
-    if (tracked.code !== 1) return true;
+    // icase: on a case-insensitive volume `.Dovet/Settings.Local.json` opens as the file Dovet reads.
+    const listed = await runHardenedGit(call, ["ls-files", "-s", "--", `:(icase)${dir}`]);
+    if (listed.code !== 0) return true;
+    const local = `${dir}/settings.local.json`;
+    for (const line of listed.stdout.split("\n")) {
+      const path = line.slice(line.indexOf("\t") + 1).toLowerCase();
+      if (GITLINK.test(line) || path === local) return true;
+    }
   }
   return false;
 }
@@ -142,7 +146,7 @@ const isHome = (root: string, home: string, os: Os): boolean => pathKey(root, os
 /** The recorded decision for this repo root, valid only for the config it was made on; the home directory is never trusted. */
 export function folderTrusted(store: TrustedFolders, root: string, hash: string, home: string, os: Os): boolean {
   if (isHome(root, home, os)) return false;
-  const entry = store[root];
+  const entry = store[pathKey(root, os)];
   return entry !== undefined && entry.trusted && entry.hash === hash;
 }
 
@@ -157,7 +161,7 @@ export async function recordTrust(input: {
 }): Promise<void> {
   if (isHome(input.root, input.home, input.os)) throw new Error("the home directory is never recorded as trusted");
   await mkdir(input.dataDir, { recursive: true, mode: 0o700 });
-  const next = { ...input.store, [input.root]: { hash: input.hash, trusted: input.trusted } };
+  const next = { ...input.store, [pathKey(input.root, input.os)]: { hash: input.hash, trusted: input.trusted } };
   await writeFileAtomic(join(input.dataDir, "trusted-folders.json"), `${JSON.stringify(next, null, 2)}\n`);
 }
 

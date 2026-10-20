@@ -1021,10 +1021,45 @@ describe("dovet -p workspace trust", () => {
   test.skipIf(process.platform === "win32")(
     "a personal settings.local.json is trusted without a dialog",
     async () => {
-      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW });
+      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW }, async (root) => {
+        const proc = Bun.spawn(["git", "init", "-q"], { cwd: root, stdout: "ignore", stderr: "ignore" });
+        expect(await proc.exited).toBe(0);
+      });
       try {
         expect(made).toBe(true);
         expect(err).not.toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "outside git a settings.local.json could have come from an unpacked archive, so it is untrusted",
+    async () => {
+      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW });
+      try {
+        expect(made).toBe(false);
+        expect(err).toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "terminal escapes in a repo's settings keys are printed as text",
+    async () => {
+      const key = "\u001b[2K\u001b]0;owned\u0007";
+      const { dir, err } = await run({ ".dovet/settings.json": JSON.stringify({ env: { [key]: "x" } }) });
+      try {
+        expect(err).toContain("isn't trusted");
+        expect(err).not.toContain("\u001b");
+        expect(err).toContain("\\u{1b}[2K");
       } finally {
         await dir.dispose();
       }

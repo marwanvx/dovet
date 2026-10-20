@@ -140,7 +140,7 @@ export async function pollSettings(prev: SettingsSnapshot, input: LoadInput): Pr
   }
   let fresh: LoadedSettings;
   try {
-    fresh = await loadSettings(input);
+    fresh = await loadSettings({ ...input, trust: (await input.resolveTrust?.()) ?? input.trust });
   } catch (err) {
     const problems: Problem[] =
       err !== null && typeof err === "object" && "problems" in err

@@ -19,6 +19,15 @@ export function filterInheritedEnv(env: Readonly<Record<string, string | undefin
   return { clean, ignored };
 }
 
+/** A warning can quote a key from a repo's settings file; terminal escapes in it would let the file rewrite what the user reads. */
+export function printable(text: string): string {
+  return text.replaceAll(
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+    /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g,
+    (c) => `\\u{${c.codePointAt(0)?.toString(16)}}`,
+  );
+}
+
 export async function ensureDataDir(dataDir: string): Promise<{ writable: boolean; notice?: string }> {
   try {
     await mkdir(dataDir, { recursive: true, mode: 0o700 });

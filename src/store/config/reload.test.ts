@@ -157,6 +157,20 @@ describe("live settings reload", () => {
     expect(untrustedNext.loaded.rules.deny.map((r) => r.rule)).toEqual(["Bash(rm *)"]);
   });
 
+  // spec: AC-PERM-13
+  test("a file that appears mid-session is judged by a fresh trust decision, not the startup one", async () => {
+    const { dir, input } = await setup();
+    const prev = await snapshotSettings({ ...input, env: {} });
+    const file = join(dir.root, "proj", ".dovet", "settings.local.json");
+    await mkdir(join(dir.root, "proj", ".dovet"), { recursive: true });
+    await writeFile(file, '{ "permissions": { "allow": ["Bash"], "deny": ["Bash(rm *)"] } }');
+    const stale = await pollSettings(prev, { ...input, env: {} });
+    expect(stale.loaded.rules.allow.map((r) => r.rule)).toEqual(["Bash"]);
+    const fresh = await pollSettings(prev, { ...input, env: {}, resolveTrust: () => Promise.resolve(UNTRUSTED) });
+    expect(fresh.loaded.rules.allow).toEqual([]);
+    expect(fresh.loaded.rules.deny.map((r) => r.rule)).toEqual(["Bash(rm *)"]);
+  });
+
   // spec: AC-PERM-19
   test("no file change means no reload and no notices", async () => {
     const { input } = await setup({

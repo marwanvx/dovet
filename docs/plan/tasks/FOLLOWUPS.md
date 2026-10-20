@@ -30,6 +30,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/cli/headless-run.ts` (the `usage` event only feeds the cache warning; `done` is the accounting point)
 - A provider may bill a request that ended in an error or an abort; its `usage` event is dropped from `usage` and `cost`. Count the last `usage` event of a request that has no `done`, with a test. Pre-existing in cost, new in `usage`.
 
+### F8 (M2-05 security review): the trust hash and the settings load read the files separately
+- **Severity:** minor · `src/store/config/trust.ts` (`projectConfigHash`), `src/store/config/load.ts`
+- A project file rewritten between the hash read and the load is judged by the earlier hash. It needs write access to the folder at that moment, and the next reload re-resolves trust, so the window is one startup. Fix: hash the exact text `loadSettings` parses.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage

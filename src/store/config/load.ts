@@ -29,6 +29,8 @@ export type LoadInput = {
   confirmMigration?: (pending: PendingMigration) => Promise<boolean>;
   /** Required: a caller that forgets to decide gets a compile error, not silent trust. */
   trust: ProjectTrust;
+  /** Asked again on every live reload: a file that changed since startup (a `git pull`, a checkout) must not ride the startup decision. */
+  resolveTrust?: () => Promise<ProjectTrust>;
 };
 
 export type LoadedSettings = {

@@ -62,7 +62,7 @@ describe("an untrusted project", () => {
     expect(loaded.settings.permissions?.additionalDirectories).toBeUndefined();
     expect(loaded.settings.permissions?.defaultMode).toBe("default");
     expect(loaded.settings.sandbox?.excludedCommands).toBeUndefined();
-    expect(loaded.settings.sandbox?.network).toEqual({ deniedDomains: ["tracker.example"] });
+    expect(loaded.settings.sandbox?.network?.allowedDomains).toBeUndefined();
     expect(loaded.settings.providers).toBeUndefined();
     expect(loaded.settings.shell?.path).toBeUndefined();
     expect(loaded.settings.env).toBeUndefined();
@@ -87,6 +87,7 @@ describe("an untrusted project", () => {
           "sandbox.allowUnsandboxedCommands",
           "sandbox.excludedCommands",
           "sandbox.network.allowedDomains",
+          "sandbox.network.deniedDomains",
           "shell.path",
         ],
       },
@@ -128,13 +129,55 @@ describe("an untrusted project", () => {
   });
 
   // spec: AC-PERM-13
-  test("only the cautious modes and tightening sandbox values survive", () => {
+  test("only values that can't loosen what the user chose survive", () => {
     const { kept } = restrictUntrusted({
-      permissions: { defaultMode: "acceptEdits", blockReadsOutsideWorkingDirectories: false },
-      sandbox: { enabled: false, failIfUnavailable: true, allowUnsandboxedCommands: false },
+      permissions: { defaultMode: "plan", blockReadsOutsideWorkingDirectories: false, sensitiveFiles: { add: ["x"] } },
+      sandbox: {
+        enabled: false,
+        failIfUnavailable: true,
+        allowUnsandboxedCommands: false,
+        filesystem: { denyRead: [] },
+        network: { deniedDomains: [] },
+      },
+      compat: { claudeCodeSettings: true },
     });
     expect(kept).toEqual({ sandbox: { failIfUnavailable: true, allowUnsandboxedCommands: false } });
-    expect(restrictUntrusted({ permissions: { defaultMode: "plan" } }).kept.permissions?.defaultMode).toBe("plan");
+  });
+
+  // spec: AC-PERM-13
+  test("an untrusted file can't empty or weaken what the user's own settings say", async () => {
+    const { input } = await setup({
+      "cfg/settings.json": JSON.stringify({
+        permissions: { defaultMode: "plan", sensitiveFiles: { add: ["**/my-secret.txt"] } },
+        sandbox: {
+          filesystem: { denyRead: ["~/private"], denyWrite: ["~/keep"] },
+          network: { deniedDomains: ["evil.example"] },
+          credentials: { files: [{ path: "~/.netrc", mode: "deny" }] },
+        },
+        instructions: { readClaudeUserFiles: false },
+        compat: { claudeCodeSettings: false },
+      }),
+      "proj/.dovet/settings.json": JSON.stringify({
+        permissions: { defaultMode: "default", sensitiveFiles: { add: [] } },
+        sandbox: {
+          filesystem: { denyRead: [], denyWrite: [] },
+          network: { deniedDomains: [] },
+          credentials: { files: [] },
+        },
+        instructions: { readClaudeUserFiles: true, fromAdditionalDirectories: true },
+        compat: { claudeCodeSettings: true },
+      }),
+    });
+    const loaded = await loadSettings({ ...input, env: {}, trust: UNTRUSTED });
+    const { permissions, sandbox, instructions, compat } = loaded.settings;
+    expect(permissions?.defaultMode).toBe("plan");
+    expect(permissions?.sensitiveFiles?.add).toEqual(["**/my-secret.txt"]);
+    expect(sandbox?.filesystem).toEqual({ denyRead: ["~/private"], denyWrite: ["~/keep"] });
+    expect(sandbox?.network?.deniedDomains).toEqual(["evil.example"]);
+    expect(sandbox?.credentials?.files).toHaveLength(1);
+    expect(instructions?.readClaudeUserFiles).toBe(false);
+    expect(compat?.claudeCodeSettings).toBe(false);
+    expect(loaded.untrusted[0]?.ignored).toContain("sandbox.filesystem.denyRead");
   });
 });
 
@@ -161,11 +204,45 @@ describe("which local settings files the repo supplies", () => {
   });
 
   // spec: AC-PERM-13
-  test("a repository whose git can't be run is repo-supplied; a folder outside git is not", async () => {
+  test("without a working git the local file is repo-supplied, with or without a .git folder", async () => {
     const { root } = await setup({ "proj/.dovet/settings.local.json": "{}" });
-    expect(await localSettingsRepoSupplied({ projectRoot: root, env: process.env })).toBe(false);
+    expect(await localSettingsRepoSupplied({ projectRoot: root, env: process.env })).toBe(true);
     await mkdir(join(root, ".git"));
     expect(await localSettingsRepoSupplied({ projectRoot: root, env: process.env })).toBe(true);
+  });
+
+  // spec: AC-PERM-13
+  test("a .dovet folder that is a submodule is repo-supplied, even before it is checked out", async () => {
+    const { root } = await setup({ "proj/.dovet/settings.local.json": "{}" });
+    await git(root, "init", "-q");
+    const call = { projectRoot: root, git: gitPath(), env: process.env };
+    expect(await localSettingsRepoSupplied(call)).toBe(false);
+    await git(root, "update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},.dovet`);
+    expect(await localSettingsRepoSupplied(call)).toBe(true);
+  });
+
+  // spec: AC-PERM-13
+  test("a tracked file whose case differs is still the file a case-insensitive volume opens", async () => {
+    const { root } = await setup({ "proj/.dovet/x": "" });
+    await git(root, "init", "-q");
+    const blob = Bun.spawn(["git", "hash-object", "-w", "--stdin"], { cwd: root, stdin: "pipe", stdout: "pipe" });
+    blob.stdin.write("{}");
+    await blob.stdin.end();
+    const sha = (await new Response(blob.stdout).text()).trim();
+    const call = { projectRoot: root, git: gitPath(), env: process.env };
+    expect(await localSettingsRepoSupplied(call)).toBe(false);
+    await git(root, "update-index", "--add", "--cacheinfo", `100644,${sha},.Dovet/Settings.Local.json`);
+    expect(await localSettingsRepoSupplied(call)).toBe(true);
+  });
+
+  // spec: AC-PERM-13
+  test("a .dovet folder with its own .git is repo-supplied", async () => {
+    const { root } = await setup({ "proj/.dovet/settings.local.json": "{}" });
+    await git(root, "init", "-q");
+    const call = { projectRoot: root, git: gitPath(), env: process.env };
+    expect(await localSettingsRepoSupplied(call)).toBe(false);
+    await mkdir(join(root, ".dovet", ".git"));
+    expect(await localSettingsRepoSupplied(call)).toBe(true);
   });
 
   // spec: AC-PERM-13
@@ -199,6 +276,27 @@ describe("the trust decision store", () => {
     const changed = await projectConfigHash({ projectRoot: root, includeLocal: false });
     expect(changed).not.toBe(hash);
     expect(folderTrusted(store, root, changed, home, os)).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("the key ignores case and a trailing separator on Windows", async () => {
+    const { dir } = await setup({});
+    const data = join(dir.root, "data");
+    const base = { dataDir: data, store: {}, hash: "h", trusted: true, home: "C:\\Users\\u", os: "win32" as const };
+    await recordTrust({ ...base, root: "C:\\Repo" });
+    const store = JSON.parse(await readFile(join(data, "trusted-folders.json"), "utf8"));
+    expect(folderTrusted(store, "c:\\repo\\", "h", base.home, "win32")).toBe(true);
+    expect(folderTrusted(store, "C:\\Other", "h", base.home, "win32")).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("a repo can't pick the provider or pull in more instruction files", () => {
+    const { kept } = restrictUntrusted({
+      provider: "example",
+      model: "m",
+      instructions: { files: "claude-md", readClaudeUserFiles: true, fromAdditionalDirectories: true },
+    });
+    expect(kept).toEqual({ model: "m", instructions: { files: "claude-md" } });
   });
 
   // spec: AC-PERM-13
