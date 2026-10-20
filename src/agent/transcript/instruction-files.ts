@@ -82,10 +82,15 @@ const lineCount = (text: string): number => (text === "" ? 0 : text.replace(/\n$
 export const fileIdentityKey = (s: { dev: bigint; ino: bigint }): string | undefined =>
   s.ino === 0n ? undefined : `${s.dev}:${s.ino}`;
 
+/** A file the agent can swap for a loop, a vanished path or a locked folder mid-turn counts as not loadable, never as a crash. */
+const UNREADABLE = ["ENOENT", "ENOTDIR", "ELOOP", "EACCES", "EPERM", "EISDIR"] as const;
+
 async function statOrNull(p: string): Promise<BigIntStats | null> {
-  return stat(p, { bigint: true }).catch((e: unknown) =>
-    isErrno(e, "ENOENT", "ENOTDIR", "ELOOP") ? null : Promise.reject(e),
-  );
+  return stat(p, { bigint: true }).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
+}
+
+async function readOrNull(p: string): Promise<Buffer | null> {
+  return readFile(p).catch((e: unknown) => (isErrno(e, ...UNREADABLE) ? null : Promise.reject(e)));
 }
 
 export async function discoverInstructions(
@@ -136,8 +141,9 @@ async function build(
     try {
       canonical = canon(p);
     } catch (e) {
-      if (!(e instanceof PathRefused)) throw e;
-      return { refused: e.message };
+      if (e instanceof PathRefused) return { refused: e.message };
+      if (isErrno(e, ...UNREADABLE)) return { refused: "cannot be resolved" };
+      throw e;
     }
     if (os === "darwin" && /^\/(Network|\.vol)\//i.test(canonical)) return { refused: "network paths are never read" };
     return canonical;
@@ -197,7 +203,12 @@ async function build(
   ): Promise<Loaded | undefined> {
     const admitted = opts.admitted ?? (await admit(requested, opts.project));
     if (admitted === undefined) return undefined;
-    const bytes = new Uint8Array(await readFile(requested));
+    const read = await readOrNull(requested);
+    if (read === null) {
+      found.push({ path: display(requested), status: "denied", reason: "cannot be read" });
+      return undefined;
+    }
+    const bytes = new Uint8Array(read);
     if (bytes.subarray(0, 8000).includes(0)) {
       warnings.push(`${display(requested)} skipped: binary file`);
       found.push({ path: display(requested), status: "binary", reason: "binary file" });
@@ -328,7 +339,12 @@ async function build(
     for (const f of await ruleFiles(files?.rules ?? RULE_DIRS.map((r) => path.join(dir, r)))) {
       const admitted = await admit(f, project);
       if (admitted === undefined) continue;
-      const rule = parseRule(await readFile(f, "utf8"));
+      const ruleBytes = await readOrNull(f);
+      if (ruleBytes === null) {
+        found.push({ path: display(f), status: "denied", reason: "cannot be read" });
+        continue;
+      }
+      const rule = parseRule(ruleBytes.toString("utf8"));
       if (rule.paths !== undefined) {
         scoped.push({ requested: f, base: dir, globs: rule.paths.map((p) => new Bun.Glob(p)), project });
         continue;

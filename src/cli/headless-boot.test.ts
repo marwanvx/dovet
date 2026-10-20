@@ -1,6 +1,6 @@
 // Session boot of a headless turn: the sandbox service and the instruction files (permissions §7, context §3).
 import { describe, expect, test } from "bun:test";
-import { rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { chmod, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { fakePlatform, sequentialIds, type TempProject, tempProject } from "../../test/helpers/index.ts";
@@ -528,6 +528,35 @@ describe("headless boot: instruction files", () => {
         });
         expect(out.exit).toEqual({ kind: "ok" });
       } finally {
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: AC-CTX-10
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a launch file the agent makes unreadable mid-turn is announced as gone and does not crash the turn",
+    async () => {
+      const dir = await tempProject({ "AGENTS.md": "OLD RULE\n" });
+      const file = join(dir.root, "AGENTS.md");
+      try {
+        const out = await boot(dir, [{ calls: [{ id: "c1", name: "lock", input: { text: "x" } }] }, { text: "done" }], {
+          toolDefs: [
+            tool("lock", async () => {
+              await writeFile(file, "NEW RULE\n");
+              await chmod(file, 0);
+            }),
+          ],
+        });
+        expect(out.exit).toEqual({ kind: "ok" });
+        const injected = (await eventsOf(dir, out.sessionId))
+          .filter((e) => e.type === "system.injected")
+          .map((e) => (e.data as { text: string }).text);
+        expect(injected).toEqual([
+          "Instructions updated (AGENTS.md):\n(the file was deleted or can no longer be loaded)",
+        ]);
+      } finally {
+        await chmod(file, 0o644).catch(() => undefined);
         await dir.dispose();
       }
     },
