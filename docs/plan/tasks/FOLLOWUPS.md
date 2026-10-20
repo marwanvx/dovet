@@ -38,6 +38,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/store/config/atomic.ts:6` (follows the link), `src/store/config/trust.ts` (`localSettingsRepoSupplied` lstats `.dovet` and `.claude` but not the file)
 - A repo-supplied untracked `.dovet/settings.local.json -> ~/.config/dovet/settings.json`: `saveLocalRule` writes the rule into the user's global settings, and the text then matches the record. Fix: treat a symlinked local file as repo-supplied and have `saveLocalRule` refuse to write through it. Pre-existing for the write; the record is new.
 
+### F11 (M2-05b security review): the mid-turn instruction reload trusts modification times only
+- **Severity:** minor · `src/cli/headless-run.ts` (`instructionFilesMoved`)
+- An agent that rewrites a launch file and sets its modification time back (`utimes`) hides the change for the rest of the turn; resume's hash check catches it later. Fix: hash the launch files at the reload check, or accept it as inside the threat model and say so in context §3.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
