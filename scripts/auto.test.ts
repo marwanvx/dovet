@@ -10,6 +10,7 @@ import {
   mergeCheck,
   modelFor,
   newFeed,
+  openRuns,
   parseArgs,
   parseRun,
   type RunResult,
@@ -94,6 +95,17 @@ describe("lastEntry", () => {
   });
 });
 
+describe("openRuns", () => {
+  const e = (task: string, pr: string) => `## 2026-10-20 — ${task} T\nDone: x. PR: #1 (${pr}).\nNext: y.\n\n`;
+
+  test("counts the newest entries in a row that left the same task's PR open", () => {
+    const progress = `# Progress\n\n${e("M2-05", "merged")}${e("M2-05b", "open, not merged")}${e("M2-05b", "open")}`;
+    expect(openRuns(progress)).toBe(2);
+    expect(openRuns(`${e("M2-04", "open")}${e("M2-05", "open")}`)).toBe(1);
+    expect(openRuns(`${e("M2-05b", "open")}${e("M2-05b", "merged")}`)).toBe(0);
+  });
+});
+
 describe("decide", () => {
   const entry = (next: string) => ({ count: 11, text: `## 2026-10-14 — M1-12 T\nDone: x.\nNext: ${next}` });
 
@@ -128,6 +140,15 @@ describe("decide", () => {
     expect(decide({ exitCode: 0, run: { unreadable: "boom" }, before: 10, after: entry("M1-13.") }).action).toBe(
       "stop",
     );
+  });
+
+  test("a task left with its PR open after review goes on, so the next session can rethink it", () => {
+    const open = { count: 11, text: "## 2026-10-20 — M2-05b T\nDone: x. PR: #164 (open, not merged).\nNext: rethink." };
+    expect(decide({ exitCode: 0, run: ok, before: 10, after: open, openRuns: 1 })).toEqual({ action: "next" });
+    expect(decide({ exitCode: 0, run: ok, before: 10, after: open, openRuns: 3 })).toEqual({
+      action: "stop",
+      reason: "M2-05b is still not merged after 3 sessions",
+    });
   });
 
   test("a task that waits for the owner or is blocked stops the run", () => {
