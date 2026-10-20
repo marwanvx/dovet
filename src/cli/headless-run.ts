@@ -936,7 +936,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch((err: unknown) => {
           const why = err instanceof Error ? err.message : String(err);
           const warning = `instruction files could not be re-read (${why}); the earlier ones stay in force`;
-          if (!warnings.includes(warning)) warnings.push(warning);
+          if (!warnings.some((w) => w.startsWith("instruction files could not be re-read"))) warnings.push(warning);
           return null;
         });
         if (fresh !== null) {
