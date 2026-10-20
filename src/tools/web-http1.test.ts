@@ -1,31 +1,33 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import net from "node:net";
+import { Duplex } from "node:stream";
 import { gzipSync } from "node:zlib";
 import { readResponse, requestText } from "./web-http1.ts";
 
-const servers: net.Server[] = [];
-const sockets: net.Socket[] = [];
+const sockets: Duplex[] = [];
 afterEach(() => {
   for (const c of sockets.splice(0)) c.destroy();
-  for (const s of servers.splice(0)) s.close();
 });
 
-/** Connects to a server that sends `wire` as soon as the request arrives, then optionally closes. */
-async function reply(wire: Array<string | Buffer>, close = true): Promise<Response> {
-  const server = net.createServer((c) => {
-    sockets.push(c);
-    c.once("data", () => {
-      for (const part of wire) c.write(part);
-      if (close) c.end();
-    });
-    c.on("error", () => undefined);
+/** A socket stand-in: each part arrives as its own packet, then the peer closes unless `close` is false. Real sockets crashed Bun on Windows here. */
+function reply(wire: Array<string | Buffer>, close = true): Promise<Response> {
+  const socket = new Duplex({
+    allowHalfOpen: false,
+    read() {},
+    write(_chunk, _encoding, done) {
+      done();
+    },
   });
-  servers.push(server);
-  await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
-  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
   sockets.push(socket);
   const res = readResponse(socket);
-  socket.write(requestText(new URL("https://a.example/x"), {}));
+  let next = 0;
+  const deliver = (): void => {
+    const part = wire[next++];
+    if (part !== undefined) {
+      socket.push(Buffer.from(part));
+      setImmediate(deliver);
+    } else if (close) socket.push(null);
+  };
+  setImmediate(deliver);
   return res;
 }
 
