@@ -52,7 +52,13 @@ export {
   shouldRefuseLocalHost,
   taintSourceForCommand,
 } from "./sandbox/network.ts";
-export type { SandboxBackend, SandboxService, SandboxState, SandboxWrapped } from "./sandbox/service.ts";
+export type {
+  SandboxBackend,
+  SandboxService,
+  SandboxServiceOptions,
+  SandboxState,
+  SandboxWrapped,
+} from "./sandbox/service.ts";
 export {
   backendFor,
   createSandboxService,

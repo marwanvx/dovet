@@ -187,6 +187,8 @@ type CommandResult = { ok: true; output?: string } | { ok: false; error: string 
 - `canonicalize` throws `PathRefused` (its message names the rule) for UNC, device and unmappable Git Bash paths; tools turn it into a `ToolError`. File tools and policy refuse UNC input before any file access, because a link chain that reaches a share is only caught after Windows has touched it.
 - Children are process-group leaders (`detached`) on Linux and macOS only; on Windows `detached` would leave console grandchildren without a console, and `taskkill /T` kills the tree anyway.
 
+**Decided while building (QUESTIONS Q74):** `SandboxService.close()` waits for the start to finish, then stops the proxies; the session calls it once, when it ends.
+
 **Decided while building (QUESTIONS Q54):** `SandboxService.wrap` is async (`Promise<SandboxWrapped>`), because it calls the sandbox library; `ready` is a health promise and `violations(since)` reads the in-memory store synchronously.
 
 ## 3. Provider adapter (one generic implementation over the AI SDK, ADR-30)

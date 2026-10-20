@@ -108,6 +108,8 @@ These come from instruction files in this project and the user's config. Follow 
 
 **Auto memory [v0.2]** (an explicit error instead of silent truncation when `MEMORY.md` exceeds its read limit; last-modified timestamps in frontmatter are computed when written and never re-rendered per request; frontmatter values must not be cut at an inline `#`): a per-project memory directory `<data>/projects/<id>/memory/` with a `MEMORY.md` index (first 200 lines / 25 KB loaded at session start) and topic files the agent maintains with its normal file tools (no memory tool, no extra model calls). Off by default until evals show it helps; `memory.auto: true` enables it.
 
+**Decided while building (QUESTIONS Q74):** `dovet -p` loads these files into a new session's system prompt and logs an `instructions.loaded` event. It asks nothing, so an external import is skipped for that run with a warning and no stored decision. Before every model request it re-stats the launch files and appends a changed one as `instructions-updated`; a resumed session appends the changes before the new user message. A file with hidden characters taints the session.
+
 **Decided while building (QUESTIONS Q30):**
 - An `@path` token is replaced by the imported file's text (comments stripped, its own imports expanded); a skipped import (missing, already loaded, a cycle, too deep, declined) leaves the token as written.
 - One part per file; `<dir>` in a lazy part is that file's display path (`Instructions for pkg/AGENTS.md (loaded because you worked with files there)`), the same for a rule.

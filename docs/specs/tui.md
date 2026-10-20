@@ -280,6 +280,8 @@ Custom slash commands from `.claude/commands/*.md` / `.dovet/commands/*.md` (pro
 - The turn tracks the malformed-round, identical-failure, no-progress and doomed-repeat guards across requests and ends with exit 3 and the guard's message; `--max-requests` overrides the 150-request guard. A resume flag that differs from the session's provider or model is a usage error (exit 2), and so is a stray `--repair`.
 - The JSON output carries the final text only; per-event streaming arrives with richer turn events.
 
+**Decided while building (QUESTIONS Q74):** a turn that declares a shell tool starts the sandbox service in the background (not on Windows yet, Q59/Q68) and stops it at the end. After a shell command ran, the startup warnings include the sandbox's glob warnings and ambiguous hosts, and `sandbox: off (commands judged by text)` when it is off. Project instruction files load as in context §3.
+
 **Decided while building (QUESTIONS Q65):** spend accumulates from usage on every request; with a session budget set, a request that would start at or past the budget stops the turn with exit 4. If the latest TodoWrite list still has open items when the turn ends, the turn continues automatically up to 2 times, then finishes with `incomplete: true` (exit 0). With `--offline`, WebFetch and WebSearch aren't declared, and a call to them is denied with the offline message.
 
 ## Terminal compatibility targets

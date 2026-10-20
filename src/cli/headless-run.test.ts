@@ -2000,7 +2000,7 @@ describe("runHeadless", () => {
       const out = await runHeadless({
         dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
         projectRoot: dir.root,
-        cwd: dir.root,
+        cwd: "C:\\work",
         os: "win32",
         settings: settingsFor(),
         env: TEST_ENV,

@@ -1088,3 +1088,67 @@ describe("dovet -p workspace trust", () => {
     30_000,
   );
 });
+
+describe("dovet -p session boot", () => {
+  const servers: Array<{ stop(): Promise<void> }> = [];
+  afterEach(async () => {
+    await Promise.all(servers.splice(0).map((x) => x.stop()));
+  });
+
+  async function run(
+    files: Record<string, string>,
+    exchanges: ReturnType<typeof replyExchange>[],
+    extraSettings: object = {},
+  ) {
+    const server = startFixtureServer(exchanges);
+    servers.push(server);
+    const dir = await tempProject({
+      "config/settings.json": JSON.stringify({
+        provider: "nvidia",
+        model: "test/model",
+        providers: { nvidia: { baseUrl: server.baseURL } },
+        ...extraSettings,
+      }),
+      ...files,
+    });
+    const proc = spawnHeadless(dir, ["-p", "go"]);
+    const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+    return { dir, err, code, requests: server.received };
+  }
+
+  // spec: AC-CTX-06
+  test("the project's AGENTS.md and CLAUDE.md reach the model in the first request", async () => {
+    const { dir, code, requests } = await run(
+      { "AGENTS.md": "AGENTS RULE: ship small PRs\n", "CLAUDE.md": "CLAUDE RULE: tabs not spaces\n" },
+      [replyExchange()],
+    );
+    try {
+      expect(code).toBe(0);
+      const body = requests[0] ?? "";
+      expect(body).toContain("AGENTS RULE: ship small PRs");
+      expect(body).toContain("CLAUDE RULE: tabs not spaces");
+      expect(body.indexOf("CLAUDE RULE")).toBeLessThan(body.indexOf("AGENTS RULE"));
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: permissions §7.2
+  test.skipIf(process.platform === "win32")(
+    "a shell command starts the real sandbox service, and its startup warnings reach stderr",
+    async () => {
+      const { dir, code, err } = await run(
+        {},
+        [toolCallExchange({ id: "call_1", name: "Bash", args: { command: "true" } }), replyExchange()],
+        { sandbox: { network: { allowedDomains: ["a..b"] } }, permissions: { allow: ["Bash(true)"] } },
+      );
+      try {
+        expect(code).toBe(0);
+        expect(err).toContain("ambiguous host a..b (see /doctor)");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+});

@@ -41,6 +41,8 @@ export interface SandboxService {
   wrap(cmd: SandboxWrapRequest, opts: { unsandboxed: boolean }): Promise<SandboxWrapped>;
   violations(since: number): string[];
   globWarnings(): string[];
+  /** Stops the proxies once the sandbox has finished starting; call once, when the session ends (QUESTIONS Q74). */
+  close(): Promise<void>;
 }
 
 export const DEFAULT_CREDENTIAL_DENY_FILES = [
@@ -340,6 +342,10 @@ export function createSandboxService(opts: SandboxServiceOptions): SandboxServic
       }
     },
     globWarnings: (): string[] => [...warnings, ...rejectedHosts.map((h) => `ambiguous host ${h} (see /doctor)`)],
+    close: async (): Promise<void> => {
+      await ready;
+      await manager?.reset();
+    },
   };
 }
 
@@ -361,5 +367,6 @@ export function fakeSandboxService(
     },
     violations: (_since: number): string[] => [...violate],
     globWarnings: (): string[] => [],
+    close: async (): Promise<void> => {},
   };
 }
