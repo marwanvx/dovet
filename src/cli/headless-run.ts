@@ -932,7 +932,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const seenAt = new Map<string, number | null>();
         for (const path of [...launchFiles.map((f) => f.path), ...[...droppedFiles.values()].map((d) => d.path)])
           seenAt.set(path, await mtimeOf(path));
-        // The one boundary for everything the agent can do to the filesystem mid-turn: a reload that fails drops every launch file, loudly.
+        // The one boundary for everything the agent can do to the filesystem mid-turn.
         const fresh = await discoverInstructions(instructionContext, { loaded: known }).catch(
           (
             err: unknown,

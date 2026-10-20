@@ -115,7 +115,6 @@ async function build(
   const path = os === "win32" ? win32 : posix;
   const canon = (p: string): AbsPath => canonicalizePath(p, cwd, os);
   const workingDirs = [cwd, ...(ctx.projectRoot === undefined ? [] : [ctx.projectRoot])].map(canon);
-  // An additional directory that can't be resolved (a symlink loop, no access) is not a working directory.
   const additional: { dir: string; canonical: AbsPath }[] = [];
   const unresolved: string[] = [];
   for (const dir of ctx.additionalDirs) {
