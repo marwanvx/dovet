@@ -173,7 +173,7 @@ async function openTunnel(proxy: URL, authority: string, signal: AbortSignal, op
     socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n${credentials}\r\n`);
   });
   const status = /^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1];
-  if (status === undefined || !status.startsWith("2")) {
+  if (status?.startsWith("2") !== true) {
     socket.destroy();
     if (status === "407")
       throw new WebFetchFailed(
