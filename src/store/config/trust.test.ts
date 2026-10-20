@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import { pathKey } from "../../platform/index.ts";
 import type { AbsPath } from "../../schema/index.ts";
-import { loadSettings } from "./index.ts";
+import { loadSettings, saveLocalRule } from "./index.ts";
 import {
   folderTrusted,
   localSettingsRepoSupplied,
   projectConfigHash,
   recordTrust,
+  resolveProjectTrust,
   restrictUntrusted,
   UNTRUSTED,
 } from "./trust.ts";
@@ -182,18 +183,18 @@ describe("an untrusted project", () => {
   });
 });
 
-describe("which local settings files the repo supplies", () => {
-  async function git(cwd: string, ...args: string[]) {
-    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-    const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
-    if (code !== 0) throw new Error(`git ${args.join(" ")}: ${err}`);
-  }
-  const gitPath = (): AbsPath => {
-    const found = Bun.which("git");
-    if (found === null) throw new Error("git is required for this test");
-    return found as AbsPath;
-  };
+async function git(cwd: string, ...args: string[]) {
+  const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const [err, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (code !== 0) throw new Error(`git ${args.join(" ")}: ${err}`);
+}
+const gitPath = (): AbsPath => {
+  const found = Bun.which("git");
+  if (found === null) throw new Error("git is required for this test");
+  return found as AbsPath;
+};
 
+describe("which local settings files the repo supplies", () => {
   // spec: AC-PERM-13
   test("a settings.local.json that git tracks is repo-supplied", async () => {
     const { root } = await setup({ "proj/.dovet/settings.local.json": "{}" });
@@ -334,5 +335,121 @@ describe("the trust decision store", () => {
     await writeFile(join(root, ".dovet", "settings.local.json"), '{ "a": 2 }');
     expect(await projectConfigHash({ projectRoot: root, includeLocal: false })).toBe(without);
     expect(await projectConfigHash({ projectRoot: root, includeLocal: true })).not.toBe(withLocal);
+  });
+});
+
+describe("a local settings file is personal only when Dovet wrote it", () => {
+  const os = process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
+  const ALLOW_ALL = '{ "permissions": { "allow": ["Bash(*)"] } }';
+
+  async function checkout(files: Record<string, string>) {
+    const made = await setup({ ...files, "data/.keep": "" });
+    await git(made.root, "init", "-q");
+    const dataDir = join(made.dir.root, "data");
+    const trust = (root = made.root) =>
+      resolveProjectTrust({
+        projectRoot: root,
+        store: {},
+        home: made.input.home,
+        os,
+        git: gitPath(),
+        env: process.env,
+        dataDir,
+      });
+    return { ...made, dataDir, trust };
+  }
+
+  // spec: AC-PERM-13
+  test("a gitignored local file that came with the checkout is repo-supplied", async () => {
+    const { input, trust } = await checkout({
+      "proj/.gitignore": ".dovet/settings.local.json\n",
+      "proj/.dovet/settings.local.json": ALLOW_ALL,
+    });
+    const decided = await trust();
+    expect(decided).toEqual({ project: false, local: false });
+    const loaded = await loadSettings({ ...input, env: {}, trust: decided });
+    expect(loaded.rules.allow).toEqual([]);
+  });
+
+  // spec: AC-PERM-13
+  test("a rule Dovet saved is personal, and stays so until the file changes", async () => {
+    const { root, input, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    const decided = await trust();
+    expect(decided.local).toBe(true);
+    const loaded = await loadSettings({ ...input, env: {}, trust: decided });
+    expect(loaded.rules.allow.map((r) => r.rule)).toEqual(["Bash(make)"]);
+    await writeFile(join(root, ".dovet", "settings.local.json"), ALLOW_ALL);
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("saving a rule into a file the repo supplied doesn't make the file personal", async () => {
+    const { root, input, dataDir, trust } = await checkout({ "proj/.dovet/settings.local.json": ALLOW_ALL });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    const decided = await trust();
+    expect(decided.local).toBe(false);
+    const loaded = await loadSettings({ ...input, env: {}, trust: decided });
+    expect(loaded.rules.allow).toEqual([]);
+  });
+
+  // spec: AC-PERM-13
+  test("saving a rule that is already in an unrecorded file doesn't make it personal either", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/.dovet/settings.local.json": ALLOW_ALL });
+    await saveLocalRule(root, "allow", "Bash(*)", { dataDir, os });
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("saving again into a file Dovet wrote keeps it personal, whether or not the rule is new", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await saveLocalRule(root, "allow", "Bash(ls)", { dataDir, os });
+    expect((await trust()).local).toBe(true);
+  });
+
+  // spec: AC-PERM-13
+  test("a file edited after Dovet wrote it stays repo-supplied through the next save", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await writeFile(join(root, ".dovet", "settings.local.json"), ALLOW_ALL);
+    await saveLocalRule(root, "allow", "Bash(ls)", { dataDir, os });
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("a copy of a saved file in another folder is repo-supplied", async () => {
+    const { dir, root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    const copy = join(dir.root, "copy");
+    await mkdir(join(copy, ".dovet"), { recursive: true });
+    await writeFile(
+      join(copy, ".dovet", "settings.local.json"),
+      await readFile(join(root, ".dovet", "settings.local.json")),
+    );
+    await git(copy, "init", "-q");
+    expect((await trust(copy)).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("a .claude/settings.local.json is never personal, since Dovet never writes it", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/.claude/settings.local.json": ALLOW_ALL });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("an unreadable record of saved files trusts nothing", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await writeFile(join(dataDir, "local-settings.json"), "{ not json");
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("a project with no local file has nothing to distrust", async () => {
+    const { trust } = await checkout({ "proj/README.md": "x\n" });
+    expect((await trust()).local).toBe(true);
   });
 });

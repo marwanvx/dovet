@@ -1,42 +1,22 @@
-import { mkdir, readFile, readlink, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { applyEdits, findNodeAtLocation, modify } from "jsonc-parser";
 import { isErrno } from "../../platform/index.ts";
+import { writeFileAtomic } from "./atomic.ts";
 import { SettingsError } from "./errors.ts";
+import { type LocalRecordSite, localFileRecorded, recordLocalFile } from "./local-record.ts";
 import type { RuleKind } from "./merge.ts";
 import { nodeValue, parseSettingsText } from "./parse.ts";
 import { readSettingsText } from "./read.ts";
 
 const LOCAL_FILE = join(".dovet", "settings.local.json");
 
-/** Temp file plus rename; a symlinked file is replaced at its target and the link is kept. */
-export async function writeFileAtomic(path: string, data: string): Promise<void> {
-  let target = path;
-  try {
-    target = await realpath(path);
-  } catch (err) {
-    if (!isErrno(err, "ENOENT")) throw err;
-    target = await readlink(path).then(
-      (link) => resolve(dirname(path), link),
-      (e: unknown) => (isErrno(e, "ENOENT", "EINVAL") ? path : Promise.reject(e)),
-    );
-  }
-  const mode = await stat(target).then(
-    (s) => s.mode & 0o777,
-    (err: unknown) => (isErrno(err, "ENOENT") ? undefined : Promise.reject(err)),
-  );
-  const temp = join(dirname(target), `.${basename(target)}.${crypto.randomUUID()}.tmp`);
-  try {
-    await writeFile(temp, data, mode === undefined ? undefined : { mode });
-    await rename(temp, target);
-  } catch (err) {
-    await rm(temp, { force: true });
-    throw err;
-  }
-}
-
-async function addToArray(file: string, path: string[], items: string[]): Promise<void> {
-  const existing = await readSettingsText(file);
+async function addToArray(
+  file: string,
+  existing: string | undefined,
+  path: string[],
+  items: string[],
+): Promise<string> {
   const created = existing === undefined;
   let text = existing ?? "{}\n";
   const { tree } = parseSettingsText(text, file);
@@ -47,7 +27,7 @@ async function addToArray(file: string, path: string[], items: string[]): Promis
   }
   const have = new Set(current ?? []);
   const missing = [...new Set(items)].filter((i) => !have.has(i));
-  if (missing.length === 0 && !created) return;
+  if (missing.length === 0 && !created) return text;
   const fmt = { insertSpaces: true, tabSize: 2, eol: text.includes("\r\n") ? "\r\n" : "\n" };
   if (current === undefined) {
     text = applyEdits(text, modify(text, path, missing, { formattingOptions: fmt }));
@@ -61,6 +41,7 @@ async function addToArray(file: string, path: string[], items: string[]): Promis
   }
   await mkdir(dirname(file), { recursive: true });
   await writeFileAtomic(file, text);
+  return text;
 }
 
 const missing = (err: unknown): undefined => {
@@ -93,7 +74,17 @@ async function excludeFromGit(projectRoot: string): Promise<void> {
 }
 
 /** "Don't ask again": the rule goes to `<project>/.dovet/settings.local.json`, never into Claude Code's files. */
-export async function saveLocalRule(projectRoot: string, kind: RuleKind, rule: string): Promise<void> {
-  await addToArray(join(projectRoot, LOCAL_FILE), ["permissions", kind], [rule]);
+export async function saveLocalRule(
+  projectRoot: string,
+  kind: RuleKind,
+  rule: string,
+  record: LocalRecordSite,
+): Promise<void> {
+  const file = join(projectRoot, LOCAL_FILE);
+  const before = await readSettingsText(file);
+  // A file the repo supplied stays repo-supplied: adding one rule to it must not bless the entries it came with.
+  const ours = before === undefined || (await localFileRecorded(record, projectRoot, before));
+  const text = await addToArray(file, before, ["permissions", kind], [rule]);
+  if (ours) await recordLocalFile(record, projectRoot, text);
   await excludeFromGit(projectRoot);
 }

@@ -273,10 +273,12 @@ describe("suggestGrant for files", () => {
   });
 });
 
+const site = () => ({ dataDir: join(root, "..", "data"), os });
+
 describe("saveGrant", () => {
   // spec: AC-CLI-10
   test("a permanent grant lands in settings.local.json at the project root and is excluded from git", async () => {
-    await saveGrant({ scope: "permanent", rules: ["Bash(npm run *)", "Bash(git commit *)"] }, root);
+    await saveGrant({ scope: "permanent", rules: ["Bash(npm run *)", "Bash(git commit *)"] }, root, site());
     const saved = JSON.parse(readFileSync(join(root, ".dovet", "settings.local.json"), "utf8"));
     expect(saved.permissions.allow).toEqual(["Bash(npm run *)", "Bash(git commit *)"]);
     expect(readFileSync(join(root, ".git", "info", "exclude"), "utf8")).toContain("/.dovet/settings.local.json");
@@ -285,7 +287,7 @@ describe("saveGrant", () => {
   test("a session grant is returned for the agent to hold and is never written", async () => {
     const repo = await tempProject({ ".git/HEAD": "x\n" });
     try {
-      expect(await saveGrant({ scope: "session", rules: ["Edit(//x)"] }, repo.root)).toEqual(["Edit(//x)"]);
+      expect(await saveGrant({ scope: "session", rules: ["Edit(//x)"] }, repo.root, site())).toEqual(["Edit(//x)"]);
       expect(existsSync(join(repo.root, ".dovet", "settings.local.json"))).toBe(false);
     } finally {
       await repo.dispose();
@@ -295,7 +297,7 @@ describe("saveGrant", () => {
   test("a settings.local.json that already exists is excluded from git on the next save", async () => {
     const repo = await tempProject({ ".git/HEAD": "x\n", ".dovet/settings.local.json": "{}\n" });
     try {
-      await saveGrant({ scope: "permanent", rules: ["Bash(ls)"] }, repo.root);
+      await saveGrant({ scope: "permanent", rules: ["Bash(ls)"] }, repo.root, site());
       expect(readFileSync(join(repo.root, ".git", "info", "exclude"), "utf8")).toContain("/.dovet/settings.local.json");
     } finally {
       await repo.dispose();
@@ -320,7 +322,7 @@ describe("started in a subdirectory", () => {
       const build = shell("npm run build", st);
       const grant = suggestGrant(build, decide(build, st), st);
       expect(grant?.scope).toBe("permanent");
-      if (grant !== undefined) await saveGrant(grant, projectRoot);
+      if (grant !== undefined) await saveGrant(grant, projectRoot, site());
       const saved = JSON.parse(readFileSync(join(repo.root, ".dovet", "settings.local.json"), "utf8"));
       expect(saved.permissions.allow).toEqual(["Bash(npm run *)"]);
 

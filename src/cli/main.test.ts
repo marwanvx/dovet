@@ -13,6 +13,7 @@ import {
   readSession,
   recordTrust,
   resumeSession,
+  saveLocalRule,
   sessionPaths,
 } from "../store/index.ts";
 
@@ -904,6 +905,11 @@ describe("dovet -p workspace trust", () => {
     await Promise.all(servers.splice(0).map((x) => x.stop()));
   });
 
+  const git = async (cwd: string, ...args: string[]) => {
+    const proc = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "ignore" });
+    expect(await proc.exited).toBe(0);
+  };
+
   async function run(files: Record<string, string>, prepare?: (root: string) => Promise<void>) {
     const server = startFixtureServer([
       toolCallExchange({ id: "call_1", name: "Bash", args: { command: "touch made.txt" } }),
@@ -998,10 +1004,6 @@ describe("dovet -p workspace trust", () => {
   test.skipIf(process.platform === "win32")(
     "a settings.local.json that git tracks is as untrusted as the shared file",
     async () => {
-      const git = async (cwd: string, ...args: string[]) => {
-        const proc = Bun.spawn(["git", ...args], { cwd, stdout: "ignore", stderr: "ignore" });
-        expect(await proc.exited).toBe(0);
-      };
       const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW }, async (root) => {
         await git(root, "init", "-q");
         await git(root, "add", "-f", ".dovet/settings.local.json");
@@ -1019,15 +1021,34 @@ describe("dovet -p workspace trust", () => {
 
   // spec: AC-PERM-13
   test.skipIf(process.platform === "win32")(
-    "a personal settings.local.json is trusted without a dialog",
+    "a settings.local.json Dovet saved is trusted without a dialog",
     async () => {
-      const { dir, err, made } = await run({ ".dovet/settings.local.json": ALLOW }, async (root) => {
-        const proc = Bun.spawn(["git", "init", "-q"], { cwd: root, stdout: "ignore", stderr: "ignore" });
-        expect(await proc.exited).toBe(0);
+      const { dir, err, made } = await run({}, async (root) => {
+        await git(root, "init", "-q");
+        await saveLocalRule(root, "allow", "Bash(touch made.txt)", { dataDir: join(root, "data"), os: hostOs() });
       });
       try {
         expect(made).toBe(true);
         expect(err).not.toContain("isn't trusted");
+      } finally {
+        await dir.dispose();
+      }
+    },
+    30_000,
+  );
+
+  // spec: AC-PERM-13
+  test.skipIf(process.platform === "win32")(
+    "a gitignored settings.local.json that Dovet didn't write is untrusted",
+    async () => {
+      const { dir, err, made } = await run(
+        { ".dovet/settings.local.json": ALLOW, ".gitignore": ".dovet/settings.local.json\n" },
+        (root) => git(root, "init", "-q"),
+      );
+      try {
+        expect(made).toBe(false);
+        expect(err).toContain("settings.local.json");
+        expect(err).toContain("isn't trusted");
       } finally {
         await dir.dispose();
       }
