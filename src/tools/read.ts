@@ -1,4 +1,4 @@
-// Read, text files (tools §1); images and PDFs come with M2.
+// Read: text files and images (tools §1); PDFs come with M2-08b.
 
 import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
@@ -8,6 +8,7 @@ import { z } from "zod";
 import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { fileEffects } from "./policy.ts";
+import { MAX_IMAGE_FILE_BYTES, readImage } from "./read-image.ts";
 import { DEDUP_PREFIX, sha256Hex } from "./read-results.ts";
 import { formatLine, type ScanOptions, type ShownLine, scanText } from "./read-scan.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
@@ -80,7 +81,10 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
     if (checked.isDirectory()) return fail(`${path} is a directory. List it with Glob or ls.`);
     if (!checked.isFile())
       return fail(`${path} is not a regular file (${kindOf(checked)}); reading it could block or never end.`);
-    if (byName !== undefined) return fail(`Binary file (${checked.size} bytes, ${byName}). Not readable as text.`);
+    const isImage = byName?.startsWith("image/") === true;
+    if (byName !== undefined && !isImage)
+      return fail(`Binary file (${checked.size} bytes, ${byName}). Not readable as text.`);
+    if (isImage && ctx.media?.images !== true) return fail("The current model can't view images.");
     await opts.afterCheck?.();
 
     let handle: Awaited<ReturnType<typeof open>>;
@@ -96,6 +100,16 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
       const opened = await handle.stat({ bigint: true });
       if (opened.dev !== checked.dev || opened.ino !== checked.ino || !opened.isFile())
         return fail(`${path} changed while it was being opened. Try again.`);
+
+      if (isImage && ctx.media !== undefined) {
+        if (opened.size > MAX_IMAGE_FILE_BYTES)
+          return fail(`${path} is ${Math.round(Number(opened.size) / 1048576)} MB; images over 30 MB are not read.`);
+        const size = Number(opened.size);
+        const buffer = Buffer.allocUnsafe(size + 1);
+        const { bytesRead } = await handle.read(buffer, 0, size + 1, 0);
+        if (bytesRead !== size) return fail(`${path} changed while it was being read. Try again.`);
+        return readImage(path, buffer.subarray(0, size), ctx.media);
+      }
 
       const maxTokens = ctx.settings.read?.maxTokens ?? DEFAULT_MAX_TOKENS;
       const pageChars = maxTokens * CHARS_PER_TOKEN;

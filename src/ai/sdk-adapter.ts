@@ -15,7 +15,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import pkg from "../../package.json";
-import type { Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
+import type { ImagePart, Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
 import type { Secret } from "../store/index.ts";
 import type { Quirks } from "./registry.ts";
 import { STREAM_IDLE_TIMEOUT_MS, timedFetch } from "./retry.ts";
@@ -42,6 +42,8 @@ export type AdapterDeps = {
   fetch?: FetchFunction;
   /** The model's catalog entry; without one, no effort is sent. */
   modelInfo?(provider: string, modelId: string): { effortLevels: readonly string[] } | undefined;
+  /** The bytes of a stored blob, for images in tool results; absent or undefined renders as an error. */
+  blobBytes?(sha: string): Uint8Array | undefined;
 };
 
 const PROTOCOLS: Record<string, Protocol> = { "@ai-sdk/openai-compatible": "openai-chat" };
@@ -449,6 +451,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
         messages.push(...rendered);
       } else {
         const results = item.parts.flatMap((p) => (p.kind === "tool_result" ? [p] : []));
+        const images: ImagePart[] = [];
         if (results.length > 0) {
           messages.push({
             role: "tool",
@@ -457,6 +460,10 @@ export function createSdkAdapter(deps: AdapterDeps) {
               if (call === undefined) throw new Error(`tool result ${r.callId} has no tool call before it`);
               const value = r.content
                 .map((c) => {
+                  if (c.kind === "image") {
+                    images.push(c);
+                    return "";
+                  }
                   if (c.kind !== "text") throw new Error(`a ${c.kind} in a tool result is not supported yet`);
                   return c.text;
                 })
@@ -468,6 +475,20 @@ export function createSdkAdapter(deps: AdapterDeps) {
                 output: r.isError ? { type: "error-text", value } : { type: "text", value },
               };
             }),
+          });
+        }
+        if (images.length > 0) {
+          // Chat Completions tool messages carry text only, so the pictures follow as one user message, in call order.
+          messages.push({
+            role: "user",
+            content: [
+              { type: "text", text: "[Images returned by the tool calls above, in order]" },
+              ...images.map((image) => {
+                const bytes = image.blob.store === "blob" ? deps.blobBytes?.(image.blob.id) : undefined;
+                if (bytes === undefined) throw new Error(`image ${image.blob.id} is not in the blob store`);
+                return { type: "file" as const, data: bytes, mediaType: image.mediaType };
+              }),
+            ],
           });
         }
         const rest = item.parts.flatMap((p) => {

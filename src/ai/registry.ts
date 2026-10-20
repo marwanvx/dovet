@@ -8,6 +8,7 @@ const Quirks = z.strictObject({
   reasoningField: z.enum(["reasoning_content", "reasoning_details"]).nullable().optional(),
   effortField: z.literal("reasoning_effort").nullable().optional(),
   reasoningReplay: z.enum(["in-tool-loop", "always", "never"]).optional(),
+  maxImages: z.number().int().positive().nullable().optional(),
 });
 
 const Endpoint = z.strictObject({
@@ -20,7 +21,13 @@ const Endpoint = z.strictObject({
   billing: z.enum(["per-token", "plan"]),
   models: z.union([z.enum(["catalog", "endpoint"]), z.strictObject({ static: z.array(z.string()) })]),
   quirks: Quirks.optional(),
-  capabilities: z.strictObject({ effortLevels: z.array(z.string()).optional() }).optional(),
+  capabilities: z
+    .strictObject({
+      effortLevels: z.array(z.string()).optional(),
+      imageModels: z.array(z.string()).optional(),
+      imageLongEdge: z.number().int().positive().optional(),
+    })
+    .optional(),
 });
 
 const ProviderRecord = z.strictObject({
@@ -58,6 +65,30 @@ export function endpointOf(record: ProviderRecord) {
     baseURL: endpoint.baseUrl,
     quirks: endpoint.quirks ?? {},
     effortLevels: endpoint.capabilities?.effortLevels ?? [],
+    imageModels: endpoint.capabilities?.imageModels ?? [],
+    imageLongEdge: endpoint.capabilities?.imageLongEdge,
+  };
+}
+
+const ModelOverride = z.object({
+  capabilities: z
+    .object({ images: z.boolean().optional(), imageLongEdge: z.number().int().positive().optional() })
+    .optional(),
+  quirks: z.object({ maxImages: z.number().int().positive().nullable().optional() }).optional(),
+});
+
+/** Whether the model takes images: the endpoint's list of image models, or the user's `models.<id>` override (tools §1.6, QUESTIONS Q77). */
+export function imageSupport(
+  ep: { imageModels: readonly string[]; imageLongEdge: number | undefined; quirks: Quirks },
+  model: string,
+  override: unknown,
+): { images: boolean; longEdge: number; maxImages: number | null } {
+  const user = ModelOverride.safeParse(override);
+  const mine = user.success ? user.data : {};
+  return {
+    images: mine.capabilities?.images ?? ep.imageModels.includes(model),
+    longEdge: mine.capabilities?.imageLongEdge ?? ep.imageLongEdge ?? 2000,
+    maxImages: mine.quirks?.maxImages ?? ep.quirks.maxImages ?? null,
   };
 }
 

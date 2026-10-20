@@ -138,6 +138,84 @@ describe("render", () => {
   });
 });
 
+describe("images in tool results", () => {
+  const sha = "a".repeat(64);
+  const bytes = Uint8Array.from([1, 2, 3, 4]);
+  const stored: StoredResponse = {
+    provider: "nvidia",
+    protocol: "openai-chat",
+    package: "@ai-sdk/openai-compatible",
+    packageVersion: "x",
+    modelId: "nvidia/vl",
+    parts: [
+      { kind: "tool_call", id: "c1", name: "read", inputJson: "{}" },
+      { kind: "tool_call", id: "c2", name: "read", inputJson: "{}" },
+    ],
+    usage: {},
+    finishReason: "tool-calls",
+  };
+  const results = [
+    {
+      kind: "tool_result" as const,
+      callId: "c1",
+      isError: false,
+      content: [
+        { kind: "text" as const, text: "Image a.png" },
+        { kind: "image" as const, blob: { store: "blob" as const, id: sha }, mediaType: "image/png" as const },
+      ],
+    },
+    { kind: "tool_result" as const, callId: "c2", isError: false, content: [{ kind: "text" as const, text: "plain" }] },
+  ];
+
+  // spec: AC-TOOLS-20
+  test("the pictures follow the tool messages as one user message and reach the wire as data URIs", async () => {
+    let body = "";
+    const adapter = createSdkAdapter({
+      endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      blobBytes: (id) => (id === sha ? bytes : undefined),
+      fetch: Object.assign(
+        async (_url: string | Request | URL, init?: RequestInit) => {
+          body = String(init?.body);
+          return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+        },
+        { preconnect: fetch.preconnect },
+      ),
+    });
+    const s = scenario("parallel-tools");
+    const call = adapter.render(
+      input(s, [
+        { kind: "assistant", stored },
+        { kind: "user", parts: results },
+      ]),
+    );
+    const roles = (call.messages as ModelMessage[]).map((m) => m.role);
+    expect(roles).toEqual(["system", "assistant", "tool", "user"]);
+    await collect(adapter.stream(call, { signal: new AbortController().signal, onRequest: () => {} }));
+    const sent = JSON.parse(body) as { messages: Array<{ role: string; content: unknown }> };
+    const last = sent.messages[sent.messages.length - 1];
+    expect(sent.messages.filter((m) => m.role === "tool").map((m) => m.content)).toEqual(["Image a.png", "plain"]);
+    expect(last?.content).toEqual([
+      { type: "text", text: "[Images returned by the tool calls above, in order]" },
+      { type: "image_url", image_url: { url: `data:image/png;base64,${Buffer.from(bytes).toString("base64")}` } },
+    ]);
+  });
+
+  test("an image whose blob is missing is an error, never a silent drop", () => {
+    const adapter = createSdkAdapter({
+      endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
+      blobBytes: () => undefined,
+    });
+    expect(() =>
+      adapter.render(
+        input(scenario("parallel-tools"), [
+          { kind: "assistant", stored },
+          { kind: "user", parts: results },
+        ]),
+      ),
+    ).toThrow(`image ${sha} is not in the blob store`);
+  });
+});
+
 describe("mid-epoch instructions per protocol (context §4)", () => {
   test("the delivery form each protocol gets: developer message, marked text block or plain text block", () => {
     expect(instructionDelivery("openai-responses")).toEqual({ form: "system-message" });

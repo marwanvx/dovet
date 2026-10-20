@@ -44,6 +44,7 @@ import {
   callModel,
   createSdkAdapter,
   endpointOf,
+  imageSupport,
   type ProviderRequest,
   providerRecord,
   type RenderInput,
@@ -79,6 +80,7 @@ import {
 import type { AbsPath, EventEnvelope, StoredResponse } from "../schema/index.ts";
 import { InstructionsLoadedData, PermissionMode } from "../schema/index.ts";
 import {
+  createBlobStore,
   createCredentials,
   createSecretStore,
   describeProblem,
@@ -105,9 +107,11 @@ import {
 import {
   buildReadResultsIndex,
   builtinTools,
+  createMediaBudget,
   createReadState,
   createToolRegistry,
   createWebFetchTool,
+  type MediaContext,
   type ShellSnapshot,
   startShellSnapshot,
   type ToolContext,
@@ -428,9 +432,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     baseURL,
     quirks: ep?.quirks ?? {},
   };
+  const blobs = createBlobStore(input.dirs.data);
   const adapter: HeadlessAdapter =
     input.adapter ??
     createSdkAdapter({
+      blobBytes: (sha) => blobs.getSync(sha),
       endpoint: () => ({ ...endpointBase, baseURL, apiKey: new Secret(secretValue) }),
       modelInfo: () => ({
         effortLevels:
@@ -796,6 +802,21 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
     };
     taintFrom(instructions.taintSources);
+    const imageLimits = imageSupport(
+      { imageModels: ep?.imageModels ?? [], imageLongEdge: ep?.imageLongEdge, quirks: ep?.quirks ?? {} },
+      model,
+      effectiveSettings.models?.[model],
+    );
+    const mediaBudget = createMediaBudget(events, () => epochNum, {
+      requestCapBytes: requestCapFor(provider),
+      maxImages: imageLimits.maxImages,
+    });
+    const mediaContext: MediaContext = {
+      images: true,
+      longEdge: imageLimits.longEdge,
+      claim: (bytes) => mediaBudget.claim(bytes),
+      store: (bytes) => blobs.putSync(bytes),
+    };
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
@@ -815,6 +836,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       platform: input.platform as never,
       env: input.env as never,
       ...(sandbox === undefined ? {} : { sandbox }),
+      ...(imageLimits.images ? { media: mediaContext } : {}),
       ...(input.searchComplete === undefined
         ? {}
         : { model: { id: `${provider}/${model}`, complete: input.searchComplete } }),
@@ -1521,15 +1543,20 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
                   : r.output.status === "timeout"
                     ? "timeout"
                     : "error";
+          const media = r.output.content.flatMap((x) =>
+            x.kind === "text" ? [] : [{ ...x, bytes: blobs.getSync(x.blob.id)?.length ?? 0 }],
+          );
           push("tool.result", epochNum, turn, {
             callId: r.callId,
             status,
             output: text,
+            ...(media.length === 0 ? {} : { media }),
             ...(r.output.meta?.search === undefined ? {} : { search: r.output.meta.search }),
           });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
           applyResultTaint(r);
         }
+        mediaBudget.settle();
       };
       recordCallEvents();
       const { results, stopped } = await executeTools(calls, {

@@ -9,6 +9,7 @@ export {
   SettingsChangeData,
   SystemInjectedData,
   ToolCallData,
+  ToolMedia,
   ToolResultData,
   TurnEndData,
   UserMessageData,
