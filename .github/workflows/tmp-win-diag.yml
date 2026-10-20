@@ -6,7 +6,7 @@ permissions:
 jobs:
   diag:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -19,9 +19,9 @@ jobs:
         continue-on-error: true
         run: |
           names=("the request names the host" "Content-Length body split" "chunked body" "skips a 1xx" "gzip body" "redirect without a body" "a 304" "ends before the body" "isn't HTTP" "never end" "bad Content-Length" "isn't hexadecimal")
-          for skip in 0 1 2 3 4 5 6 7; do
+          for skip in 0 1 2 3 4 5 6 7 99; do
             arr=(); for j in 0 1 2 3 4 5 6 7 8 9 10 11; do [ $j -ne $skip ] && arr+=("${names[$j]}"); done
             pat=$(IFS='|'; echo "${arr[*]}")
-            bun test src/tools/web-http1.test.ts -t "$pat" > out.txt 2>&1 || true
-            echo "=== without #$skip (${names[$skip]}): $(grep -cE '^\(pass\)' out.txt) passed; $(grep -c Segmentation out.txt) segfault"
+            timeout 40 bun test src/tools/web-http1.test.ts -t "$pat" > out.txt 2>&1; code=$?
+            echo "=== without #$skip (${names[$skip]}): exit $code; $(grep -cE '^\(pass\)' out.txt) passed; $(grep -c Segmentation out.txt) segfault"
           done
