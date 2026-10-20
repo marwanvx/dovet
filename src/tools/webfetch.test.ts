@@ -748,6 +748,14 @@ describe("proxies", () => {
   });
 
   // spec: AC-TOOLS-51
+  test("a proxy that can't be reached is named as the one that failed, not the target", async () => {
+    const transport = proxiedTransport("http://127.0.0.1:1", { resolve: async () => ["93.184.216.34"] });
+    await expect(transport({ ...live(), signal: fresh().signal })).rejects.toThrow(
+      "Could not connect to the proxy 127.0.0.1:1",
+    );
+  });
+
+  // spec: AC-TOOLS-51
   test("bytes the proxy sends after its reply, before TLS, fail the request", async () => {
     const early = await connectProxy("HTTP/1.1 200 OK\r\n\r\nGET / HTTP/1.1\r\n\r\n");
     const transport = proxiedTransport(early.url, { resolve: async () => ["93.184.216.34"] });

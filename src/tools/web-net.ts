@@ -210,8 +210,8 @@ export function proxiedTransport(
   deps: {
     resolve?: Resolver;
     secure?: (socket: Socket, serverName: string | undefined) => Duplex;
-    /** Extra TLS options for both hops (tests pass `ca`); the certificate check against the target stays Dovet's. */
-    tls?: ConnectionOptions;
+    /** Extra trust anchors for both hops (tests pass a self-signed certificate). */
+    tls?: Pick<ConnectionOptions, "ca">;
   } = {},
 ): WebTransport {
   const resolve = deps.resolve ?? systemResolver;
@@ -247,7 +247,10 @@ export function proxiedTransport(
         signal,
         open,
         deps.tls ?? {},
-      );
+      ).catch((e: unknown) => {
+        if (signal.aborted || e instanceof WebFetchFailed) throw e;
+        throw describeFailure(`the proxy ${proxy.host}`, e);
+      });
       const serverName = literal ? undefined : host;
       const secured =
         deps.secure?.(raw, serverName) ??
