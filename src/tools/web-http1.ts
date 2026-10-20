@@ -159,9 +159,6 @@ export function readResponse(socket: Duplex): Promise<Response> {
         start(c) {
           controller = c;
         },
-        pull() {
-          socket.resume();
-        },
         cancel() {
           over = true;
           socket.destroy();
@@ -183,7 +180,6 @@ export function readResponse(socket: Duplex): Promise<Response> {
       if (decoder === undefined || controller === undefined || over) return;
       for (const part of decoder.write(chunk)) controller.enqueue(part);
       if (decoder.finished) complete();
-      else if ((controller.desiredSize ?? 1) <= 0) socket.pause();
     };
 
     socket.on("data", (chunk: Buffer) => {
