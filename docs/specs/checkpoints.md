@@ -73,7 +73,7 @@ Restores use the Write strategy of [tools §2.7](tools.md) (atomic rename, or in
 - [ ] **AC-CKPT-02** After snapshotting, `git status`, `.git/index`, refs and `.git/objects` of the user's repo are byte-identical to before.
 - [ ] **AC-CKPT-03** **Filter safety:** a repo whose `.gitattributes` selects a clean filter and a process filter (configured in local and global config) that write a marker file and attempt a network call: snapshot and restore never create the marker or connect.
 - [ ] **AC-CKPT-04** Files with `text=auto`/`eol=crlf`/`ident`/`working-tree-encoding` attributes round-trip byte-identically through snapshot + restore.
-- [ ] **AC-CKPT-05** Second snapshot of an unchanged 10k-file repo completes in < 200 ms (stat cache works).
+- [ ] **AC-CKPT-05** Second snapshot of an unchanged 10k-file repo completes in < 200 ms on Linux and macOS and < 400 ms on Windows (stat cache works; QUESTIONS Q72).
 - [ ] **AC-CKPT-06** Non-git workspace: Edit + Write rewind via blobs; a shell change is reported as not restorable.
 - [ ] **AC-CKPT-07** Conflict prompt appears when a file changed after Dovet's last write.
 - [ ] **AC-CKPT-08** Fork leaves the original session log byte-identical.
