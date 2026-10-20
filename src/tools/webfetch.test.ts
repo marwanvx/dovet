@@ -544,6 +544,12 @@ describe("untrusted robots.txt", () => {
     expect(robotsAllows(longAllow, `/public/${"x".repeat(520)}/private-other`)).toBe(false);
     const flood = rules(`Disallow: /a\n${"Allow: /a/x\n".repeat(600)}Allow: /a/target`);
     expect(robotsAllows(flood, "/a/target")).toBe(false);
+    const manyDisallows = rules(`${"Disallow: /d/x\n".repeat(2000)}Disallow: /private`);
+    expect(robotsAllows(manyDisallows, "/private/page")).toBe(false);
+    const cutAtDollar = "/a".padEnd(511, "a");
+    const longDisallow = rules(`Disallow: ${cutAtDollar}$secret`);
+    expect(robotsAllows(longDisallow, `${cutAtDollar}$secret/x`)).toBe(false);
+    expect(robotsAllows(longDisallow, `${cutAtDollar}$other`)).toBe(false);
     const hostile = rules(`Disallow: /${"*a".repeat(60)}X`);
     const started = performance.now();
     expect(robotsAllows(hostile, `/${"a".repeat(5000)}`)).toBe(true);

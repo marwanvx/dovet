@@ -50,10 +50,18 @@ export function robotsRules(text: string, agent: string): Rule[] {
     if (!ours || (key !== "disallow" && key !== "allow") || value === "") continue;
     // Limits may only make the result stricter: a long or surplus Allow is dropped, a long Disallow is cut.
     const allow = key === "allow";
-    if (allow ? value.length > MAX_RULE_LENGTH || allows >= MAX_ALLOWS : disallows >= MAX_DISALLOWS) continue;
+    if (!allow && disallows >= MAX_DISALLOWS) {
+      if (disallows === MAX_DISALLOWS) rules.push({ allow: false, pattern: "/", length: Number.MAX_SAFE_INTEGER });
+      disallows++;
+      continue;
+    }
+    if (allow && (value.length > MAX_RULE_LENGTH || allows >= MAX_ALLOWS)) continue;
     if (allow) allows++;
     else disallows++;
-    rules.push({ allow, pattern: value.slice(0, MAX_RULE_LENGTH), length: value.length });
+    // A cut that lands after a mid-pattern `$` would turn it into an end anchor and narrow the rule.
+    const cut = value.slice(0, MAX_RULE_LENGTH);
+    const pattern = cut.length < value.length && cut.endsWith("$") ? cut.slice(0, -1) : cut;
+    rules.push({ allow, pattern, length: value.length });
   }
   return rules;
 }
