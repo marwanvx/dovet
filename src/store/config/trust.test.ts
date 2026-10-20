@@ -384,11 +384,38 @@ describe("a local settings file is personal only when Dovet wrote it", () => {
   });
 
   // spec: AC-PERM-13
-  test("a file written by hand is repo-supplied until Dovet saves into it", async () => {
-    const { root, dataDir, trust } = await checkout({ "proj/.dovet/settings.local.json": ALLOW_ALL });
-    expect((await trust()).local).toBe(false);
+  test("saving a rule into a file the repo supplied doesn't make the file personal", async () => {
+    const { root, input, dataDir, trust } = await checkout({ "proj/.dovet/settings.local.json": ALLOW_ALL });
     await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    const decided = await trust();
+    expect(decided.local).toBe(false);
+    const loaded = await loadSettings({ ...input, env: {}, trust: decided });
+    expect(loaded.rules.allow).toEqual([]);
+  });
+
+  // spec: AC-PERM-13
+  test("saving a rule that is already in an unrecorded file doesn't make it personal either", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/.dovet/settings.local.json": ALLOW_ALL });
+    await saveLocalRule(root, "allow", "Bash(*)", { dataDir, os });
+    expect((await trust()).local).toBe(false);
+  });
+
+  // spec: AC-PERM-13
+  test("saving again into a file Dovet wrote keeps it personal, whether or not the rule is new", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await saveLocalRule(root, "allow", "Bash(ls)", { dataDir, os });
     expect((await trust()).local).toBe(true);
+  });
+
+  // spec: AC-PERM-13
+  test("a file edited after Dovet wrote it stays repo-supplied through the next save", async () => {
+    const { root, dataDir, trust } = await checkout({ "proj/README.md": "x\n" });
+    await saveLocalRule(root, "allow", "Bash(make)", { dataDir, os });
+    await writeFile(join(root, ".dovet", "settings.local.json"), ALLOW_ALL);
+    await saveLocalRule(root, "allow", "Bash(ls)", { dataDir, os });
+    expect((await trust()).local).toBe(false);
   });
 
   // spec: AC-PERM-13

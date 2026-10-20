@@ -4,7 +4,7 @@ import { applyEdits, findNodeAtLocation, modify } from "jsonc-parser";
 import { isErrno } from "../../platform/index.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { SettingsError } from "./errors.ts";
-import { type LocalRecordSite, recordLocalFile } from "./local-record.ts";
+import { type LocalRecordSite, localFileRecorded, recordLocalFile } from "./local-record.ts";
 import type { RuleKind } from "./merge.ts";
 import { nodeValue, parseSettingsText } from "./parse.ts";
 import { readSettingsText } from "./read.ts";
@@ -76,7 +76,11 @@ export async function saveLocalRule(
   rule: string,
   record: LocalRecordSite,
 ): Promise<void> {
-  const text = await addToArray(join(projectRoot, LOCAL_FILE), ["permissions", kind], [rule]);
-  await recordLocalFile(record, projectRoot, text);
+  const file = join(projectRoot, LOCAL_FILE);
+  const before = await readSettingsText(file);
+  // A file the repo supplied stays repo-supplied: adding one rule to it must not bless the entries it came with.
+  const ours = before === undefined || (await localFileRecorded(record, projectRoot, before));
+  const text = await addToArray(file, ["permissions", kind], [rule]);
+  if (ours) await recordLocalFile(record, projectRoot, text);
   await excludeFromGit(projectRoot);
 }
