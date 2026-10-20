@@ -1,5 +1,6 @@
 // Headless agent turn (tui "Headless mode", agent-loop "Turn state machine", event-log "Resume", providers §1).
 import { stat } from "node:fs/promises";
+import pkg from "../../package.json";
 import {
   buildRequest,
   cacheReadOf,
@@ -106,6 +107,7 @@ import {
   builtinTools,
   createReadState,
   createToolRegistry,
+  createWebFetchTool,
   type ShellSnapshot,
   startShellSnapshot,
   type ToolContext,
@@ -187,11 +189,15 @@ export function headlessToolDefs(input: {
   const base = [...(input.baseTools ?? builtinTools)];
   return [
     ...base.filter((t) => {
-      if (t.name === "Bash" || t.name === "PowerShell" || t.name === "AskUserQuestion") return false;
-      if (input.offline && (t.name === "WebFetch" || t.name === "WebSearch")) return false;
+      if (t.name === "Bash" || t.name === "PowerShell" || t.name === "AskUserQuestion" || t.name === "WebFetch")
+        return false;
+      if (input.offline && t.name === "WebSearch") return false;
       return true;
     }),
     shellToolFor(input.shell, input.tmpDir, input.snapshot),
+    ...(input.offline
+      ? []
+      : [createWebFetchTool({ outputDir: `${input.tmpDir}/out`, version: pkg.version }) as ToolDefinition<unknown>]),
   ] as ToolDefinition<unknown>[];
 }
 
