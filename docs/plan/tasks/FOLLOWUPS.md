@@ -62,6 +62,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `docs/background/workflow-audit-2026-10-19.md` "Recheck"
 - M2-06 took 21 CI runs (13 red, including Bun segfaults and hangs on Windows with real local sockets, found only by a temporary CI job), M2-05b 9, M2-09 9; the other four tasks 3 each. For a task that adds sockets, child processes or timing limits, run its new tests on all three OSes in one temporary CI job (repeated) before the first review round, instead of finding each failure through a review-fix-push cycle. Look at the next recheck's CI-run mean before adding a rule.
 
+### F18 (M2-09c CI): the first headless image test hit the 5 s timeout on macOS
+- **Severity:** minor · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
+- On `macos-latest` in the CI run for #172 (a docs-only PR) "the picture is logged as media and the next request carries it as an image part" failed at 5001 ms, the default test timeout, and Bun reported "killed 1 dangling process"; the other tests in the file passed. It is the first test of the file, so the likely cause is the first `Bun.Image` decode plus the headless boot starting cold on a loaded runner. Fix: find what the first run spends the time on (time the boot and the decode separately on macOS) and make the test independent of it (warm the decoder in a `beforeAll`, or set an explicit timeout in the test with the measured figure as evidence); do not just raise the number.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
