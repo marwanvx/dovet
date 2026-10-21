@@ -55,6 +55,25 @@ Three runners (`scripts/auto.ts` committed; `auto-oc.ts`, `auto-agy.ts` local) o
 - **The skip-worktree overrides:** replace them with one neutral committed wording, so no tracked file needs a local override.
 - **The model mix:** the review rules from #145 cap rounds; the next lever is cutting messages per task (fewer, larger reads and edits), which matters most on free models.
 
-## Recheck
+## Recheck, 2026-10-21
 
-After the next 5 tasks, run the scripts again on those tasks and compare: start → merge time, tokens per task, fix-up and bookkeeping PRs per task, CI re-runs, and hours `main` was red.
+Run on the next 7 merged tasks (M2-05, M2-05b, M2-06, M2-07, M2-08, M2-08b, M2-09; M2-05b is the sandbox half of M2-05) with the same scripts (raw exports in `~/.local/share/dovet-audit/2026-10-21/`). Every one of them was built by an unattended Claude Code session; the baseline tasks were mostly OpenCode free models, so this is a before/after of the whole setup (one PR per task, one blocking CI wait, no re-review runners, review tiers), not of one cut.
+
+| Measure | Baseline (20 tasks) | Now (7 tasks) |
+|---|---|---|
+| Median time, first session start → task PR merged | 70 min (M1-32: 546) | 73 min (M2-05b: 576, M2-06: 546; the other five 31–99) |
+| Median tokens per task, build sessions incl. reviewers (cache reads included) | 22.5 M (mean 35.3 M) | 20.9 M (mean 24.4 M; 12.8–38.2 M) |
+| Tokens spent on later re-review and fix runs | 600 M, against 706 M to build | 0 (no re-review wave has run on these tasks yet) |
+| Tasks that needed a fix-up PR after merge | 11 of 20 (0.55 per task) | 0 of 7 (0 per task) |
+| Bookkeeping PRs (≤ 12 lines, status and progress only) | 1.7 per task | 0 per task |
+| CI runs on the tasks' branches / re-runs | 100 / 21 (5.0 and 1.05 per task; median 5) | 51 / 2 (7.3 and 0.29 per task; median 3) |
+| `main` red (failed push run until the next green one) | 22.1 h over 12 spells; 17 of 109 push runs failed | 0 h; 0 of the 20 push runs since 2026-10-19 20:00 UTC failed (one 27-minute spell on 10-19 19:15, before M2-05 started) |
+
+What the numbers say:
+- **Better:** fix-up PRs, bookkeeping PRs, hours `main` was red, re-runs, rework tokens, mean tokens per task. The bookkeeping and CI-wait cuts did what the baseline predicted (0 bookkeeping PRs; the bookkeeping total of 56 merged PRs overall has not grown).
+- **Not better:** median time (70 → 73) and mean CI runs per task (5.0 → 7.3). Both come from two deep-tier tasks that needed a "rethink" session after three review rounds: M2-05b (576 min, 9 CI runs) and M2-06 (546 min, 21 CI runs, 13 of them red, including Bun segfaults and hangs on Windows with real local sockets that only a temporary CI job isolated). The five other tasks took 31–99 min and 3–9 CI runs each, and every standard-tier task (M2-08, M2-08b, M2-09) finished in one review round.
+- **Caveats:** the baseline's fix-ups were found by a re-review wave days after the merges; these tasks merged 4–48 hours ago, so 0 fix-ups may rise. Tokens are not comparable across model families. M2-09's 9 CI runs include a flaky memory test (F16) and a Windows timing limit.
+- **Guardrail (2026-10-20):** fix-up PRs per task are 0, below 0.55, so standard tasks keep one reviewer.
+- **Follow-up filed:** F17 (CI runs per task rose on deep tasks).
+
+Recheck again after the next 5 tasks, with `TASKS=<ids> bun ../baseline.ts` (the task list now comes from the environment).
