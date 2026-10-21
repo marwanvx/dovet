@@ -22,7 +22,7 @@ interface ProbeOut {
   trees: [string, string];
   edited: { a: string | null; keep: string | null; created: string | null };
   restored: {
-    result: { written: number; deleted: number; skipped: unknown[] };
+    result: { written: number; deleted: number; skipped: unknown[]; failed: string[] };
     a: string | null;
     b: string | null;
     keep: string | null;
@@ -169,7 +169,7 @@ describe("compiled binary takes and restores a filter-safe snapshot", () => {
     expect(out.restored.keep).toBe("kept\n");
     expect(out.restored.created).toBeNull();
     expect(out.restored.madeDirExists).toBe(false);
-    expect(out.restored.result).toEqual({ written: 3, deleted: 1, skipped: [] });
+    expect(out.restored.result).toEqual({ written: 3, deleted: 1, skipped: [], failed: [] });
   });
 
   test("the user's .git is byte-identical, timestamps included, after snapshots and a restore", () => {

@@ -48,7 +48,7 @@ describe("writer", () => {
     const loc = await location();
     const w = await open(loc);
     w.append({ type: "session.start", epoch: 0, turn: null, data: { cwd: "/p" } });
-    w.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "line\u2028sep\u2029para" } });
+    w.append({ type: "tool.call", epoch: 0, turn: 1, data: { text: "line\u2028sep\u2029para" } });
     const { log } = sessionPaths(loc);
     expect(await Bun.file(log).text()).toBe("");
     w.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
@@ -58,9 +58,20 @@ describe("writer", () => {
     expect(text).toContain("\\u2028");
     const lines = text.split("\n");
     expect(lines.at(-1)).toBe("");
-    expect(lines.slice(0, -1).map((l) => JSON.parse(l).type)).toEqual(["session.start", "user.message", "turn.end"]);
+    expect(lines.slice(0, -1).map((l) => JSON.parse(l).type)).toEqual(["session.start", "tool.call", "turn.end"]);
     expect(JSON.parse(lines[1] ?? "")).toMatchObject({ v: 1, session: SESSION, epoch: 0, turn: 1, core: true });
     expect(JSON.parse(lines[2] ?? "")).toMatchObject({ core: false });
+    await w.close();
+  });
+
+  // spec: AC-CKPT-12
+  test("a user message is on disk as soon as it is appended, with no flush and no timer", async () => {
+    const loc = await location();
+    const w = await open(loc, { flushMs: 600_000 });
+    w.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "typed right after a rewind" } });
+    const { log } = sessionPaths(loc);
+    for (let i = 0; i < 200 && !(await Bun.file(log).text()).includes("typed right after"); i++) await Bun.sleep(10);
+    expect(await Bun.file(log).text()).toContain("typed right after a rewind");
     await w.close();
   });
 

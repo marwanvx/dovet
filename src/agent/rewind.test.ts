@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeClock, sequentialIds } from "../../test/helpers/index.ts";
+import type { Os } from "../platform/index.ts";
 import { type AbsPath, CheckpointData, type EventEnvelope, type EventType } from "../schema/index.ts";
 import {
   createBlobStore,
@@ -21,6 +22,7 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
+const OS: Os = process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
 const sha = (text: string): string => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 const ENTRY = { sha256: "x", mtimeMs: 1, size: 1, partial: false, encoding: "utf8", eol: "\n" } as const;
 
@@ -135,7 +137,7 @@ test("a fork rewinds the same files as its parent, and still does when the paren
   const loc = {
     data: join(s.root, "data"),
     projectRoot: s.work,
-    os: "linux" as const,
+    os: OS,
     session: "01J0000000000000000000000A",
   };
   const opened = await openSession({
