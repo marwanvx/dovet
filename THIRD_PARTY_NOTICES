@@ -30,3 +30,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+================================================================================
+Bun documentation (snapshot in docs/bun-docs)
+https://bun.com/docs (source: https://github.com/oven-sh/bun), fetched 2026-10-21 for Bun 1.4.3
+License: MIT, see https://github.com/oven-sh/bun/blob/main/LICENSE.md
+Unmodified; used only as offline reference for agents building Dovet, not shipped in Dovet.
