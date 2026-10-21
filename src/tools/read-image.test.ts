@@ -228,11 +228,11 @@ describe("media budget", () => {
     } as never;
     const budget = createMediaBudget([pdf, resultEvent(2, 1, [100_000])], () => 1, {
       requestCapBytes: 1_000_000,
-      maxImages: 2,
+      maxImages: 1,
     });
     expect(budget.claim(1000, "document")).toBeUndefined();
-    expect(budget.claim(1000, "image")).toBeUndefined();
-    expect(budget.claim(1000, "image")).toContain("Too many images in this conversation (2)");
+    expect(budget.claim(1000, "document")).toBeUndefined();
+    expect(budget.claim(1000, "image")).toContain("Too many images in this conversation (1)");
     const tight = createMediaBudget([pdf], () => 1, { requestCapBytes: 200_000, maxImages: null });
     expect(tight.claim(1000, "document")).toContain("Images and documents already take");
   });

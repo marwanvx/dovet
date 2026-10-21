@@ -238,6 +238,12 @@ describe("Read: PDF errors", () => {
   });
 
   // spec: AC-TOOLS-02
+  test("a one-page PDF says page, not pages", async () => {
+    const cwd = await withPdf(numberedPdf(1));
+    expect(text(await read(context(cwd), { file_path: "doc.pdf", pages: "5" }))).toContain("The PDF has 1 page;");
+  });
+
+  // spec: AC-TOOLS-02
   test("a file that is not a PDF is refused with the reason", async () => {
     const cwd = await withPdf(new TextEncoder().encode("this is not a pdf"));
     const out = await read(context(cwd), { file_path: "doc.pdf" });

@@ -31,7 +31,7 @@ function parsePages(spec: string, count: number, perCall: number): { from: numbe
   const to = m[2] === undefined ? from : Number(m[2]);
   if (from < 1) return `pages "${spec}" is not valid: page numbers start at 1.`;
   if (to < from) return `pages "${spec}" is not valid: the range ends before it starts.`;
-  if (to > count) return `The PDF has ${count} pages; pages "${spec}" goes past the end.`;
+  if (to > count) return `The PDF has ${count} ${count === 1 ? "page" : "pages"}; pages "${spec}" goes past the end.`;
   if (to - from + 1 > perCall)
     return `Read at most ${perCall} pages per call (the read limit allows ~${TOKENS_PER_PAGE} tokens a page); pages "${spec}" asks for ${to - from + 1}.`;
   return { from, to };
