@@ -473,6 +473,58 @@ async function* linesOf(path: string): AsyncGenerator<string> {
   }
 }
 
+/**
+ * A log's events with their raw lines, to copy into a fork. A torn line the writer repaired (followed by its
+ * `crash-repair` marker) is skipped like the reader does; any other damage ends the stream.
+ */
+export async function* eventLines(path: string): AsyncGenerator<{ line: string; event: EventEnvelope }> {
+  const it = linesOf(path);
+  try {
+    let buffered: string | undefined;
+    const take = async (): Promise<string | undefined> => {
+      if (buffered !== undefined) {
+        const l = buffered;
+        buffered = undefined;
+        return l;
+      }
+      const r = await it.next();
+      return r.done === true ? undefined : r.value;
+    };
+    for (;;) {
+      const line = await take();
+      if (line === undefined) return;
+      if (line === "") continue;
+      let e: EventEnvelope | undefined;
+      try {
+        const parsed = EventEnvelope.safeParse(JSON.parse(line));
+        if (parsed.success) e = parsed.data;
+      } catch {
+        e = undefined;
+      }
+      if (e !== undefined) {
+        yield { line, event: e };
+        continue;
+      }
+      const peek = await take();
+      const marker =
+        peek !== undefined
+          ? (() => {
+              try {
+                const p = EventEnvelope.safeParse(JSON.parse(peek));
+                if (!p.success || p.data.type !== "session.resume") return undefined;
+                return dataOf(p.data).reason === "crash-repair" ? peek : undefined;
+              } catch {
+                return undefined;
+              }
+            })()
+          : undefined;
+      if (marker === undefined) return;
+    }
+  } finally {
+    await it.return?.(undefined);
+  }
+}
+
 /** Copy a damaged log's events through its last complete turn into a new session; the original is never touched. */
 export async function forkSession(
   loc: SessionLocation,
@@ -488,50 +540,9 @@ export async function forkSession(
   let copied = 0;
   let parentEvent = "";
   let uptoEpoch = 0;
-  const it = linesOf(log);
+  const events = eventLines(log);
   try {
-    let buffered: string | undefined;
-    const take = async (): Promise<string | undefined> => {
-      if (buffered !== undefined) {
-        const l = buffered;
-        buffered = undefined;
-        return l;
-      }
-      const r = await it.next();
-      return r.done === true ? undefined : r.value;
-    };
-    for (;;) {
-      const line = await take();
-      if (line === undefined) break;
-      if (line === "") continue;
-      let e: EventEnvelope | undefined;
-      try {
-        const parsed = EventEnvelope.safeParse(JSON.parse(line));
-        if (parsed.success) e = parsed.data;
-      } catch {
-        e = undefined;
-      }
-      if (e === undefined) {
-        // Skip writer-repaired torn lines like the reader does, instead of truncating the fork there.
-        const peek = await take();
-        const marker =
-          peek !== undefined
-            ? (() => {
-                try {
-                  const p = EventEnvelope.safeParse(JSON.parse(peek));
-                  if (!p.success || p.data.type !== "session.resume") return undefined;
-                  return dataOf(p.data).reason === "crash-repair" ? peek : undefined;
-                } catch {
-                  return undefined;
-                }
-              })()
-            : undefined;
-        if (marker === undefined) {
-          if (peek !== undefined) buffered = peek;
-          break;
-        }
-        continue;
-      }
+    for await (const { line, event: e } of events) {
       if (e.type === "epoch.start" && e.epoch > uptoEpoch && copied > 0 && parentEvent !== "") break;
       if (e.type === "epoch.start" && typeof (e.data as { epoch?: unknown }).epoch === "number") {
         uptoEpoch = Math.max(uptoEpoch, (e.data as { epoch: number }).epoch);
@@ -542,21 +553,29 @@ export async function forkSession(
       parentEvent = e.id;
       if (e.type === "turn.end" && e.turn === uptoTurn) uptoEpoch = e.epoch;
     }
-    const fork = {
-      v: 1,
-      id: deps.ids.ulid(),
-      ts: new Date(deps.clock.now()).toISOString(),
-      session,
-      epoch: uptoEpoch,
-      turn: null,
-      type: "session.fork",
-      core: true,
-      data: { parent: loc.session, parentEvent },
-    };
-    await out.appendFile(`${JSON.stringify(fork)}\n`);
+    await out.appendFile(sessionForkLine({ session, epoch: uptoEpoch, parent: loc.session, parentEvent }, deps));
+    await out.sync();
   } finally {
-    await it.return?.(undefined);
+    await events.return?.(undefined);
     await out.close();
   }
   return { loc: next, copied, parentEvent };
+}
+
+/** The `session.fork` line that ends a fork's copied events (event-log "Event types (v0.1)"). */
+export function sessionForkLine(
+  f: { session: string; epoch: number; parent: string; parentEvent: string },
+  deps: { ids: { ulid(): string }; clock: { now(): number } },
+): string {
+  return `${JSON.stringify({
+    v: 1,
+    id: deps.ids.ulid(),
+    ts: new Date(deps.clock.now()).toISOString(),
+    session: f.session,
+    epoch: f.epoch,
+    turn: null,
+    type: "session.fork",
+    core: true,
+    data: { parent: f.parent, parentEvent: f.parentEvent },
+  })}\n`;
 }

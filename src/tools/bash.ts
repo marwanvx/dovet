@@ -178,17 +178,26 @@ export function createBashTool(opts: {
     const changes = await snapshots.changes(before, (await snapshots.snapshot()).tree);
     if (changes.length === 0) return undefined;
     const namesOnly = rewritesWorktree(command);
-    const shown = changes.slice(0, MAX_LISTED).map((c) => {
+    const shown: string[] = [];
+    for (const c of changes.slice(0, MAX_LISTED)) {
       const path = join(snapshots.root, c.path) as AbsPath;
-      if (c.status !== "D") {
-        fileChanges.push({ path, op: c.status === "A" ? "create" : "modify", added: c.added, removed: c.removed });
+      if (c.status === "D") fileChanges.push({ path, op: "delete", added: 0, removed: 0, after: null });
+      else {
+        const bytes = await readFile(path).catch(() => undefined);
+        fileChanges.push({
+          path,
+          op: c.status === "A" ? "create" : "modify",
+          added: c.added,
+          removed: c.removed,
+          ...(bytes === undefined ? {} : { after: sha256Of(bytes) }),
+        });
       }
       const marks: string[] = [];
       if (c.status === "D") marks.push("deleted");
       else if (!namesOnly) marks.push(`+${c.added} −${c.removed}`);
       if (!namesOnly && ctx.readState.get(path) !== undefined) marks.push("re-read before editing");
-      return marks.length === 0 ? c.path : `${c.path} (${marks.join(", ")})`;
-    });
+      shown.push(marks.length === 0 ? c.path : `${c.path} (${marks.join(", ")})`);
+    }
     const more = changes.length > MAX_LISTED ? `, and ${changes.length - MAX_LISTED} more` : "";
     return `Files changed while this ran: ${shown.join(", ")}${more}`;
   }

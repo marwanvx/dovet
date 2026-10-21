@@ -97,6 +97,22 @@ export const CheckpointData = z.discriminatedUnion("mechanism", [
   }),
 ]);
 
+/**
+ * One file a tool (or a rewind) changed. `after` is the SHA-256 of the bytes it left (null = deleted): the last state
+ * Dovet recorded, which a rewind compares with the file on disk. `before` is the blob-store hash of the old bytes
+ * (a rewind keeps them so it can be undone).
+ */
+export const FileChangeData = z.object({
+  path: z.string().min(1),
+  op: z.enum(["create", "modify", "delete", "rename"]),
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+  match: z.enum(["exact", "prefix-strip", "indent"]).optional(),
+  before: Sha256.nullable().optional(),
+  after: Sha256.nullable().optional(),
+  via: z.enum(["Edit", "Write", "bash", "rewind"]).optional(),
+});
+
 export const PrefixFingerprint = z.object({ tools: Sha256, system: Sha256, messages: z.array(Sha256) });
 
 export const ModelRequestData = z.object({
@@ -117,6 +133,7 @@ export const SettingsChangeData = z.object({
 });
 
 export type CheckpointData = z.infer<typeof CheckpointData>;
+export type FileChangeData = z.infer<typeof FileChangeData>;
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;

@@ -158,7 +158,7 @@ export function createEditTool(opts: { hooks?: WriteHooks | undefined } = {}): T
     return {
       status: "ok",
       content: [{ kind: "text", text: [header, ...notes, ...region].join("\n") }],
-      meta: { fileChanges: [{ path, op: "modify", added, removed, match: outcome.level }] },
+      meta: { fileChanges: [{ path, op: "modify", added, removed, match: outcome.level, after: sha256Of(bytes) }] },
     };
   }
 

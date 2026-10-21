@@ -122,7 +122,9 @@ export function createWriteTool(opts: { hooks?: WriteHooks | undefined } = {}): 
     return {
       status: "ok",
       content: [{ kind: "text", text: [summary, ...res.notes].join("\n") }],
-      meta: { fileChanges: [{ path, op: st === undefined ? "create" : "modify", added, removed }] },
+      meta: {
+        fileChanges: [{ path, op: st === undefined ? "create" : "modify", added, removed, after: sha256Of(bytes) }],
+      },
     };
   }
 

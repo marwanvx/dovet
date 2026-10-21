@@ -778,12 +778,9 @@ export function shutdownResults(): ExecutedResult[] {
   return [];
 }
 
-export function fileChangeEvents(results: readonly ExecutedResult[]): Array<{
-  path: string;
-  op: "create" | "modify";
-  added: number;
-  removed: number;
-}> {
+export function fileChangeEvents(
+  results: readonly ExecutedResult[],
+): NonNullable<NonNullable<ToolOutput["meta"]>["fileChanges"]> {
   return results.flatMap((r) => r.output.meta?.fileChanges ?? []);
 }
 

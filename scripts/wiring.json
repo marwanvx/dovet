@@ -39,6 +39,7 @@
   "src/policy/shell-parse/read-only.ts:READ_ONLY_VERSION": "test-only: a data-version pin the corpus tests check",
   "src/store/config/trust.ts:recordTrust": "M3-10",
   "src/store/event-log/permissions.ts:checkDataPermissions": "M2-16",
+  "src/store/snapshots/checkpoints.ts:describeRewind": "M3-09",
   "src/tools/edit.ts:editTool": "test-only: the default instance tests use; the product builds its tools with create*",
   "src/tools/glob.ts:globTool": "test-only: the default instance tests use; the product builds its tools with create*",
   "src/tools/grep.ts:grepTool": "test-only: the default instance tests use; the product builds its tools with create*",

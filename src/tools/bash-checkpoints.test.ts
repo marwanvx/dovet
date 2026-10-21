@@ -109,7 +109,7 @@ describe.skipIf(process.platform === "win32")("checkpoints behind the tools", ()
     expect(existsSync(join(r.cwd, "b.txt"))).toBe(false);
     expect(r.events.map((e) => `${e.id}:${e.mechanism}`)).toEqual(["c1:git-tree"]);
 
-    const result = await r.svc.restore(r.log(), "c1");
+    const result = await r.svc.restore(r.log(), "c1", "overwrite");
     expect(result.failed).toEqual([]);
     expect(readFileSync(join(r.cwd, "a.txt"), "utf8")).toBe("alpha\nbeta\n");
     expect(readFileSync(join(r.cwd, "b.txt"), "utf8")).toBe("bee\n");
@@ -144,7 +144,7 @@ describe.skipIf(process.platform === "win32")("checkpoints behind the tools", ()
     expect(text(shell)).toContain("can't be undone");
     expect(shell.meta?.fileChanges).toBeUndefined();
 
-    await r.svc.restore(r.log(), "c1");
+    await r.svc.restore(r.log(), "c1", "overwrite");
     expect(readFileSync(join(r.cwd, "a.txt"), "utf8")).toBe("alpha\nbeta\n");
     expect(readFileSync(join(r.cwd, "b.txt"), "utf8")).toBe("bee\n");
     expect(existsSync(join(r.cwd, "new.txt"))).toBe(false);

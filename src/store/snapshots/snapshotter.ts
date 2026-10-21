@@ -73,11 +73,26 @@ export interface SnapshotTimings {
   total: number;
 }
 
+/** A path a restore left alone: `conflict` is one the caller asked to skip. */
+export interface RestoreSkip {
+  path: string;
+  reason: SkipReason | "conflict";
+}
+
 export interface RestoreResult {
   written: number;
   deleted: number;
-  /** Paths not touched because writing could go through a link, or something is in the way. */
-  skipped: SkippedPath[];
+  /** Paths not touched because writing could go through a link, something is in the way, or the caller asked (`skip`). */
+  skipped: RestoreSkip[];
+  /** Paths whose bytes were missing from the object store or did not read back as written. */
+  failed: string[];
+}
+
+export interface RestoreOptions {
+  /** Paths (relative to the root) to leave exactly as they are; reported as `conflict`. */
+  skip?: ReadonlySet<string>;
+  /** Called for each path after it was changed, with the bytes it had before and has now (null = not there). */
+  onChange?(change: { path: string; before: Uint8Array | null; after: Uint8Array | null }): void;
 }
 
 /** One file that differs between two trees; counts are 0 for a binary file. */
@@ -98,7 +113,9 @@ export interface Snapshotter {
    * `skipped` list of the snapshot that made `tree`: those paths existed then but are not in the tree, so they are
    * never deleted.
    */
-  restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult>;
+  restore(tree: string, checkpointSkipped: readonly SkippedPath[], options?: RestoreOptions): Promise<RestoreResult>;
+  /** The paths `restore` would write or delete (relative to the root), without changing anything. */
+  plan(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<string[]>;
 }
 
 interface Listed {
@@ -335,7 +352,8 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     return out;
   }
 
-  async function restore(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<RestoreResult> {
+  /** What differs between `tree` and the workspace now: deletions, writes and links that can't be written. */
+  async function diffPlan(tree: string, checkpointSkipped: readonly SkippedPath[]) {
     if (!OBJECT_ID.test(tree)) throw new Error(`not a tree id: ${tree}`);
     const keep = new Set(checkpointSkipped.map((s) => s.path));
     const current = (await snapshot()).tree;
@@ -343,8 +361,11 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     const diff = splitNul(
       await runGit(ctx, ["diff-tree", "-r", "-z", "--no-renames", tree, current], { env: privateEnv }),
     );
-    const result: RestoreResult = { written: 0, deleted: 0, skipped: [] };
-    const writes: { path: string; blob: string; mode: string }[] = [];
+    const plan = {
+      deletes: [] as string[],
+      writes: [] as { path: string; blob: string; mode: string }[],
+      links: [] as string[],
+    };
     for (let i = 0; i + 1 < diff.length; i += 2) {
       const [srcMode, dstMode, srcBlob, , status] = (diff[i] ?? "").slice(1).split(" ");
       const path = diff[i + 1];
@@ -361,21 +382,51 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
         throw new Error(`refusing to restore ${path}`);
       }
       if (srcMode === "160000" || dstMode === "160000") continue; // submodules are not restorable
+      // Created after the checkpoint: delete it, unless it existed then but was left out of the tree.
       if (status === "A") {
-        // Created after the checkpoint: delete it, unless it existed then but was left out of the tree.
-        if (keep.has(path)) continue;
-        const blocked = pathBlock(root, path, false);
-        if (blocked) result.skipped.push({ path, reason: blocked });
-        else {
-          unlinkSync(join(root, path));
-          removeEmptyParents(root, path);
-          result.deleted++;
-        }
-      } else if (srcMode === "120000") {
-        result.skipped.push({ path, reason: "link" });
-      } else writes.push({ path, blob: srcBlob, mode: srcMode });
+        if (!keep.has(path)) plan.deletes.push(path);
+      } else if (srcMode === "120000") plan.links.push(path);
+      else plan.writes.push({ path, blob: srcBlob, mode: srcMode });
+    }
+    return plan;
+  }
+
+  async function plan(tree: string, checkpointSkipped: readonly SkippedPath[]): Promise<string[]> {
+    const p = await diffPlan(tree, checkpointSkipped);
+    return [...p.deletes, ...p.writes.map((w) => w.path)];
+  }
+
+  async function restore(
+    tree: string,
+    checkpointSkipped: readonly SkippedPath[],
+    options: RestoreOptions = {},
+  ): Promise<RestoreResult> {
+    const p = await diffPlan(tree, checkpointSkipped);
+    const result: RestoreResult = { written: 0, deleted: 0, skipped: [], failed: [] };
+    const left = (path: string): boolean => {
+      if (!options.skip?.has(path)) return false;
+      result.skipped.push({ path, reason: "conflict" });
+      return true;
+    };
+    for (const path of p.links) result.skipped.push({ path, reason: "link" });
+    for (const path of p.deletes) {
+      if (left(path)) continue;
+      const blocked = pathBlock(root, path, false);
+      if (blocked) {
+        result.skipped.push({ path, reason: blocked });
+        continue;
+      }
+      const before = new Uint8Array(readFileSync(join(root, path)));
+      unlinkSync(join(root, path));
+      removeEmptyParents(root, path);
+      if (existsSync(join(root, path))) result.failed.push(path);
+      else {
+        result.deleted++;
+        options.onChange?.({ path, before, after: null });
+      }
     }
 
+    const writes = p.writes.filter((w) => !left(w.path));
     const blobs = await readBlobs(
       ctx,
       privateEnv,
@@ -383,19 +434,28 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
     );
     for (const w of writes) {
       const bytes = blobs.get(w.blob);
-      if (bytes === undefined) throw new Error(`blob ${w.blob} for ${w.path} is not in the object store`);
+      if (bytes === undefined) {
+        result.failed.push(w.path);
+        continue;
+      }
       const blocked = pathBlock(root, w.path, true);
       if (blocked) {
         result.skipped.push({ path: w.path, reason: blocked });
         continue;
       }
-      writeAtomic(join(root, w.path), bytes, w.mode === "100755", posix);
-      result.written++;
+      const file = join(root, w.path);
+      const before =
+        lstatSync(file, { throwIfNoEntry: false }) === undefined ? null : new Uint8Array(readFileSync(file));
+      writeAtomic(file, bytes, w.mode === "100755", posix);
+      const after = new Uint8Array(readFileSync(file));
+      options.onChange?.({ path: w.path, before, after });
+      if (Buffer.compare(after, bytes) !== 0) result.failed.push(w.path);
+      else result.written++;
     }
     return result;
   }
 
-  return { root, snapshot, changes, restore };
+  return { root, snapshot, changes, restore, plan };
 }
 
 /** Starts a new session's stat cache from the newest other session's (they share one object store). */
@@ -469,6 +529,10 @@ async function readBlobs(
   while (pos < buf.length) {
     const eol = buf.indexOf(10, pos);
     const [id, type, size] = new TextDecoder().decode(buf.subarray(pos, eol)).split(" ");
+    if (type === "missing") {
+      pos = eol + 1;
+      continue;
+    }
     if (id === undefined || type !== "blob" || size === undefined) throw new Error("cat-file: unexpected object");
     const start = eol + 1;
     out.set(id, buf.slice(start, start + Number(size)));

@@ -4,6 +4,7 @@ export { FAKE_KEY, nvidiaAdapter, type Replay, renderInput, replaySession } from
 export { sseBody, startFixtureServer } from "./fixture-server.ts";
 export { sequentialIds } from "./ids.ts";
 export { testGif, testPng } from "./images.ts";
+export { deleteObject, unpackToLoose } from "./loose-objects.ts";
 export { type Probe, probeModel } from "./nvidia-probe.ts";
 export {
   type Exchange,
