@@ -113,9 +113,9 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
       checkpointed = true;
       options.record({ id: id(), turn, mechanism: "git-tree", tree: result.tree, skipped: result.skipped });
     }
-    if (result.timings.total > slowMs) {
-      degrade(`a snapshot took ${(result.timings.total / 1000).toFixed(1)} s`);
-    }
+    // Storing new content (a first snapshot, an install) is proportional to what changed; the listing, stat and index work is not.
+    const overhead = result.timings.total - result.timings.hash;
+    if (overhead > slowMs) degrade(`a snapshot took ${(overhead / 1000).toFixed(1)} s`);
     return result;
   }
 

@@ -65,7 +65,7 @@ Restores use the Write strategy of [tools §2.7](tools.md) (atomic rename, or in
 ## Limits (stated to the user)
 
 - Changes outside the workspace (global installs, other directories, databases, network side effects) are never restorable.
-- If a snapshot exceeds 2 s (huge repos), shell snapshots are disabled for the session with a visible notice; Dovet tool edits fall back to file-level blobs. The limit applies to every snapshot, the first included; the snapshot that went over still is the turn's checkpoint, later turns use blobs (QUESTIONS Q79).
+- If a snapshot exceeds 2 s (huge repos), shell snapshots are disabled for the session with a visible notice; Dovet tool edits fall back to file-level blobs. The limit applies to every snapshot's time outside storing new file content (the first snapshot of a repository stores every file and is not judged by that); the snapshot that went over still is the turn's checkpoint, later turns use blobs (QUESTIONS Q79).
 
 ## Acceptance criteria
 

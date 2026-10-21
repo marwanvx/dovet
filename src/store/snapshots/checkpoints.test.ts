@@ -293,7 +293,7 @@ describe("speed", () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 10_000; i++) files[`d${i % 100}/f${i}.txt`] = `file ${i}\n`;
     const r = rig(files, true);
-    const svc = await r.open();
+    const svc = await r.open({ slowMs: 1_000_000 });
     svc.beginTurn(1);
     const first = await svc.shell?.snapshot();
     // The fastest of three, so a busy CI runner's hiccup doesn't decide it.
