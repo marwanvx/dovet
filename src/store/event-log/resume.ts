@@ -249,7 +249,10 @@ async function readLineAt(path: string, offset: number): Promise<string | undefi
   }
 }
 
-async function* streamLines(path: string, start: number): AsyncGenerator<string, { trailing: string }> {
+async function* streamLines(
+  path: string,
+  start: number,
+): AsyncGenerator<string, { trailing: string; trailingBytes: number }> {
   let leftover = Buffer.alloc(0);
   let trailing = "";
   const stream = createReadStream(path, { start });
@@ -267,7 +270,7 @@ async function* streamLines(path: string, start: number): AsyncGenerator<string,
     stream.destroy();
   }
   trailing = leftover.toString("utf8");
-  return { trailing };
+  return { trailing, trailingBytes: leftover.length };
 }
 
 /** Read the JSONL as a stream, line by line, validate every event and rebuild the session state (event-log "Resume"). */
@@ -334,6 +337,7 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
 
   let n = 0;
   let offset = start;
+  let tornBytes = 0;
   let failedAt: number | undefined;
   let failReason = "";
   const gen = streamLines(log, start);
@@ -341,6 +345,7 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
     const next = await gen.next();
     if (next.done === true) {
       if (next.value.trailing !== "") {
+        tornBytes = next.value.trailingBytes;
         n += 1;
         warnings.push(`line ${n}: ignored an incomplete last line (Dovet stopped while writing it)`);
       }
@@ -417,6 +422,7 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
     };
   }
   const repairs = crashRepairs(f);
+  // The sidecar must not vouch for a torn tail: the writer's size check would skip adding the newline that keeps the next event off that line.
   if (f.epochMark !== null && f.epochMark.offset >= 0) {
     const existing = await readFile(meta, "utf8").then(
       (t) => {
@@ -431,7 +437,7 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
     const m = f.epochMark;
     await writePrivateAtomic(
       meta,
-      `${JSON.stringify({ ...existing, bytes: size, epoch: f.state.epoch, epochOffset: m.offset, epochEventId: m.id, snapshot: m.before })}\n`,
+      `${JSON.stringify({ ...existing, bytes: size - tornBytes, epoch: f.state.epoch, epochOffset: m.offset, epochEventId: m.id, snapshot: m.before })}\n`,
     ).catch(() => {
       warnings.push("the sidecar could not be updated; the next resume takes the slow path");
     });
@@ -446,7 +452,7 @@ export async function resumeSession(loc: SessionLocation): Promise<ResumeResult>
       },
       () => ({}),
     );
-    await writePrivateAtomic(meta, `${JSON.stringify({ ...existing, bytes: size })}\n`).catch(() => {
+    await writePrivateAtomic(meta, `${JSON.stringify({ ...existing, bytes: size - tornBytes })}\n`).catch(() => {
       warnings.push("the sidecar could not be updated; the next resume takes the slow path");
     });
   }
@@ -463,7 +469,7 @@ async function* linesOf(path: string): AsyncGenerator<string> {
       yield next.value;
     }
   } finally {
-    await gen.return?.({ trailing: "" });
+    await gen.return?.({ trailing: "", trailingBytes: 0 });
   }
 }
 

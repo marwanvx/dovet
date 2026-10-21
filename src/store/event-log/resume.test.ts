@@ -157,6 +157,33 @@ test("a writer-repaired torn line resumes cleanly with a warning, like the reade
   expect(resumed.state.turn).toBe(1);
 });
 
+// spec: AC-LOG-01
+test.each([
+  ["ASCII", Buffer.from('{"v":1,"id":"01J')],
+  ["a cut multi-byte character", Buffer.concat([Buffer.from('{"v":1,"text":"'), Buffer.from("😀").subarray(0, 3)])],
+])("resuming a torn log (%s), then writing, never glues the new event onto the half line", async (_name, tail) => {
+  const loc = await location();
+  const first = await writer(loc);
+  first.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "one" } });
+  first.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+  await first.close();
+  const { log } = sessionPaths(loc);
+  await writeFile(log, Buffer.concat([await readFile(log), tail]));
+  expect((await resumeSession(loc)).warnings).toEqual([expect.stringContaining("incomplete last line")]);
+
+  const second = await writer(loc, "2");
+  second.append({ type: "user.message", epoch: 0, turn: 2, data: { text: "two" } });
+  await second.close();
+
+  const { readSession } = await import("./index.ts");
+  const read = await readSession(loc);
+  expect(read.readOnly).toBeUndefined();
+  expect(read.events.map((e) => e.type)).toEqual(["user.message", "turn.end", "session.resume", "user.message"]);
+  const resumed = await resumeSession(loc);
+  expect(resumed.readOnly).toBeUndefined();
+  expect(resumed.warnings).toEqual([expect.stringContaining("ignored an incomplete line")]);
+});
+
 // spec: AC-LOG-15
 test("a parallel batch keeps finished results, interrupts the rest, restores mode/cost/tools", async () => {
   const loc = await location();
