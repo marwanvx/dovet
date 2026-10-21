@@ -107,6 +107,14 @@ type EventEnvelope = {
   - GC runs with the data-directory GC lock and skips any session whose lock heartbeat is fresh (active sessions are never collected under).
   - If an essential blob is nevertheless missing (disk damage, manual deletion), resume opens the session **read-only** and names the missing item.
 
+**Decided while building (QUESTIONS Q81):**
+- A session's age is the last write to its log. Rewind data expires when that is older than `retention.days`; GC then writes `rewindAvailableUntil` (last write + `retention.days`, ISO time) into the sidecar of every session that isn't running, and `/rewind` shows "expired" for a session whose time has passed (`rewindExpired`). A sidecar rebuilt from the log loses the field until the next GC.
+- A reference is a `$blob` value, a `{ store: "blob", id }` ref, or a `before`/`after` hash in `file.change` and `checkpoint` events. A log line that doesn't parse keeps every 64-hex string in it as essential.
+- Blobs and snapshot objects younger than one hour are never removed (their event may not be logged yet), and storing a blob that already exists refreshes its age, so a session about to log it can't lose it to a GC that is already running.
+- Offload files and debug request bodies are removed by age (`retention.outputsDays`) per session; a Read of a missing path under a session's `outputs/` or `requests/` folder answers `Full output expired (kept N days).`
+- `dovet sessions list|delete` cover every project in `<data>`; `delete` runs GC afterwards so the blobs only those sessions used go too. A session whose lock is fresh is never deleted. `deleteSessions` and the GC skip it the same way.
+- Startup: the data-size warning (at most once a day, stamped in `<data>/size-warning.json`) and a background GC run before the turn and are stopped when it ends. A GC that fails prints a line; it never stops the turn.
+
 ## No database
 
 There is no database or second store (ADR-4): two stores that must stay in sync are a classic bug source. Everything below is derived from the logs and can be rebuilt.

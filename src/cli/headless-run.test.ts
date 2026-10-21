@@ -384,6 +384,46 @@ describe("runHeadless", () => {
     }
   });
 
+  // spec: AC-LOG-14
+  test("a tool result over the output limit is offloaded into the session's outputs folder, where GC expires it", async () => {
+    const dir = await tempProject({});
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: TEST_ENV,
+        loadInput: loadInputFor(dir, TEST_ENV),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "make a lot of output",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("H"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ toolCall: { id: "c1", name: "echo", input: { text: "x" } } }, { text: "done" }]),
+        toolDefs: [echoTool(() => ({ status: "ok", text: "y".repeat(40_000) }))],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const file = join(sessionPaths(loc).dir, out.sessionId, "outputs", "c1.txt");
+      expect((await readFile(file, "utf8")).replaceAll("\n", "")).toBe("y".repeat(40_000));
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: tui "Headless mode"
   test("usage and cost add up every request of the turn, not just the last", async () => {
     const dir = await tempProject({});

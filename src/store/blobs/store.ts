@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isErrno } from "../../platform/index.ts";
@@ -27,7 +27,9 @@ export function createBlobStore(data: string): BlobStore {
       const sha = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
       const path = pathOf(sha);
       try {
-        statSync(path);
+        // Touched so GC's grace period covers a blob another session wrote long ago and this one only now references.
+        const now = new Date();
+        utimesSync(path, now, now);
         return sha;
       } catch (err) {
         if (!isErrno(err, "ENOENT")) throw err;

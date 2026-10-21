@@ -4,5 +4,6 @@
 export * from "./blobs/index.ts";
 export * from "./config/index.ts";
 export * from "./event-log/index.ts";
+export * from "./gc/index.ts";
 export * from "./secrets/index.ts";
 export * from "./snapshots/index.ts";

@@ -14,6 +14,7 @@ import {
   loadSettings,
   type ProjectTrust,
   resolveProjectTrust,
+  UNTRUSTED,
 } from "../store/index.ts";
 import { parseHeadlessArgs } from "./args.ts";
 import { authStatus } from "./auth.ts";
@@ -23,6 +24,7 @@ import { RELEASE_PUBLIC_KEYS } from "./release-signature.ts";
 import { ephemeralDataDir, makeUlid } from "./resume-target.ts";
 import { installSignalHandlers, stopSignalsFor } from "./signals.ts";
 import { ensureDataDir, filterInheritedEnv, loadTrustedFolders, printable } from "./startup.ts";
+import { runMaintenance, runStorageCommand, storageSettings } from "./storage-command.ts";
 import { detectMusl, hostTargetId, installRootFor, LATEST_RELEASE_URL, rollback, update } from "./update.ts";
 
 // Set by `define` in a pull request's test release only; a normal build has no such identifier (architecture "Distribution").
@@ -220,6 +222,20 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
       return id;
     };
   })();
+  const maintenanceStop = new AbortController();
+  const maintenance = ephemeral
+    ? Promise.resolve([])
+    : runMaintenance({
+        data: dirs.data,
+        now: Date.now(),
+        settings: storageSettings(loaded.settings.retention),
+        env,
+        signal: maintenanceStop.signal,
+      });
+  const finishMaintenance = async (): Promise<void> => {
+    maintenanceStop.abort();
+    for (const line of await maintenance) console.error(`dovet: ${printable(line)}`);
+  };
   let out: HeadlessRunOutput;
   try {
     out = await runHeadlessTurn({
@@ -242,10 +258,12 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
     });
   } catch (err) {
     await signals.crash(err);
+    await finishMaintenance();
     await cleanupEphemeral();
     process.exitCode = 70;
     return;
   }
+  await finishMaintenance();
   for (const w of out.warnings) console.error(`dovet: ${printable(w)}`);
   if (out.exit.kind !== "ok") {
     if (parsed.output === "json") {
@@ -290,6 +308,23 @@ async function runHeadless(argv: readonly string[]): Promise<void> {
   }
   await cleanupEphemeral();
   process.exitCode = exitCodeFor(out.exit);
+}
+
+async function runStorage(argv: readonly string[]): Promise<void> {
+  const env = filterInheritedEnv(process.env).clean as Record<string, string | undefined>;
+  const dirs = resolveDirs({ os: hostOs(), home: homedir(), env });
+  const home = homedir();
+  const projectRoot = await findProjectRoot(process.cwd()).catch(() => process.cwd());
+  const loaded = await loadSettings({ dirs, home, projectRoot, env, trust: UNTRUSTED });
+  const out = await runStorageCommand(argv, {
+    data: dirs.data,
+    now: Date.now(),
+    settings: storageSettings(loaded.settings.retention),
+    env,
+  });
+  if (out.exitCode === 0) process.stdout.write(out.output);
+  else process.stderr.write(out.output);
+  process.exitCode = out.exitCode;
 }
 
 async function runSandbox(argv: readonly string[]): Promise<void> {
@@ -380,6 +415,13 @@ if (args.includes("-p") || args.includes("--print")) {
 } else if (args[0] === "auth" && args[1] === "status" && args.length === 2) {
   try {
     process.stdout.write(await authStatus({ os: hostOs(), home: homedir(), cwd: process.cwd(), env: process.env }));
+  } catch (err) {
+    console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
+    process.exitCode = 1;
+  }
+} else if (args[0] === "gc" || args[0] === "sessions") {
+  try {
+    await runStorage(args);
   } catch (err) {
     console.error(`dovet: ${err instanceof Error ? err.message : String(err)}`);
     process.exitCode = 1;
