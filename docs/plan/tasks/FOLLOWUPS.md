@@ -74,11 +74,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/agent/session.test.ts`, `src/cli/headless-boot.test.ts`, `src/cli/resume-target.test.ts`, `src/cli/startup.test.ts`, `src/policy/grants/grants.test.ts`, `src/policy/rules/rules.test.ts`, `src/policy/sandbox/hygiene.test.ts`, `src/policy/sandbox/service.test.ts`, `src/store/secrets/secrets.test.ts`, `src/tools/bash-sandbox.test.ts`
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
-### F20 (M2-09c reviewer eval): resume then a new writer may glue an event onto a torn line
-- **Severity:** major (unverified: reproduce first, drop with the reason if it doesn't hold) · `src/store/event-log/resume.ts:434`
-- A `medium` reviewer run on M1-29 reported that after resuming a log whose last line is half-written, the next writer appends its event to that half line, corrupting both. Write a log ending in a partial line, resume, append, and read it back.
-
 ## Fixed
+
+### F20 (M2-09c reviewer eval): resume then a new writer may glue an event onto a torn line
+- **Severity:** major (reproduced) · `src/store/event-log/resume.ts:434`
+- A `medium` reviewer run on M1-29 reported that after resuming a log whose last line is half-written, the next writer appends its event to that half line, corrupting both. Write a log ending in a partial line, resume, append, and read it back.
+- **Fixed (#175):** `resumeSession` wrote the sidecar with `bytes` = the file size including the half line, so the writer's size check passed and skipped the `\n` + crash-repair marker; the sidecar now records only the complete lines. Test `resume.test.ts` "resuming a torn log … never glues", ASCII and a cut multi-byte tail.
 
 ### F19 (M2-09 progress entry): test runs leak `dovet-tool-*` temp directories
 - **Severity:** major · unknown source (the M2-09 tests clean up)
