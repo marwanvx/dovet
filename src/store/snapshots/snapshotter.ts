@@ -437,7 +437,7 @@ function removeEmptyParents(root: string, path: string): void {
  * Replaces `file` with `bytes` through a temp file in the same directory and a rename. An existing file keeps its
  * permissions (only the execute bits follow the checkpoint); a new one gets the process umask's default.
  */
-function writeAtomic(file: string, bytes: Uint8Array, executable: boolean, posix: boolean): void {
+export function writeAtomic(file: string, bytes: Uint8Array, executable: boolean, posix: boolean): void {
   const tmp = join(dirname(file), `.dovet-restore-${crypto.randomUUID()}`);
   const existing = lstatSync(file, { throwIfNoEntry: false });
   writeFileSync(tmp, bytes, { mode: executable && posix ? 0o777 : 0o666 });

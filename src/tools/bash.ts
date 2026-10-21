@@ -331,6 +331,9 @@ export function createBashTool(opts: {
       } catch (e) {
         notes.push(`Couldn't list the files this command changes: ${e instanceof Error ? e.message : String(e)}`);
       }
+    } else if (view === undefined) {
+      const notice = ctx.shellNotice?.();
+      if (notice !== undefined) notes.push(notice);
     }
 
     const id = crypto.randomUUID().slice(0, 8);
