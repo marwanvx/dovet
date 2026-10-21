@@ -1,6 +1,6 @@
 // Public surface of the `ai` module (docs/specs/architecture.md "Modules"): The model layer: AI SDK adapter, provider registry, model catalog, pricing, retry policy.
 // Other modules import only from this file.
-export { endpointOf, imageSupport, PROVIDER_AUTH, providerRecord } from "./registry.ts";
+export { endpointOf, imageSupport, PROVIDER_AUTH, pdfSupport, providerRecord } from "./registry.ts";
 export {
   type CallEvent,
   CONTINUE_AFTER_DROP,

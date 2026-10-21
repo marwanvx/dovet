@@ -15,7 +15,7 @@ import {
 } from "ai";
 import { z } from "zod";
 import pkg from "../../package.json";
-import type { ImagePart, Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
+import type { DocumentPart, ImagePart, Part, Protocol, ReplayData, StoredResponse } from "../schema/index.ts";
 import type { Secret } from "../store/index.ts";
 import type { Quirks } from "./registry.ts";
 import { STREAM_IDLE_TIMEOUT_MS, timedFetch } from "./retry.ts";
@@ -451,7 +451,7 @@ export function createSdkAdapter(deps: AdapterDeps) {
         messages.push(...rendered);
       } else {
         const results = item.parts.flatMap((p) => (p.kind === "tool_result" ? [p] : []));
-        const images: ImagePart[] = [];
+        const media: Array<ImagePart | DocumentPart> = [];
         if (results.length > 0) {
           messages.push({
             role: "tool",
@@ -460,12 +460,9 @@ export function createSdkAdapter(deps: AdapterDeps) {
               if (call === undefined) throw new Error(`tool result ${r.callId} has no tool call before it`);
               const value = r.content
                 .map((c) => {
-                  if (c.kind === "image") {
-                    images.push(c);
-                    return "";
-                  }
-                  if (c.kind !== "text") throw new Error(`a ${c.kind} in a tool result is not supported yet`);
-                  return c.text;
+                  if (c.kind === "text") return c.text;
+                  media.push(c);
+                  return "";
                 })
                 .join("");
               return {
@@ -477,16 +474,26 @@ export function createSdkAdapter(deps: AdapterDeps) {
             }),
           });
         }
-        if (images.length > 0) {
-          // Chat Completions tool messages carry text only, so the pictures follow as one user message, in call order.
+        if (media.length > 0) {
+          // Chat Completions tool messages carry text only, so pictures and PDFs follow as one user message, in call order.
+          const only = media.every((m) => m.kind === "image")
+            ? "Images"
+            : media.every((m) => m.kind === "document")
+              ? "Documents"
+              : "Images and documents";
           messages.push({
             role: "user",
             content: [
-              { type: "text", text: "[Images returned by the tool calls above, in order]" },
-              ...images.map((image) => {
-                const bytes = image.blob.store === "blob" ? deps.blobBytes?.(image.blob.id) : undefined;
-                if (bytes === undefined) throw new Error(`image ${image.blob.id} is not in the blob store`);
-                return { type: "file" as const, data: bytes, mediaType: image.mediaType };
+              { type: "text", text: `[${only} returned by the tool calls above, in order]` },
+              ...media.map((item) => {
+                const bytes = item.blob.store === "blob" ? deps.blobBytes?.(item.blob.id) : undefined;
+                if (bytes === undefined) throw new Error(`${item.kind} ${item.blob.id} is not in the blob store`);
+                return {
+                  type: "file" as const,
+                  data: bytes,
+                  mediaType: item.mediaType,
+                  ...(item.kind === "document" && item.title !== undefined ? { filename: item.title } : {}),
+                };
               }),
             ],
           });

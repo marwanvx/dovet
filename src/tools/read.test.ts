@@ -122,14 +122,12 @@ describe("Read: text views", () => {
   });
 
   // spec: AC-TOOLS-01
-  test("images and PDFs are described as binary even without a NUL byte; a symlink reports both paths to the policy", async () => {
+  test("a PDF without an extension is described as binary even without a NUL byte; a symlink reports both paths to the policy", async () => {
     const cwd = await workspace();
-    await writeFile(join(cwd, "doc.pdf"), "just text\n");
     await writeFile(join(cwd, "noext"), "%PDF-1.4\nplain text only\n");
     await writeFile(join(cwd, "real.txt"), "x\n");
     await symlink(join(cwd, "real.txt"), join(cwd, "ln"));
     const ctx = context(cwd);
-    expect(text(await read(ctx, { file_path: "doc.pdf" }))).toStartWith("Binary file (");
     expect(text(await read(ctx, { file_path: "noext" }))).toContain("application/pdf");
     const action = createReadTool().describeAction({ file_path: "ln" }, ctx);
     expect(action.kind === "read" ? action.paths : []).toEqual([join(cwd, "ln"), join(cwd, "real.txt")]);

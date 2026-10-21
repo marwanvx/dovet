@@ -90,7 +90,7 @@ export async function readImage(path: string, bytes: Uint8Array, media: MediaCon
       `${path} is still ${kb(out.bytes.length)} after resizing; images over ${kb(HARD_CAP_BYTES)} are not sent.`,
     );
 
-  const refused = media.claim(out.bytes.length);
+  const refused = media.claim(out.bytes.length, "image");
   if (refused !== undefined) return fail(refused);
 
   const shown = out.bytes === bytes ? meta : await new Bun.Image(out.bytes).metadata();

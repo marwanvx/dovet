@@ -19,6 +19,8 @@ function media(over: Partial<MediaContext> & { stored?: Uint8Array[] } = {}): Me
   return {
     images: true,
     longEdge: 2000,
+    pdfs: false,
+    pdfMaxPages: null,
     claim: () => undefined,
     store: (bytes) => {
       stored.push(bytes);
@@ -191,7 +193,7 @@ describe("media budget", () => {
     const budget = createMediaBudget(events, () => 1, { requestCapBytes: cap, maxImages: null });
     let accepted = 0;
     for (let turn = 1; turn <= 100; turn += 1) {
-      const refusal = budget.claim(450_000);
+      const refusal = budget.claim(450_000, "image");
       if (refusal !== undefined) {
         expect(refusal).toContain("/compact");
         break;
@@ -207,11 +209,32 @@ describe("media budget", () => {
   // spec: AC-TOOLS-35
   test("parallel reads in one batch count each other before their results are logged", () => {
     const budget = createMediaBudget([], () => 1, { requestCapBytes: 1_000_000, maxImages: 2 });
-    expect(budget.claim(1000)).toBeUndefined();
-    expect(budget.claim(1000)).toBeUndefined();
-    expect(budget.claim(1000)).toContain("Too many images in this conversation (2)");
+    expect(budget.claim(1000, "image")).toBeUndefined();
+    expect(budget.claim(1000, "image")).toBeUndefined();
+    expect(budget.claim(1000, "image")).toContain("Too many images in this conversation (2)");
     budget.settle();
-    expect(budget.claim(1000)).toBeUndefined();
+    expect(budget.claim(1000, "image")).toBeUndefined();
+  });
+
+  // spec: AC-TOOLS-02
+  // spec: AC-TOOLS-35
+  test("documents count toward the bytes but not toward the image count", () => {
+    const pdf = resultEvent(1, 1, [100_000]);
+    (pdf.data as { media: Array<{ kind: string }> }).media[0] = {
+      kind: "document",
+      blob: { store: "blob", id: "a".repeat(64) },
+      mediaType: "application/pdf",
+      bytes: 100_000,
+    } as never;
+    const budget = createMediaBudget([pdf, resultEvent(2, 1, [100_000])], () => 1, {
+      requestCapBytes: 1_000_000,
+      maxImages: 1,
+    });
+    expect(budget.claim(1000, "document")).toBeUndefined();
+    expect(budget.claim(1000, "document")).toBeUndefined();
+    expect(budget.claim(1000, "image")).toContain("Too many images in this conversation (1)");
+    const tight = createMediaBudget([pdf], () => 1, { requestCapBytes: 200_000, maxImages: null });
+    expect(tight.claim(1000, "document")).toContain("Images and documents already take");
   });
 
   // spec: AC-TOOLS-35
@@ -231,7 +254,7 @@ describe("media budget", () => {
       } as unknown as EventEnvelope,
     ];
     const budget = createMediaBudget(events, () => 2, { requestCapBytes: 1_000_000, maxImages: 1 });
-    expect(budget.claim(1000)).toBeUndefined();
+    expect(budget.claim(1000, "image")).toBeUndefined();
   });
 
   // spec: AC-TOOLS-35
@@ -251,8 +274,8 @@ describe("media budget", () => {
       } as unknown as EventEnvelope,
     ];
     const repaired = createMediaBudget(events, () => 1, { requestCapBytes: 1_000_000, maxImages: 2 });
-    expect(repaired.claim(1000)).toContain("Too many images in this conversation (2)");
+    expect(repaired.claim(1000, "image")).toContain("Too many images in this conversation (2)");
     const compacted = createMediaBudget(events.slice(0, 2), () => 1, { requestCapBytes: 1_000_000, maxImages: 2 });
-    expect(compacted.claim(1000)).toBeUndefined();
+    expect(compacted.claim(1000, "image")).toBeUndefined();
   });
 });

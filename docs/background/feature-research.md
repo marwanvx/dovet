@@ -200,7 +200,7 @@ ACs added: AC-TOOLS-14..16. (Changelog: Claude Code's 2.1.47 fix for curly quote
 - **Dedup:** only when the earlier result is still in the current epoch and branch **and** the current bytes hash-match what that Read returned; never twice in a row.
 - **Special files:** regular files only, read with a bounded stream.
 - **Images:** always ≤ 2,000 px (≤ the model's native edge), re-encoded to ≤ 500 KB, image count capped per model.
-- **PDFs:** follow the token limit (≤ 8 pages whole), and use a pure-JS PDF library for ranges (SPIKE-6).
+- **PDFs:** follow the token limit (≤ 8 pages whole), and use a pure-JS PDF library for ranges (SPIKE-6). Resolved 2026-10-21 (M2-08b): `unpdf` for pages and text, `pdf-lib` for cutting ranges; measurements in [open questions](../plan/open-questions.md) SPIKE-6.
 - **Context gauge:** the image token estimate in [context](../specs/context.md) uses the official formula.
 
 ACs added: AC-TOOLS-17..20; AC-TOOLS-01 updated. The Read prompt is updated.

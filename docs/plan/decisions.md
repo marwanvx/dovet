@@ -123,7 +123,8 @@ Every runtime dependency must be listed here before it is added. Exact versions 
 | `guarded-fetch` | WebFetch: SSRF protection (resolve-and-pin, every redirect re-checked) ([tools §9](../specs/tools.md)) | Apache-2.0; runs on Bun only if SPIKE-45 passes |
 | ripgrep binary | Grep/Glob | Bundled per platform [SPIKE-2] |
 | `@microsoft/mxc-sdk` | Windows sandbox (MXC process containers) | MIT; Windows only in v0.1 [SPIKE-42] |
-| Pure-JS PDF library (chosen in SPIKE-6) | Read: page ranges, text extraction | No native code; works on Windows without poppler |
+| `unpdf` | Read: PDF page count and text extraction (pdf.js serverless build inside; chosen in SPIKE-6) | MIT (pdf.js inside is Apache-2.0); no native code, works on Windows without poppler; loaded on first PDF read |
+| `pdf-lib` | Read: cut a page range into a new PDF (`copyPages`; chosen in SPIKE-6) | MIT; pure JS; exact pin; loaded on first range cut |
 | `Bun.Image` (built into Bun, chosen in SPIKE-6) | Read and pasted images: decode, resize, re-encode | Not a package: statically linked libjpeg-turbo, libspng and libwebp inside Bun; GIF decodes its first frame |
 
 **Dev-only (never shipped):** `ai/test` mocks, `@vercel/agent-eval` (evals, [testing](../specs/testing.md)), `dependency-cruiser` (import-boundary check, [architecture](../specs/architecture.md)), `@ai-sdk/devtools`, `@ai-sdk/codemod` (AI SDK major upgrades), `fast-check`.

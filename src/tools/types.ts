@@ -110,7 +110,11 @@ export type MediaContext = {
   images: boolean;
   /** The model's native long edge in px; Read sends at most min(2,000, this). */
   longEdge: number;
-  claim(bytes: number): string | undefined;
+  /** The model takes `document` parts (PDFs); otherwise Read extracts the text of the pages. */
+  pdfs: boolean;
+  /** Most pages one document may have; null = no check. */
+  pdfMaxPages: number | null;
+  claim(bytes: number, kind: "image" | "document"): string | undefined;
   /** Stores the bytes where the log refers to them; returns the SHA-256. */
   store(bytes: Uint8Array): string;
 };

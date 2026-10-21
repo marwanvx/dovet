@@ -1,4 +1,4 @@
-// Read: text files and images (tools §1); PDFs come with M2-08b.
+// Read: text files, images and PDFs (tools §1).
 
 import type { BigIntStats } from "node:fs";
 import { constants } from "node:fs";
@@ -9,6 +9,7 @@ import { isErrno, lexicalPath, PathRefused } from "../platform/index.ts";
 import type { AbsPath } from "../schema/index.ts";
 import { fileEffects } from "./policy.ts";
 import { MAX_IMAGE_FILE_BYTES, readImage } from "./read-image.ts";
+import { MAX_PDF_FILE_BYTES, readPdf } from "./read-pdf.ts";
 import { DEDUP_PREFIX, sha256Hex } from "./read-results.ts";
 import { formatLine, type ScanOptions, type ShownLine, scanText } from "./read-scan.ts";
 import type { ToolContext, ToolDefinition, ToolOutput } from "./types.ts";
@@ -59,6 +60,21 @@ function firstPage(lines: readonly ShownLine[], budgetChars: number): ShownLine[
   return page;
 }
 
+/** The dedup notice (tools §1.5) when the same range was read before and `out` is the same text; otherwise `out`. */
+function deduplicated(ctx: ToolContext, input: ReadInput, result: string, out: ToolOutput): ToolOutput {
+  const earlier = ctx.readResults.lookup({
+    file_path: input.file_path,
+    offset: input.offset,
+    limit: input.limit,
+    pages: input.pages,
+  });
+  if (earlier && !earlier.dedup && earlier.sha256 === sha256Hex(result)) {
+    const text = `${DEDUP_PREFIX}${earlier.turn} (same range); its content is in that earlier result.`;
+    return { status: "ok", content: [{ kind: "text", text }] };
+  }
+  return out;
+}
+
 export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}): ToolDefinition<ReadInput> {
   async function run(input: ReadInput, ctx: ToolContext): Promise<ToolOutput> {
     if (input.pages?.includes(",")) return fail("Read one page or range per call.");
@@ -82,7 +98,8 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
     if (!checked.isFile())
       return fail(`${path} is not a regular file (${kindOf(checked)}); reading it could block or never end.`);
     const isImage = byName?.startsWith("image/") === true;
-    if (byName !== undefined && !isImage)
+    const isPdf = byName === "application/pdf";
+    if (byName !== undefined && !isImage && !isPdf)
       return fail(`Binary file (${checked.size} bytes, ${byName}). Not readable as text.`);
     if (isImage && ctx.media?.images !== true) return fail("The current model can't view images.");
     await opts.afterCheck?.();
@@ -100,6 +117,25 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
       const opened = await handle.stat({ bigint: true });
       if (opened.dev !== checked.dev || opened.ino !== checked.ino || !opened.isFile())
         return fail(`${path} changed while it was being opened. Try again.`);
+
+      if (isPdf) {
+        if (opened.size > MAX_PDF_FILE_BYTES)
+          return fail(`${path} is ${Math.round(Number(opened.size) / 1048576)} MB; PDFs over 30 MB are not read.`);
+        const size = Number(opened.size);
+        const buffer = Buffer.allocUnsafe(size + 1);
+        const { bytesRead } = await handle.read(buffer, 0, size + 1, 0);
+        if (bytesRead !== size) return fail(`${path} changed while it was being read. Try again.`);
+        const out = await readPdf({
+          path,
+          bytes: buffer.subarray(0, size),
+          pages: input.pages,
+          maxTokens: ctx.settings.read?.maxTokens ?? DEFAULT_MAX_TOKENS,
+          media: ctx.media,
+          signal: ctx.signal,
+        });
+        const body = out.content.length === 1 && out.content[0]?.kind === "text" ? out.content[0].text : undefined;
+        return out.status === "ok" && body !== undefined ? deduplicated(ctx, input, body, out) : out;
+      }
 
       if (isImage && ctx.media !== undefined) {
         if (opened.size > MAX_IMAGE_FILE_BYTES)
@@ -171,21 +207,11 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
         eol: scan.eol,
       });
 
-      const earlier = ctx.readResults.lookup({
-        file_path: input.file_path,
-        offset: input.offset,
-        limit: input.limit,
-        pages: input.pages,
-      });
-      if (earlier && !earlier.dedup && earlier.sha256 === sha256Hex(result)) {
-        const text = `${DEDUP_PREFIX}${earlier.turn} (same range); its content is in that earlier result.`;
-        return { status: "ok", content: [{ kind: "text", text }] };
-      }
-      return {
+      return deduplicated(ctx, input, result, {
         status: "ok",
         content: [{ kind: "text", text: result }],
         ...(hidden > 0 ? { meta: { effects: [{ kind: "taint" as const, source: `Read: ${path}` }] } } : {}),
-      };
+      });
     } finally {
       await handle.close();
     }

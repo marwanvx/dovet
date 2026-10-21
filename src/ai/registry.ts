@@ -26,6 +26,8 @@ const Endpoint = z.strictObject({
       effortLevels: z.array(z.string()).optional(),
       imageModels: z.array(z.string()).optional(),
       imageLongEdge: z.number().int().positive().optional(),
+      pdfModels: z.array(z.string()).optional(),
+      pdfMaxPages: z.number().int().positive().optional(),
     })
     .optional(),
 });
@@ -67,12 +69,19 @@ export function endpointOf(record: ProviderRecord) {
     effortLevels: endpoint.capabilities?.effortLevels ?? [],
     imageModels: endpoint.capabilities?.imageModels ?? [],
     imageLongEdge: endpoint.capabilities?.imageLongEdge,
+    pdfModels: endpoint.capabilities?.pdfModels ?? [],
+    pdfMaxPages: endpoint.capabilities?.pdfMaxPages,
   };
 }
 
 const ModelOverride = z.object({
   capabilities: z
-    .object({ images: z.boolean().optional(), imageLongEdge: z.number().int().positive().optional() })
+    .object({
+      images: z.boolean().optional(),
+      imageLongEdge: z.number().int().positive().optional(),
+      pdfs: z.boolean().optional(),
+      pdfMaxPages: z.number().int().positive().optional(),
+    })
     .optional(),
   quirks: z.object({ maxImages: z.number().int().positive().nullable().optional() }).optional(),
 });
@@ -89,6 +98,20 @@ export function imageSupport(
     images: mine.capabilities?.images ?? ep.imageModels.includes(model),
     longEdge: mine.capabilities?.imageLongEdge ?? ep.imageLongEdge ?? 2000,
     maxImages: mine.quirks?.maxImages ?? ep.quirks.maxImages ?? null,
+  };
+}
+
+/** Whether the model takes PDFs as documents: the endpoint's list of PDF models, or the user's `models.<id>` override (tools §1.7). */
+export function pdfSupport(
+  ep: { pdfModels: readonly string[]; pdfMaxPages: number | undefined },
+  model: string,
+  override: unknown,
+): { pdfs: boolean; maxPages: number | null } {
+  const user = ModelOverride.safeParse(override);
+  const mine = user.success ? user.data : {};
+  return {
+    pdfs: mine.capabilities?.pdfs ?? ep.pdfModels.includes(model),
+    maxPages: mine.capabilities?.pdfMaxPages ?? ep.pdfMaxPages ?? null,
   };
 }
 

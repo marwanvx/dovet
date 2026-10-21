@@ -14,6 +14,7 @@ export {
   SCENARIOS,
   type Scenario,
 } from "./nvidia-scenarios.ts";
+export { ENCRYPTED_PDF, numberedPdf, testPdf } from "./pdf.ts";
 export { fakePlatform } from "./platform.ts";
 export { type ScriptStep, scriptedModel } from "./scripted-model.ts";
 export { type Scripted, type Step, startScriptedServer } from "./scripted-server.ts";
