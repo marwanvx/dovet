@@ -79,7 +79,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F20 (M2-09c reviewer eval): resume then a new writer may glue an event onto a torn line
 - **Severity:** major (reproduced) · `src/store/event-log/resume.ts:434`
 - A `medium` reviewer run on M1-29 reported that after resuming a log whose last line is half-written, the next writer appends its event to that half line, corrupting both. Write a log ending in a partial line, resume, append, and read it back.
-- **Fixed (#PR):** `resumeSession` wrote the sidecar with `bytes` = the file size including the half line, so the writer's size check passed and skipped the `\n` + crash-repair marker; the sidecar now records only the complete lines. Test `resume.test.ts` "resuming a torn log … never glues", ASCII and a cut multi-byte tail.
+- **Fixed (#175):** `resumeSession` wrote the sidecar with `bytes` = the file size including the half line, so the writer's size check passed and skipped the `\n` + crash-repair marker; the sidecar now records only the complete lines. Test `resume.test.ts` "resuming a torn log … never glues", ASCII and a cut multi-byte tail.
 
 ### F19 (M2-09 progress entry): test runs leak `dovet-tool-*` temp directories
 - **Severity:** major · unknown source (the M2-09 tests clean up)
