@@ -2,6 +2,7 @@
 // Other modules import only from this file.
 export { EventEnvelope } from "./envelope.ts";
 export {
+  BudgetEventData,
   CheckpointData,
   EpochStartData,
   FileChangeData,

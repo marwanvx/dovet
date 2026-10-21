@@ -3,14 +3,17 @@ import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import pkg from "../../package.json";
 import {
+  BudgetMeter,
   buildRequest,
   cacheReadOf,
   cacheWarning,
   checkTranscriptPairing,
+  DailyLedger,
   decideStopAction,
   discoverInstructions,
   ENDED_NOT_RUN,
   type ExecutedResult,
+  estimateRequest,
   executeTools,
   GuardTracker,
   historyRepairOffer,
@@ -19,17 +22,20 @@ import {
   type InstructionContext,
   instructionsUpdated,
   isEarlyEligible,
+  type Limits,
   type LoadedInstruction,
   MAX_REQUESTS_PER_TURN,
   modelRequestBody,
   modelRequestData,
   type ParsedCall,
+  PLACEHOLDER_RATES,
   parseToolCalls,
   prefixFingerprint,
   prompt,
   REFUSAL_NOT_RUN,
   renderSystemPrompt,
   requestCapFor,
+  responseSpend,
   serializeTools,
   sessionDate,
   shellToolFor,
@@ -52,6 +58,7 @@ import {
   type RenderInput,
   type SdkCall,
   type StreamEvent,
+  type TokenTotals,
 } from "../ai/index.ts";
 import {
   canonicalizePath,
@@ -79,8 +86,8 @@ import {
   sandboxStatus,
   secretsFromEnv,
 } from "../policy/index.ts";
-import type { AbsPath, EventEnvelope, StoredResponse } from "../schema/index.ts";
-import { InstructionsLoadedData, PermissionMode } from "../schema/index.ts";
+import type { AbsPath, EventEnvelope, Settings, StoredResponse } from "../schema/index.ts";
+import { BudgetEventData, InstructionsLoadedData, PermissionMode } from "../schema/index.ts";
 import {
   createBlobStore,
   createCredentials,
@@ -269,20 +276,13 @@ function isPlainRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-export function computeUsageCost(u: Record<string, unknown>): number {
-  if (typeof u.cost === "number" && Number.isFinite(u.cost)) return u.cost;
-  const inTok =
-    typeof (u.inputTokens as { total?: unknown })?.total === "number"
-      ? Number((u.inputTokens as { total?: unknown }).total)
-      : Number(u.promptTokens ?? u.prompt_tokens) || 0;
-  const outTok =
-    typeof (u.outputTokens as { total?: unknown })?.total === "number"
-      ? Number((u.outputTokens as { total?: unknown }).total)
-      : Number(u.completionTokens ?? u.completion_tokens) || 0;
-  if (inTok > 0 || outTok > 0) {
-    return inTok * 0.000002 + outTok * 0.000006;
-  }
-  return 0.001;
+function budgetLimits(cli: number | undefined, b: Settings["budget"]): Limits {
+  return {
+    turn: b?.turn ?? null,
+    session: cli ?? b?.session ?? null,
+    day: b?.daily ?? null,
+    tokens: b?.tokens ?? null,
+  };
 }
 
 export function openTasksFromEvents(events: readonly EventEnvelope[]): number {
@@ -533,6 +533,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
   const events: EventEnvelope[] = [];
   let shuttingDown = false;
   let shellSnapshot: ShellSnapshot | undefined;
+  const ledger = new DailyLedger({ dir: `${input.dirs.data}/budget`, session: sessionId, now: input.clock.now });
+  let ledgerWarned = false;
+  const ledgerFailed = (err: unknown): void => {
+    if (ledgerWarned) return;
+    ledgerWarned = true;
+    warnings.push(`the daily budget ledger could not be updated: ${err instanceof Error ? err.message : String(err)}`);
+  };
   input.onSession?.({
     // A stop signal closes the log before it aborts the turn: the writes the abort still unwinds with are dropped.
     shutdown: () => {
@@ -868,6 +875,23 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     if (resumed.lines > 0) guards.cost = resumed.state.costUsd;
     const costOut = (): number | null => (guards.cost > 0 ? Number(guards.cost.toFixed(6)) : null);
     const maxRequests = input.args.maxRequests ?? MAX_REQUESTS_PER_TURN;
+    const endpoint = record === undefined ? undefined : endpointOf(record);
+    const protocol = configured?.protocol ?? endpoint?.protocol ?? "openai-chat";
+    const meter = new BudgetMeter(budgetLimits(input.args.budget, effectiveSettings.budget), {
+      sessionUsd: guards.cost,
+      sessionTokens: 0,
+    });
+    let lastTokens: TokenTotals | null = null;
+    let lastBodyChars: number | null = null;
+    const outputTokens: number[] = [];
+    let requestSeq = 0;
+    const budgetEvent = (data: BudgetEventData): void => {
+      push("budget.event", epochNum, turn, BudgetEventData.parse(data));
+      if (data.kind === "warn")
+        warnings.push(
+          `${data.scope} budget at 80% (${data.spent.toFixed(data.scope === "tokens" ? 0 : 2)} of ${data.limit})`,
+        );
+    };
     // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
     const pollAndApply = async (): Promise<void> => {
       const poll = await pollSettings(snapshot, input.loadInput);
@@ -998,6 +1022,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     // Turn-scoped: `cancelled` means no output anywhere in the turn — an abort on a follow-up request does not relabel it.
     let sawOutput = false;
 
+    meter.startTurn();
     for (;;) {
       await pollAndApply();
       ctx = buildCtx();
@@ -1097,9 +1122,44 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const call = adapter.render({ header, params, transcript: built.transcript, cache });
       const fingerprint = prefixFingerprint(call);
       const messageCount = (call.messages as unknown[]).length;
-      const sessionBudget = input.args.budget ?? effectiveSettings.budget?.session;
-      const budgetStops = sessionBudget !== undefined && sessionBudget !== null && guards.cost >= sessionBudget;
-      const pre = guards.beforeRequest(modelRequestBody(call), budgetStops, maxRequests);
+      const bodyText = modelRequestBody(call);
+      meter.limits = budgetLimits(input.args.budget, effectiveSettings.budget);
+      const estimate = estimateRequest({
+        last: lastTokens,
+        newChars: lastBodyChars === null ? bodyText.length : bodyText.length - lastBodyChars,
+        outputs: outputTokens,
+        rates: PLACEHOLDER_RATES,
+      });
+      requestSeq += 1;
+      const requestId = `${sessionId}.${requestSeq}`;
+      let budgetStop = meter.check({
+        usd: estimate.usd,
+        tokens: estimate.inputTokens + estimate.cacheReadTokens + estimate.outputTokens,
+      });
+      let reserved = false;
+      if (budgetStop === null) {
+        try {
+          const r = await ledger.reserve(requestId, estimate.usd, meter.limits.day);
+          reserved = r.ok;
+          if (!r.ok) budgetStop = meter.dayStop(r.daySpent, estimate.usd);
+          else for (const w of meter.warnings(r.daySpent)) budgetEvent(w);
+        } catch (err) {
+          if (meter.limits.day !== null)
+            budgetStop = {
+              scope: "day",
+              spent: 0,
+              limit: meter.limits.day,
+              estimate: estimate.usd,
+              message: `The daily budget cannot be checked (${err instanceof Error ? err.message : String(err)}).`,
+            };
+          else ledgerFailed(err);
+        }
+      }
+      const pre = guards.beforeRequest(bodyText, budgetStop !== null, maxRequests);
+      if (reserved && ("pause" in pre || pre.doomed)) {
+        reserved = false;
+        await ledger.release(requestId).catch(ledgerFailed);
+      }
       if ("doomed" in pre && pre.doomed) {
         push("turn.end", epochNum, turn, { reason: "error" });
         await flushLog();
@@ -1117,11 +1177,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         };
       }
       if ("pause" in pre) {
-        push("turn.end", epochNum, turn, { reason: "error" });
+        const stopped = pre.pause.guard === "budget" ? budgetStop : null;
+        if (stopped !== null)
+          budgetEvent({ kind: "limit-reached", scope: stopped.scope, spent: stopped.spent, limit: stopped.limit });
+        push("turn.end", epochNum, turn, { reason: stopped === null ? "error" : "budget" });
         await flushLog();
         return {
           sessionId,
-          result: pre.pause.message,
+          result: stopped === null ? pre.pause.message : `${stopped.message} ${pre.pause.message}`,
           stopReason: "error",
           incomplete: true,
           usage,
@@ -1336,7 +1399,25 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
       const requestUsage = jsonSafeUsage({ ...(done.stored.usage as Record<string, unknown>) });
       usage = addUsage(usage, requestUsage);
-      guards.cost += computeUsageCost(requestUsage);
+      const spend = responseSpend({
+        protocol,
+        model: header.model,
+        usage: requestUsage,
+        billing: endpoint?.billing ?? "per-token",
+      });
+      guards.cost += spend.usd;
+      const t = spend.tokens;
+      meter.record("main", spend.usd, t.input + t.cacheRead + t.cacheWrite + t.output);
+      lastTokens = t;
+      lastBodyChars = bodyText.length;
+      outputTokens.push(t.output);
+      const daySpent = reserved
+        ? await ledger.commit(requestId, spend.usd).catch((e: unknown) => {
+            ledgerFailed(e);
+            return null;
+          })
+        : null;
+      for (const w of meter.warnings(daySpent)) budgetEvent(w);
       const read = cacheReadOf(requestUsage);
       const warn = cacheWarning(prevCache === undefined ? undefined : { turn: prevTurn, cacheReadTokens: prevCache }, {
         turn,
@@ -1705,6 +1786,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         await input.platform.killTree(`snapshot:${sessionId}`);
         await shellSnapshot.ready();
       }
+      await ledger.releaseOutstanding().catch(ledgerFailed);
       await writer.close();
     }
   }

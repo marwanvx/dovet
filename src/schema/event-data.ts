@@ -71,6 +71,14 @@ export const TurnEndData = z.object({
   reason: z.enum(["end_turn", "interrupted", "cancelled", "error", "budget", "refusal", "max-turns", "crashed"]),
 });
 
+/** `limit-reached` stops the next request; `extended` is a user raising the limit at the pause (M3). Dollars, except tokens for scope `tokens`. */
+export const BudgetEventData = z.object({
+  kind: z.enum(["warn", "limit-reached", "extended"]),
+  scope: z.enum(["turn", "session", "day", "tokens"]),
+  spent: z.number().nonnegative(),
+  limit: z.number().nonnegative(),
+});
+
 /** A path a snapshot left out of its tree (over the size limits, a submodule, a link): the receipt lists it as not restorable. */
 const CheckpointSkipped = z.object({
   path: z.string().min(1),
@@ -141,6 +149,7 @@ export type UserMessageData = z.infer<typeof UserMessageData>;
 export type ToolCallData = z.infer<typeof ToolCallData>;
 export type ToolMedia = z.infer<typeof ToolMedia>;
 export type ToolResultData = z.infer<typeof ToolResultData>;
+export type BudgetEventData = z.infer<typeof BudgetEventData>;
 export type TurnEndData = z.infer<typeof TurnEndData>;
 export type PrefixFingerprint = z.infer<typeof PrefixFingerprint>;
 export type ModelRequestData = z.infer<typeof ModelRequestData>;

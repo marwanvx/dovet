@@ -67,7 +67,7 @@ type EventEnvelope = {
 | `shell.snapshot` | shell, version, status (ok / failed / timeout + reason), path of `shell-env.json`, variable count, duration, number of rc-spawned processes killed | Snapshot finished (started at session start) |
 | `taint.change` | tainted (bool), source (tool call id, URL, MCP server) | Taint set or cleared |
 | `user.shell` | command, exit code, output (limited as Bash), duration | `!` shell mode ([tui](tui.md)) |
-| `budget.event` | kind (warn/limit-reached/extended), scope (turn/session/day), spent, limit | Thresholds crossed |
+| `budget.event` | kind (warn/limit-reached/extended), scope (turn/session/day/tokens), spent, limit | Thresholds crossed |
 | `receipt` | the full receipt object ([receipts-budgets](receipts-budgets.md)) | Turn ends |
 | `turn.end` | turn, reason (end_turn/interrupted/cancelled/error/budget/refusal/max-turns/crashed), duration. `cancelled` = interrupted before any model output: that turn's user message is excluded from the transcript ([agent-loop](agent-loop.md)) | Turn ends |
 | `settings.change` | key, old, new, source | `/model`, `/effort`, `/mode`, etc. |

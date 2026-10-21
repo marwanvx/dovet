@@ -64,6 +64,8 @@ export function endpointOf(record: ProviderRecord) {
   if (endpoint === undefined) throw new Error(`provider record "${record.id}" has no endpoint`);
   return {
     package: endpoint.package,
+    protocol: endpoint.protocol,
+    billing: endpoint.billing,
     baseURL: endpoint.baseUrl,
     quirks: endpoint.quirks ?? {},
     effortLevels: endpoint.capabilities?.effortLevels ?? [],
