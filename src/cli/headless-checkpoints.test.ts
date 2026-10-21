@@ -11,8 +11,10 @@ import { runHeadless } from "./headless-run.ts";
 
 const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 
-const read = { toolCall: { id: "c1", name: "Read", input: { file_path: "a.txt" } } };
-const write = { toolCall: { id: "c2", name: "Write", input: { file_path: "a.txt", content: "changed\n" } } };
+const readOf = (root: string) => ({ toolCall: { id: "c1", name: "Read", input: { file_path: join(root, "a.txt") } } });
+const writeOf = (root: string) => ({
+  toolCall: { id: "c2", name: "Write", input: { file_path: join(root, "a.txt"), content: "changed\n" } },
+});
 
 async function run(root: string, steps: Parameters<typeof scriptedModel>[0]) {
   const env = { NVIDIA_API_KEY: "nvapi-FAKE", HOME: process.env.HOME ?? "/tmp", PATH: process.env.PATH };
@@ -68,6 +70,14 @@ async function run(root: string, steps: Parameters<typeof scriptedModel>[0]) {
   return { out, events: log.events };
 }
 
+/** Throws with the tool outputs when a tool did not succeed, so a failure on one OS says why. */
+function expectToolsOk(events: readonly EventEnvelope[]): void {
+  const results = events
+    .filter((e) => e.type === "tool.result")
+    .map((e) => e.data as { status: string; output: string });
+  if (results.some((r) => r.status !== "ok")) throw new Error(JSON.stringify(results));
+}
+
 const checkpointsOf = (events: readonly EventEnvelope[]): CheckpointData[] =>
   events.filter((e) => e.type === "checkpoint").map((e) => CheckpointData.parse(e.data));
 
@@ -86,7 +96,8 @@ describe("checkpoints in a headless turn", () => {
       git(dir.root, "init", "-q");
       git(dir.root, "add", ".");
       git(dir.root, "commit", "-q", "-m", "init");
-      const { out, events } = await run(dir.root, [read, write, { text: "done" }]);
+      const { out, events } = await run(dir.root, [readOf(dir.root), writeOf(dir.root), { text: "done" }]);
+      expectToolsOk(events);
       expect(out.exit).toEqual({ kind: "ok" });
       expect(await readFile(join(dir.root, "a.txt"), "utf8")).toBe("changed\n");
       const [only, ...rest] = checkpointsOf(events);
@@ -104,7 +115,8 @@ describe("checkpoints in a headless turn", () => {
   test("outside git the checkpoint keeps the file's old bytes in the blob store", async () => {
     const dir = await tempProject({ "a.txt": "original\n" });
     try {
-      const { events } = await run(dir.root, [read, write, { text: "done" }]);
+      const { events } = await run(dir.root, [readOf(dir.root), writeOf(dir.root), { text: "done" }]);
+      expectToolsOk(events);
       const [only] = checkpointsOf(events);
       expect(only?.mechanism).toBe("blobs");
       const before = only?.mechanism === "blobs" ? only.files[0]?.before : undefined;
@@ -125,7 +137,8 @@ describe("checkpoints in a headless turn", () => {
       git(dir.root, "init", "-q");
       git(dir.root, "add", ".");
       git(dir.root, "commit", "-q", "-m", "init");
-      const { events } = await run(dir.root, [read, write, { text: "done" }]);
+      const { events } = await run(dir.root, [readOf(dir.root), writeOf(dir.root), { text: "done" }]);
+      expectToolsOk(events);
       expect(checkpointsOf(events).map((c) => c.mechanism)).toEqual(["blobs"]);
     } finally {
       await dir.dispose();
@@ -138,7 +151,7 @@ describe("checkpoints in a headless turn", () => {
       git(dir.root, "init", "-q");
       git(dir.root, "add", ".");
       git(dir.root, "commit", "-q", "-m", "init");
-      const { events } = await run(dir.root, [read, { text: "done" }]);
+      const { events } = await run(dir.root, [readOf(dir.root), { text: "done" }]);
       expect(checkpointsOf(events)).toEqual([]);
     } finally {
       await dir.dispose();
