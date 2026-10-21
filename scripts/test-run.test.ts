@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,14 +8,18 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
 });
 
-async function run(testSource: string): Promise<{ code: number; out: string }> {
+async function run(sources: string[], cwd?: string): Promise<{ code: number; out: string }> {
   const dir = await mkdtemp(join(tmpdir(), "dovet-testrun-"));
   dirs.push(dir);
-  await symlink(join(import.meta.dir, "..", "node_modules"), join(dir, "node_modules"), "junction");
-  const file = join(dir, "fixture.test.ts");
-  await writeFile(file, testSource);
-  const proc = Bun.spawn(["bun", join(import.meta.dir, "test-run.ts"), file], {
-    cwd: dir,
+  const files = await Promise.all(
+    sources.map(async (source, i) => {
+      const file = join(dir, `fixture${i}.test.ts`);
+      await writeFile(file, source);
+      return file;
+    }),
+  );
+  const proc = Bun.spawn(["bun", join(import.meta.dir, "test-run.ts"), ...files], {
+    cwd: cwd ?? dir,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -23,7 +27,7 @@ async function run(testSource: string): Promise<{ code: number; out: string }> {
   return { code, out: out + err };
 }
 
-const body = (cleanup: string): string => `
+const body = (cleanup: string): string => `// @ts-nocheck
 import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -37,13 +41,25 @@ test("makes a workspace", async () => {
 
 describe("bun run test", () => {
   test("a run that leaves a dovet-tool- directory behind fails and names it", async () => {
-    const { code, out } = await run(body(""));
+    const { code, out } = await run([body("")]);
     expect(code).not.toBe(0);
     expect(out).toMatch(/left 1 temp director(y|ies) behind[\s\S]*dovet-tool-/);
   }, 30_000);
 
   test("a run that removes what it made passes", async () => {
-    const { code, out } = await run(body("await rm(dir, { recursive: true, force: true });"));
+    const { code, out } = await run([body("await rm(dir, { recursive: true, force: true });")]);
+    expect(out).not.toContain("left");
+    expect(code).toBe(0);
+  }, 30_000);
+
+  test("every test file's workspace() directories are removed, not only the first file's", async () => {
+    const context = JSON.stringify(join(import.meta.dir, "..", "src", "tools", "test-context.ts"));
+    const file = `// @ts-nocheck
+import { test } from "bun:test";
+import { workspace } from ${context};
+test("makes a workspace", async () => { await workspace(); });
+`;
+    const { code, out } = await run([file, file], join(import.meta.dir, ".."));
     expect(out).not.toContain("left");
     expect(code).toBe(0);
   }, 30_000);
