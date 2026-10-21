@@ -1,6 +1,7 @@
 // What one session log keeps alive (event-log "Blob store": essential blobs vs rewind-only data).
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
+import { isErrno } from "../../platform/index.ts";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const ANY_HEX64 = /[0-9a-f]{64}/g;
@@ -48,19 +49,24 @@ function typed(type: unknown, data: unknown, refs: LogRefs): void {
 export async function traceLog(path: string): Promise<LogRefs> {
   const refs: LogRefs = { essential: new Set(), rewind: new Set(), trees: new Set() };
   const lines = createInterface({ input: createReadStream(path), crlfDelay: Number.POSITIVE_INFINITY });
-  for await (const line of lines) {
-    if (!/\$blob|"blob"|"file\.change"|"checkpoint"/.test(line)) continue;
-    let event: unknown;
-    try {
-      event = JSON.parse(line);
-    } catch {
-      for (const m of line.matchAll(ANY_HEX64)) refs.essential.add(m[0]);
-      continue;
+  try {
+    for await (const line of lines) {
+      if (!/\$blob|"blob"|"file\.change"|"checkpoint"/.test(line)) continue;
+      let event: unknown;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        for (const m of line.matchAll(ANY_HEX64)) refs.essential.add(m[0]);
+        continue;
+      }
+      if (typeof event !== "object" || event === null) continue;
+      const { type, data } = event as { type?: unknown; data?: unknown };
+      walk(data, refs.essential);
+      typed(type, data, refs);
     }
-    if (typeof event !== "object" || event === null) continue;
-    const { type, data } = event as { type?: unknown; data?: unknown };
-    walk(data, refs.essential);
-    typed(type, data, refs);
+  } catch (err) {
+    // A log deleted since it was listed (`dovet sessions delete`, `project purge`) references nothing.
+    if (!isErrno(err, "ENOENT")) throw err;
   }
   return refs;
 }

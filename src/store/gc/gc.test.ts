@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createBlobStore } from "../blobs/index.ts";
 import { rewindExpired } from "../event-log/index.ts";
 import { type GcInput, type GcSettings, runGc } from "./index.ts";
+import { traceLog } from "./refs.ts";
 
 const DAY = 86_400_000;
 const NOW = Date.now();
@@ -208,6 +209,15 @@ describe("blob classes", () => {
     expect(w.blobs.putSync(new TextEncoder().encode("same image attached again"))).toBe(sha);
     await w.gc({ graceMs: 3_600_000 });
     expect(existsSync(w.blobPath(sha))).toBe(true);
+  });
+
+  test("a log deleted after it was listed references nothing and does not stop the run", async () => {
+    const w = await world();
+    expect(await traceLog(join(w.sessionsDir("p1"), "gone.jsonl"))).toEqual({
+      essential: new Set(),
+      rewind: new Set(),
+      trees: new Set(),
+    });
   });
 
   test("a blob written moments ago, before its event was logged, is left alone", async () => {
