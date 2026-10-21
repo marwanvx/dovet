@@ -89,8 +89,11 @@ function git(cwd: string, ...args: string[]): void {
   if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")}: ${r.stderr.toString()}`);
 }
 
+// A run starts about a dozen git processes; on a loaded Windows runner the default 5 s was missed (CI run 39644059949).
+const gitTest = (name: string, fn: () => Promise<void>): void => test(name, fn, 30_000);
+
 describe("checkpoints in a headless turn", () => {
-  test("a git workspace logs a git-tree checkpoint c1 before the turn's first change", async () => {
+  gitTest("a git workspace logs a git-tree checkpoint c1 before the turn's first change", async () => {
     const dir = await tempProject({ "a.txt": "original\n" });
     try {
       git(dir.root, "init", "-q");
@@ -128,7 +131,7 @@ describe("checkpoints in a headless turn", () => {
     }
   });
 
-  test("checkpoints.enabled: false keeps blobs even in a git workspace", async () => {
+  gitTest("checkpoints.enabled: false keeps blobs even in a git workspace", async () => {
     const dir = await tempProject({
       "a.txt": "original\n",
       ".dovet/settings.json": '{"checkpoints":{"enabled":false}}',
@@ -145,7 +148,7 @@ describe("checkpoints in a headless turn", () => {
     }
   });
 
-  test("a turn that only reads logs no checkpoint", async () => {
+  gitTest("a turn that only reads logs no checkpoint", async () => {
     const dir = await tempProject({ "a.txt": "original\n" });
     try {
       git(dir.root, "init", "-q");

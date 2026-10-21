@@ -1,20 +1,15 @@
-import { afterEach } from "bun:test";
 import { realpathSync } from "node:fs";
-import { chmod, mkdtemp, rename, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeAfterTest } from "../../test/helpers/workspaces.ts";
 import { createPlatformCore, type Os } from "../platform/index.ts";
 import { type AbsPath, Settings } from "../schema/index.ts";
 import { createReadState, type ReadResultsIndex, type ToolContext, type ToolOutput } from "./index.ts";
 
-const dirs: string[] = [];
-afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })));
-});
-
 export async function workspace(): Promise<string> {
   const dir = realpathSync.native(await mkdtemp(join(tmpdir(), "dovet-tool-")));
-  dirs.push(dir);
+  removeAfterTest(dir);
   return dir;
 }
 
