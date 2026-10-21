@@ -109,7 +109,8 @@ type ProviderRecord = {                     // ai/providers.jsonc entries, model
 
 type Endpoint = { id: string; region: string; plan: "platform" | "coding-plan" | "chatgpt-plan"; package: string /* AI SDK provider package (providers) */; protocol: Protocol; baseUrl: string;
     billing: "per-token" | "plan"; models: "catalog" | "endpoint" | { static: string[] }; quirks?: Partial<Quirks>; capabilities?: Partial<Capabilities>;
-    search?: "anthropic-server-tool" | "responses-web-search" | "gemini-grounding" };
+    search?: "anthropic-server-tool" | "responses-web-search" | "gemini-grounding";
+    priceMultiplier?: number /* default 1; 1.1 for a regional Bedrock or Vertex endpoint (receipts-budgets) */ };
 
 type EpochHeader = {                        // stored inline in `epoch.start` (event-log); replay uses these bytes, never a re-render
   epoch: number; provider: string; model: string; promptVersion: string;   // version of docs/prompts/ embedded in the binary

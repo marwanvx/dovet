@@ -1,6 +1,7 @@
 // Agent turn loop (agent-loop "Turn state machine", "Stop-reason handling", "Tool execution within a turn", "Loop and runaway protection").
 
 import type { ProviderErrorInfo, ProviderRequest, StopReason } from "../ai/index.ts";
+import { BILLED_REFUSAL_CATEGORIES } from "../ai/index.ts";
 import type { ShellChoice } from "../platform/index.ts";
 import type { Env, NamedSecret, RuleContext, RuleSet, ShellParsers } from "../policy/index.ts";
 import { redactText, ruleSetFromSettings } from "../policy/index.ts";
@@ -101,8 +102,6 @@ export type StopAction =
   | { kind: "retry" }
   | { kind: "compact-retry" }
   | { kind: "pause-continue" };
-
-const BILLED_REFUSAL_CATEGORIES = new Set(["bio", "frontier_llm", "reasoning_extraction"]);
 
 export const TRUNCATED_INSTRUCTION =
   "Your previous response was cut off at the output limit while writing a tool call. Retry with a smaller step.";
