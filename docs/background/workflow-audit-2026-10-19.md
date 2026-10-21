@@ -77,3 +77,42 @@ What the numbers say:
 - **Follow-up filed:** F17 (CI runs per task rose on deep tasks).
 
 Recheck again after the next 5 tasks, with `TASKS=<ids> bun ../baseline.ts` (the task list now comes from the environment).
+
+## Reviewer eval from past bugs, 2026-10-21
+
+Question: does the `reviewer` agent find bugs that the 2026-10-16/17 re-review wave found after merge, and does `effort: medium` find more than `effort: low`?
+
+**Cases.** The 15 re-review reports in `.agents/review-backlog/` (the copies in `.opencode/review-backlog/` carry the same findings) give 10 cases with a blocker or major: M1-24, M1-25, M1-26, M1-28, M1-29, M1-32, M2-01, M2-02, M2-03, M2-04. The other five (CI-fix-108, M1-23c, M1-27, M1-30, M1-31) found nothing above minor, and M2-plan-check is a plan check; none is a case. A case is the task's own PR as the reviewer would have seen it: the PR's first parent checked out, the PR's diff applied and uncommitted, in a fresh `git init` copy (no later history to read, no report). "Known bug" is a blocker or major from the report.
+
+| Set | Cases |
+|---|---|
+| Tuner may see | M1-24, M1-25, M1-26, M1-28, M2-01 |
+| Held out | M1-29, M1-32, M2-02, M2-03, M2-04 |
+
+No tuning was done (the reviewer prompt is unchanged), so the held-out set is clean and the tuner cases were not run: the budget of this run was $10.
+
+**Held-out cases.** Each run was one `reviewer` subagent given the task id and the checkout (all three lenses, targeted tests only), `effort` set per run. Merge commits: M1-29 `abfd607`, M1-32 `0d6d85c`, M2-02 `2cee829`, M2-03 `82e95b2`, M2-04 `a3c5797`.
+
+| Case (known bugs) | low found | medium found |
+|---|---|---|
+| M2-04 (2: `redact.ts` offsets cut after a non-BMP character, taint never applied in headless) | 1: taint | 1: taint |
+| M2-02 (3: `decide.ts:312` assignment prefix hides a dynamic command, bare `xargs` auto-allows, no test for `lifted:false` while tainted) | 0 | 2: assignment prefix, missing test |
+| M1-32 (1 blocker: `--repair` renders with no earlier history, `build.ts:45`) | 0 | 0 |
+| M1-29 (2 blockers: repair-epoch test, stored-tools test) | 2 | 2 (and a torn-line sidecar bug no report lists, not verified) |
+| M2-03 (2: Done-when unmet, level 2 unreachable behind MXC) | 2 | 1: Done-when |
+| **Total (10 known)** | **5** | **6** |
+| Reviewer tokens (as reported, cache reads excluded) | 289,695 | 370,829 (+28%) |
+
+The first low run on M2-04 cost $0.53 of API spend; the nine runs together about $7.3.
+
+What the numbers say (a small sample: 5 cases, 10 bugs, one run each):
+- Both levels find what is visible by reading: code nothing calls, a Done-when with no real test, a test that cannot fail, fail-open `catch`. All 9 runs reported wiring gaps.
+- Both miss what needs an input to be tried: the non-BMP offsets in `redact.ts`, `--repair` losing history, bare `xargs`. Neither level ever ran such an input, so a higher effort on the same prompt did not change this class.
+- Medium found 6 of 10, low 5 of 10: medium gained 2 on M2-02 and lost 1 on M2-03, so one bug in total, which one run per case cannot tell from chance. It cost about 28% more tokens and 3 to 5 times the wall time (about 4 to 7 minutes against 1 to 2).
+- The bugs are of two kinds: the unreached ones above, and a Done-when with no real proof. A prompt change aimed at the first (try one hostile input per criterion, say it in the report) is the lever to test next, on the five tuner cases.
+
+**Decision.** The reviewer stays at `effort: low` (`.claude/agents/reviewer.md` unchanged): one more bug in ten for 28% more tokens and several times the wait is not a result. `security-reviewer` stays at `medium` (its lens is the hostile-input one, and this eval did not test it). Re-run this eval when the reviewer prompt changes, on the tuner cases first.
+
+Reproduce a case: `git archive <merge>^1 | tar -x -C <dir>`, `git init` and commit there, `git diff <merge>^1 <merge> | git apply` in `<dir>`, link `node_modules`, then ask the `reviewer` agent to review the task in `<dir>`.
+
+Runs that went wrong: reviewers' `bun run check` (300 s) never finishes on a copy; ask for targeted tests only. The copies predate `REVIEW.md`, so the reviewers used the report format in the brief.
