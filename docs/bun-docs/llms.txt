@@ -1,0 +1,328 @@
+# Bun
+
+## Docs
+
+- [Welcome to Bun](docs/index.md): Bun is an all-in-one toolkit for developing modern JavaScript/TypeScript applications.
+- [Installation](docs/installation.md): Install Bun with npm, Homebrew, Docker, or the official script.
+- [Quickstart](docs/quickstart.md): Build your first app with Bun
+- [TypeScript](docs/typescript.md): Using TypeScript with Bun, including type definitions and compiler options
+- [TypeScript 6 and 7](docs/typescript-6.md): How to configure Bun's type definitions for TypeScript 6.0 and 7.0, which no longer auto-discover @types packages. Fix 'Cannot find name Bun' and other missing type errors after upgrading TypeScript.
+- [bun init](docs/runtime/templating/init.md): Scaffold an empty Bun project with the interactive `bun init` command
+- [bun create](docs/runtime/templating/create.md): Create a new Bun project from a React component, a `create-<template>` npm package, a GitHub repo, or a local template
+- [Bun Runtime](docs/runtime/index.md): Execute JavaScript/TypeScript files, package.json scripts, and executable packages with Bun's fast runtime.
+- [Watch Mode](docs/runtime/watch-mode.md): Automatic reloading in Bun with --watch and --hot modes
+- [Debugging](docs/runtime/debugger.md): Debug your Bun code with an interactive debugger using WebKit Inspector Protocol
+- [REPL](docs/runtime/repl.md): An interactive JavaScript and TypeScript REPL with syntax highlighting, history, and tab completion
+- [bunfig.toml](docs/runtime/bunfig.md): Configure Bun's behavior using its configuration file bunfig.toml
+- [File Types](docs/runtime/file-types.md): File types and loaders supported by Bun's bundler and runtime
+- [Module Resolution](docs/runtime/module-resolution.md): How Bun resolves modules and handles imports in JavaScript and TypeScript
+- [JSX](docs/runtime/jsx.md): Built-in JSX and TSX support in Bun with configurable transpilation options
+- [Auto-install](docs/runtime/auto-install.md): Bun's automatic package installation feature for standalone script execution
+- [Plugins](docs/runtime/plugins.md): Universal plugin API for extending Bun's runtime and bundler
+- [File System Router](docs/runtime/file-system-router.md): Bun provides a fast API for resolving routes against file-system paths
+- [Server](docs/runtime/http/server.md): Use `Bun.serve` to start a high-performance HTTP server in Bun
+- [Routing](docs/runtime/http/routing.md): Define routes in `Bun.serve` using static paths, parameters, and wildcards
+- [Cookies](docs/runtime/http/cookies.md): Work with cookies in HTTP requests and responses using Bun's built-in Cookie API.
+- [TLS](docs/runtime/http/tls.md): Enable TLS in Bun.serve
+- [Error Handling](docs/runtime/http/error-handling.md): Learn how to handle errors in Bun's development server
+- [Metrics](docs/runtime/http/metrics.md): Monitor server activity with built-in metrics
+- [Fetch](docs/runtime/networking/fetch.md): Send HTTP requests with Bun's fetch API
+- [WebSockets](docs/runtime/http/websockets.md): Server-side WebSockets in Bun
+- [TCP](docs/runtime/networking/tcp.md): Use Bun's native TCP API to implement performance-sensitive systems like database clients, game servers, or anything that needs to communicate over TCP (instead of HTTP)
+- [UDP](docs/runtime/networking/udp.md): Use Bun's UDP API to implement services with advanced real-time requirements, such as voice chat.
+- [DNS](docs/runtime/networking/dns.md): Use Bun's DNS module to resolve DNS records
+- [Cookies](docs/runtime/cookies.md): Use Bun's native APIs for working with HTTP cookies
+- [File I/O](docs/runtime/file-io.md): Bun provides a set of optimized APIs for reading and writing files.
+- [Streams](docs/runtime/streams.md): Use Bun's streams API to work with binary data without loading it all into memory at once
+- [Binary Data](docs/runtime/binary-data.md): Working with binary data in JavaScript
+- [Archive](docs/runtime/archive.md): Create and extract tar archives with Bun's fast native implementation
+- [SQL](docs/runtime/sql.md): Bun provides native bindings for working with SQL databases through a unified Promise-based API that supports PostgreSQL, MySQL, and SQLite.
+- [SQLite](docs/runtime/sqlite.md): Bun natively implements a high-performance SQLite3 driver.
+- [S3](docs/runtime/s3.md): Bun provides fast, native bindings for interacting with S3-compatible object storage services.
+- [Redis](docs/runtime/redis.md): Use Bun's native Redis client with a Promise-based API
+- [Workers](docs/runtime/workers.md): Use Bun's Workers API to create and communicate with a new JavaScript instance running on a separate thread while sharing I/O resources with the main thread
+- [Environment Variables](docs/runtime/environment-variables.md): Read and configure environment variables in Bun, including automatic .env file support
+- [Shell](docs/runtime/shell.md): Use Bun's shell scripting API to run shell commands from JavaScript
+- [Spawn](docs/runtime/child-process.md): Spawn child processes with `Bun.spawn` or `Bun.spawnSync`
+- [WebView](docs/runtime/webview.md): Control a headless browser from Bun for automation, testing, and scraping — zero dependencies on macOS, Chrome DevTools Protocol everywhere else
+- [Cron](docs/runtime/cron.md): Schedule and parse cron jobs with Bun
+- [Node-API](docs/runtime/node-api.md): Use Bun's Node-API module to build native add-ons to Node.js
+- [FFI](docs/runtime/ffi.md): Use Bun's FFI module to efficiently call native libraries from JavaScript
+- [C Compiler](docs/runtime/c-compiler.md): Compile and run C from JavaScript with low overhead
+- [Transpiler](docs/runtime/transpiler.md): Use Bun's transpiler to transpile JavaScript and TypeScript code
+- [CSRF Protection](docs/runtime/csrf.md): Generate and verify CSRF tokens with Bun's built-in API
+- [Secrets](docs/runtime/secrets.md): Use Bun's Secrets API to store and retrieve sensitive credentials securely
+- [Console](docs/runtime/console.md): The console object in Bun
+- [TOML](docs/runtime/toml.md): Use Bun's built-in support for TOML files through both runtime APIs and bundler integration
+- [YAML](docs/runtime/yaml.md): Use Bun's built-in support for YAML files through both runtime APIs and bundler integration
+- [Markdown](docs/runtime/markdown.md): Parse and render Markdown with Bun's built-in Markdown API, supporting GFM extensions and custom rendering callbacks
+- [JSON5](docs/runtime/json5.md): Use Bun's built-in support for JSON5 files through both runtime APIs and bundler integration
+- [XML](docs/runtime/xml.md): Use Bun's built-in support for XML through both runtime APIs and bundler integration
+- [JSONL](docs/runtime/jsonl.md): Parse newline-delimited JSON (JSONL) with Bun's built-in streaming parser
+- [HTMLRewriter](docs/runtime/html-rewriter.md): Use Bun's HTMLRewriter to transform HTML documents with CSS selectors
+- [Image](docs/runtime/image.md): Decode, transform, and encode images with a fast native pipeline
+- [Hashing](docs/runtime/hashing.md): Utility functions for hashing and verifying passwords with various cryptographically secure algorithms
+- [Glob](docs/runtime/glob.md): Use Bun's fast native implementation of file globbing
+- [Semver](docs/runtime/semver.md): Use Bun's semantic versioning API
+- [Color](docs/runtime/color.md): Format colors as CSS, ANSI, numbers, hex strings, and more
+- [Utils](docs/runtime/utils.md): Use Bun's utility functions to work with the runtime
+- [Globals](docs/runtime/globals.md): Use Bun's global objects
+- [Bun APIs](docs/runtime/bun-apis.md): Overview of Bun's native APIs available on the Bun global object and built-in modules
+- [Web APIs](docs/runtime/web-apis.md): Web-standard APIs supported by Bun for server-side JavaScript
+- [Node.js Compatibility](docs/runtime/nodejs-compat.md): Bun's compatibility status with Node.js APIs, modules, and globals
+- [Roadmap](docs/project/roadmap.md): Bun's roadmap and long-term plans
+- [Benchmarking](docs/project/benchmarking.md): How to benchmark Bun
+- [Contributing](docs/project/contributing.md): Contributing to Bun
+- [Building Windows](docs/project/building-windows.md): Building Bun on Windows
+- [Bindgen](docs/project/bindgen.md): Bindgen for Bun
+- [License](docs/project/license.md): License for Bun
+- [bun install](docs/pm/cli/install.md): Install packages with Bun's fast package manager
+- [bun add](docs/pm/cli/add.md): Add packages to your project with Bun's fast package manager
+- [bun remove](docs/pm/cli/remove.md): Remove dependencies from your project
+- [bun update](docs/pm/cli/update.md): Update dependencies to the newest versions their ranges allow
+- [bun dedupe](docs/pm/cli/dedupe.md): Remove duplicate versions of packages from bun.lock
+- [bun prune](docs/pm/cli/prune.md): Remove packages that are not in bun.lock from node_modules
+- [bunx](docs/pm/bunx.md): Run packages from npm
+- [bun publish](docs/pm/cli/publish.md): Use `bun publish` to publish a package to the npm registry
+- [bun outdated](docs/pm/cli/outdated.md): Check for outdated dependencies
+- [bun why](docs/pm/cli/why.md): Explain why a package is installed
+- [bun audit](docs/pm/cli/audit.md): Check your installed packages for known security vulnerabilities
+- [bun info](docs/pm/cli/info.md): Display package metadata from the npm registry
+- [Workspaces](docs/pm/workspaces.md): Develop complex monorepos with multiple independent packages
+- [Catalogs](docs/pm/catalogs.md): Share common dependency versions across multiple packages in a monorepo
+- [bun link](docs/pm/cli/link.md): Link local packages for development
+- [bun pm](docs/pm/cli/pm.md): Package manager utilities
+- [bun patch](docs/pm/cli/patch.md): Persistently patch node_modules packages in a git-friendly way
+- [bun --filter](docs/pm/filter.md): Select packages by pattern in a monorepo using the --filter flag
+- [Global cache](docs/pm/global-cache.md): How Bun stores and manages packages in its global cache
+- [Global virtual store](docs/pm/global-store.md): Install packages once. Every project links to the same copy.
+- [Isolated installs](docs/pm/isolated-installs.md): Strict dependency isolation similar to pnpm's approach
+- [Lockfile](docs/pm/lockfile.md): Bun's lockfile format and configuration
+- [Lifecycle scripts](docs/pm/lifecycle.md): How Bun handles package lifecycle scripts securely
+- [Scopes and registries](docs/pm/scopes-registries.md): Configure private registries and scoped packages
+- [Overrides and resolutions](docs/pm/overrides.md): Control metadependency versions with npm overrides and Yarn resolutions
+- [Security Scanner API](docs/pm/security-scanner-api.md)
+- [.npmrc support](docs/pm/npmrc.md)
+- [Bundler](docs/bundler/index.md): Bun's fast native bundler for JavaScript, TypeScript, JSX, and more
+- [Fullstack dev server](docs/bundler/fullstack.md): Build fullstack applications with Bun's integrated dev server that bundles frontend assets and handles API routes
+- [Hot reloading](docs/bundler/hot-reloading.md): Hot Module Replacement (HMR) for Bun's development server
+- [HTML & static sites](docs/bundler/html-static.md): Build static sites, landing pages, and web applications with Bun's bundler
+- [Standalone HTML](docs/bundler/standalone-html.md): Bundle a single-page app into a single self-contained .html file with no external dependencies
+- [CSS](docs/bundler/css.md): Bun's bundler has built-in support for CSS with modern features
+- [Loaders](docs/bundler/loaders.md): Built-in loaders for the Bun bundler and runtime
+- [Single-file executable](docs/bundler/executables.md): Generate standalone executables from TypeScript or JavaScript files with Bun
+- [Plugins](docs/bundler/plugins.md): Universal plugin API for extending Bun's runtime and bundler
+- [Macros](docs/bundler/macros.md): Run JavaScript functions at bundle-time with Bun macros
+- [Bytecode Caching](docs/bundler/bytecode.md): Speed up JavaScript execution with bytecode caching in Bun's bundler
+- [Minifier](docs/bundler/minifier.md): Reduce bundle sizes with Bun's JavaScript and TypeScript minifier
+- [esbuild](docs/bundler/esbuild.md): Migration guide from esbuild to Bun's bundler
+- [Test runner](docs/test/index.md): Bun's fast, built-in, Jest-compatible test runner with TypeScript support, lifecycle hooks, mocking, and watch mode
+- [Writing tests](docs/test/writing-tests.md): Write tests with Bun's Jest-compatible API, including async tests, timeouts, and test modifiers
+- [Test configuration](docs/test/configuration.md): Configure bun test behavior with bunfig.toml and command-line options
+- [Runtime behavior](docs/test/runtime-behavior.md): Learn about Bun test's runtime integration, environment variables, timeouts, and error handling
+- [Finding tests](docs/test/discovery.md): Learn how Bun's test runner discovers and filters test files in your project
+- [Parallel & isolated test runs](docs/test/parallel.md): Run test files across CPU cores with --parallel, isolate files from each other with --isolate, run tests within a file concurrently, and split suites across CI machines with --shard and --timings
+- [Lifecycle hooks](docs/test/lifecycle.md): Learn how to use beforeAll, beforeEach, afterEach, and afterAll lifecycle hooks in Bun tests
+- [Mocks](docs/test/mocks.md): Learn how to create and use mock functions, spies, and module mocks in Bun tests
+- [Snapshots](docs/test/snapshots.md): Learn how to use snapshot testing in Bun to save and compare output between test runs
+- [Dates and times](docs/test/dates-times.md): Learn how to manipulate time and dates in your Bun tests using setSystemTime and Jest compatibility functions
+- [DOM testing](docs/test/dom.md): Learn how to test DOM elements and components using Bun with happy-dom and React Testing Library
+- [Code coverage](docs/test/code-coverage.md): Use Bun's built-in code coverage reporting to track test coverage and find untested code
+- [Test Reporters](docs/test/reporters.md)
+- [Guides](docs/guides/index.md): Code samples and walkthroughs for common tasks with Bun
+- [Deploy a Bun application on Vercel](docs/guides/deployment/vercel.md)
+- [Deploy a Bun application on Railway](docs/guides/deployment/railway.md): Deploy a Bun application to Railway from the CLI or dashboard, with optional PostgreSQL setup and automatic SSL
+- [Deploy a Bun application on Render](docs/guides/deployment/render.md)
+- [Deploy a Bun application on AWS Lambda](docs/guides/deployment/aws-lambda.md)
+- [Deploy a Bun application on DigitalOcean](docs/guides/deployment/digital-ocean.md)
+- [Deploy a Bun application on Google Cloud Run](docs/guides/deployment/google-cloud-run.md)
+- [Install TypeScript declarations for Bun](docs/guides/runtime/typescript.md)
+- [Re-map import paths](docs/guides/runtime/tsconfig-paths.md)
+- [Debugging Bun with the VS Code extension](docs/guides/runtime/vscode-debugger.md)
+- [Debugging Bun with the web debugger](docs/guides/runtime/web-debugger.md)
+- [Inspect memory usage using V8 heap snapshots](docs/guides/runtime/heap-snapshot.md)
+- [Build-time constants with --define](docs/guides/runtime/build-time-constants.md)
+- [Define and replace static globals & constants](docs/guides/runtime/define-constant.md)
+- [Install and run Bun in GitHub Actions](docs/guides/runtime/cicd.md)
+- [Codesign a single-file JavaScript executable on macOS](docs/guides/runtime/codesign-macos-executable.md): Fix the "can't be opened because it is from an unidentified developer" Gatekeeper warning when running your JavaScript executable.
+- [Upgrade Bun to the latest version](docs/guides/util/upgrade.md)
+- [Detect when code is executed with Bun](docs/guides/util/detect-bun.md)
+- [Get the current Bun version](docs/guides/util/version.md)
+- [Hash a password](docs/guides/util/hash-a-password.md)
+- [Generate a UUID](docs/guides/util/javascript-uuid.md)
+- [Encode and decode base64 data](docs/guides/util/base64.md)
+- [Compress and decompress data with gzip](docs/guides/util/gzip.md)
+- [Compress and decompress data with DEFLATE](docs/guides/util/deflate.md)
+- [Escape an HTML string](docs/guides/util/escape-html.md)
+- [Check if two objects are deeply equal](docs/guides/util/deep-equals.md)
+- [Sleep for a fixed number of milliseconds](docs/guides/util/sleep.md)
+- [Convert a file URL to an absolute path](docs/guides/util/file-url-to-path.md)
+- [Convert an absolute path to a file URL](docs/guides/util/path-to-file-url.md)
+- [Get the path to an executable bin file](docs/guides/util/which-path-to-executable-bin.md)
+- [Get the directory of the current file](docs/guides/util/import-meta-dir.md)
+- [Get the file name of the current file](docs/guides/util/import-meta-file.md)
+- [Get the absolute path of the current file](docs/guides/util/import-meta-path.md)
+- [Check if the current file is the entrypoint](docs/guides/util/entrypoint.md)
+- [Get the absolute path to the current entrypoint](docs/guides/util/main.md)
+- [Build an app with Astro and Bun](docs/guides/ecosystem/astro.md)
+- [Create a Discord bot](docs/guides/ecosystem/discordjs.md)
+- [Containerize a Bun application with Docker](docs/guides/ecosystem/docker.md)
+- [Use Drizzle ORM with Bun](docs/guides/ecosystem/drizzle.md)
+- [Use Gel with Bun](docs/guides/ecosystem/gel.md)
+- [Build an HTTP server using Elysia and Bun](docs/guides/ecosystem/elysia.md)
+- [Build an HTTP server using Express and Bun](docs/guides/ecosystem/express.md)
+- [Build an HTTP server using Hono and Bun](docs/guides/ecosystem/hono.md)
+- [Read and write data to MongoDB using Mongoose and Bun](docs/guides/ecosystem/mongoose.md)
+- [Use Neon Postgres through Drizzle ORM](docs/guides/ecosystem/neon-drizzle.md)
+- [Use Neon's Serverless Postgres with Bun](docs/guides/ecosystem/neon-serverless-postgres.md)
+- [Build an app with Next.js and Bun](docs/guides/ecosystem/nextjs.md)
+- [Build an app with Nuxt and Bun](docs/guides/ecosystem/nuxt.md)
+- [Run Bun as a daemon with PM2](docs/guides/ecosystem/pm2.md)
+- [Use Prisma with Bun](docs/guides/ecosystem/prisma.md)
+- [Use Prisma Postgres with Bun](docs/guides/ecosystem/prisma-postgres.md)
+- [Build an app with Qwik and Bun](docs/guides/ecosystem/qwik.md)
+- [Build a React app with Bun](docs/guides/ecosystem/react.md)
+- [Build an app with Remix and Bun](docs/guides/ecosystem/remix.md)
+- [Use TanStack Start with Bun](docs/guides/ecosystem/tanstack-start.md)
+- [Add Sentry to a Bun app](docs/guides/ecosystem/sentry.md)
+- [Build an app with SolidStart and Bun](docs/guides/ecosystem/solidstart.md)
+- [Server-side render (SSR) a React component](docs/guides/ecosystem/ssr-react.md)
+- [Build an app with SvelteKit and Bun](docs/guides/ecosystem/sveltekit.md)
+- [Run Bun as a daemon with systemd](docs/guides/ecosystem/systemd.md)
+- [Build a frontend using Vite and Bun](docs/guides/ecosystem/vite.md)
+- [Bun Redis with Upstash](docs/guides/ecosystem/upstash.md)
+- [Common HTTP server usage](docs/guides/http/server.md)
+- [Write a simple HTTP server](docs/guides/http/simple.md)
+- [Send an HTTP request using fetch](docs/guides/http/fetch.md)
+- [Hot reload an HTTP server](docs/guides/http/hot.md)
+- [Start a cluster of HTTP servers](docs/guides/http/cluster.md): Run multiple HTTP servers concurrently with the "reusePort" option to share the same port across multiple processes
+- [Configure TLS on an HTTP server](docs/guides/http/tls.md)
+- [Proxy HTTP requests using fetch()](docs/guides/http/proxy.md)
+- [Stream a file as an HTTP Response](docs/guides/http/stream-file.md)
+- [Upload files via HTTP using FormData](docs/guides/http/file-uploads.md)
+- [fetch with unix domain sockets in Bun](docs/guides/http/fetch-unix.md)
+- [Streaming HTTP Server with Async Iterators](docs/guides/http/stream-iterator.md)
+- [Server-Sent Events (SSE) with Bun](docs/guides/http/sse.md)
+- [Streaming HTTP Server with Node.js Streams](docs/guides/http/stream-node-streams-in-bun.md)
+- [Build a simple WebSocket server](docs/guides/websocket/simple.md)
+- [Build a publish-subscribe WebSocket server](docs/guides/websocket/pubsub.md)
+- [Set per-socket contextual data on a WebSocket](docs/guides/websocket/context.md)
+- [Enable compression for WebSocket messages](docs/guides/websocket/compression.md)
+- [Spawn a child process](docs/guides/process/spawn.md)
+- [Read stdout from a child process](docs/guides/process/spawn-stdout.md)
+- [Read stderr from a child process](docs/guides/process/spawn-stderr.md)
+- [Parse command-line arguments](docs/guides/process/argv.md)
+- [Read from stdin](docs/guides/process/stdin.md)
+- [Spawn a child process and communicate using IPC](docs/guides/process/ipc.md)
+- [Listen for CTRL+C](docs/guides/process/ctrl-c.md)
+- [Listen to OS signals](docs/guides/process/os-signals.md)
+- [Get the process uptime in nanoseconds](docs/guides/process/nanoseconds.md)
+- [Run a Shell Command](docs/guides/runtime/shell.md)
+- [Set a time zone in Bun](docs/guides/runtime/timezone.md)
+- [Set environment variables](docs/guides/runtime/set-env.md)
+- [Read environment variables](docs/guides/runtime/read-env.md)
+- [Add a dependency](docs/guides/install/add.md)
+- [Add a development dependency](docs/guides/install/add-dev.md)
+- [Add an optional dependency](docs/guides/install/add-optional.md)
+- [Add a peer dependency](docs/guides/install/add-peer.md)
+- [Add a Git dependency](docs/guides/install/add-git.md)
+- [Add a tarball dependency](docs/guides/install/add-tarball.md)
+- [Install a package under a different name](docs/guides/install/npm-alias.md)
+- [Configuring a monorepo using workspaces](docs/guides/install/workspaces.md)
+- [Override the default npm registry for bun install](docs/guides/install/custom-registry.md)
+- [Configure a private registry for an organization scope with bun install](docs/guides/install/registry-scope.md)
+- [Using bun install with an Azure Artifacts npm registry](docs/guides/install/azure-artifacts.md)
+- [Using bun install with Artifactory](docs/guides/install/jfrog-artifactory.md)
+- [Add a trusted dependency](docs/guides/install/trusted.md)
+- [Generate a yarn-compatible lockfile](docs/guides/install/yarnlock.md)
+- [Migrate from npm install to bun install](docs/guides/install/from-npm-install-to-bun-install.md)
+- [Configure git to diff Bun's lockb lockfile](docs/guides/install/git-diff-bun-lockfile.md)
+- [Install dependencies with Bun in GitHub Actions](docs/guides/install/cicd.md)
+- [Run your tests with the Bun test runner](docs/guides/test/run-tests.md)
+- [Run tests in watch mode with Bun](docs/guides/test/watch-mode.md)
+- [Migrate from Jest to Bun's test runner](docs/guides/test/migrate-from-jest.md)
+- [Mock functions in `bun test`](docs/guides/test/mock-functions.md)
+- [Spy on methods in `bun test`](docs/guides/test/spy-on.md)
+- [Set the system time in Bun's test runner](docs/guides/test/mock-clock.md)
+- [Use snapshot testing in `bun test`](docs/guides/test/snapshot.md)
+- [Update snapshots in `bun test`](docs/guides/test/update-snapshots.md)
+- [Generate code coverage reports with the Bun test runner](docs/guides/test/coverage.md)
+- [Set a code coverage threshold with the Bun test runner](docs/guides/test/coverage-threshold.md)
+- [Selectively run tests concurrently with glob patterns](docs/guides/test/concurrent-test-glob.md): Set a glob pattern to decide which tests from which files run in parallel
+- [Skip tests with the Bun test runner](docs/guides/test/skip-tests.md)
+- [Mark a test as a "todo" with the Bun test runner](docs/guides/test/todo-tests.md)
+- [Set a per-test timeout with the Bun test runner](docs/guides/test/timeout.md)
+- [Bail early with the Bun test runner](docs/guides/test/bail.md)
+- [Re-run tests multiple times with the Bun test runner](docs/guides/test/rerun-each.md)
+- [Using Testing Library with Bun](docs/guides/test/testing-library.md)
+- [Write browser DOM tests with Bun and happy-dom](docs/guides/test/happy-dom.md)
+- [import, require, and test Svelte components with bun test](docs/guides/test/svelte-test.md)
+- [Import a JSON file](docs/guides/runtime/import-json.md)
+- [Import a TOML file](docs/guides/runtime/import-toml.md)
+- [Import a YAML file](docs/guides/runtime/import-yaml.md)
+- [Import a JSON5 file](docs/guides/runtime/import-json5.md)
+- [Import an XML file](docs/guides/runtime/import-xml.md)
+- [Import a HTML file as text](docs/guides/runtime/import-html.md)
+- [Read a file as a string](docs/guides/read-file/string.md)
+- [Read a file to a Buffer](docs/guides/read-file/buffer.md)
+- [Read a file to a Uint8Array](docs/guides/read-file/uint8array.md)
+- [Read a file to an ArrayBuffer](docs/guides/read-file/arraybuffer.md)
+- [Read a JSON file](docs/guides/read-file/json.md)
+- [Get the MIME type of a file](docs/guides/read-file/mime.md)
+- [Check if a file exists](docs/guides/read-file/exists.md)
+- [Watch a directory for changes](docs/guides/read-file/watch.md)
+- [Read a file as a ReadableStream](docs/guides/read-file/stream.md)
+- [Write a string to a file](docs/guides/write-file/basic.md)
+- [Write a Blob to a file](docs/guides/write-file/blob.md)
+- [Write a Response to a file](docs/guides/write-file/response.md)
+- [Append content to a file](docs/guides/write-file/append.md)
+- [Write a file incrementally](docs/guides/write-file/filesink.md)
+- [Write a ReadableStream to a file](docs/guides/write-file/stream.md)
+- [Write to stdout](docs/guides/write-file/stdout.md)
+- [Write a file to stdout](docs/guides/write-file/cat.md)
+- [Copy a file to another location](docs/guides/write-file/file-cp.md)
+- [Delete a file](docs/guides/write-file/unlink.md)
+- [Delete files](docs/guides/runtime/delete-file.md)
+- [Delete directories](docs/guides/runtime/delete-directory.md)
+- [Extract links from a webpage using HTMLRewriter](docs/guides/html-rewriter/extract-links.md)
+- [Extract social share images and Open Graph tags](docs/guides/html-rewriter/extract-social-meta.md)
+- [Convert an ArrayBuffer to a string](docs/guides/binary/arraybuffer-to-string.md)
+- [Convert an ArrayBuffer to a Buffer](docs/guides/binary/arraybuffer-to-buffer.md)
+- [Convert an ArrayBuffer to a Blob](docs/guides/binary/arraybuffer-to-blob.md)
+- [Convert an ArrayBuffer to an array of numbers](docs/guides/binary/arraybuffer-to-array.md)
+- [Convert an ArrayBuffer to a Uint8Array](docs/guides/binary/arraybuffer-to-typedarray.md)
+- [Convert a Buffer to a string](docs/guides/binary/buffer-to-string.md)
+- [Convert a Buffer to an ArrayBuffer](docs/guides/binary/buffer-to-arraybuffer.md)
+- [Convert a Buffer to a blob](docs/guides/binary/buffer-to-blob.md)
+- [Convert a Buffer to a Uint8Array](docs/guides/binary/buffer-to-typedarray.md)
+- [Convert a Buffer to a ReadableStream](docs/guides/binary/buffer-to-readablestream.md)
+- [Convert a Blob to a string](docs/guides/binary/blob-to-string.md)
+- [Convert a Blob to an ArrayBuffer](docs/guides/binary/blob-to-arraybuffer.md)
+- [Convert a Blob to a Uint8Array](docs/guides/binary/blob-to-typedarray.md)
+- [Convert a Blob to a DataView](docs/guides/binary/blob-to-dataview.md)
+- [Convert a Blob to a ReadableStream](docs/guides/binary/blob-to-stream.md)
+- [Convert a Uint8Array to a string](docs/guides/binary/typedarray-to-string.md)
+- [Convert a Uint8Array to an ArrayBuffer](docs/guides/binary/typedarray-to-arraybuffer.md)
+- [Convert a Uint8Array to a Buffer](docs/guides/binary/typedarray-to-buffer.md)
+- [Convert a Uint8Array to a Blob](docs/guides/binary/typedarray-to-blob.md)
+- [Convert a Uint8Array to a DataView](docs/guides/binary/typedarray-to-dataview.md)
+- [Convert a Uint8Array to a ReadableStream](docs/guides/binary/typedarray-to-readablestream.md)
+- [Convert a DataView to a string](docs/guides/binary/dataview-to-string.md)
+- [Convert a ReadableStream to a string](docs/guides/streams/to-string.md)
+- [Convert a ReadableStream to JSON](docs/guides/streams/to-json.md)
+- [Convert a ReadableStream to a Blob](docs/guides/streams/to-blob.md)
+- [Convert a ReadableStream to a Buffer](docs/guides/streams/to-buffer.md)
+- [Convert a ReadableStream to an ArrayBuffer](docs/guides/streams/to-arraybuffer.md)
+- [Convert a ReadableStream to a Uint8Array](docs/guides/streams/to-typedarray.md)
+- [Convert a ReadableStream to an array of chunks](docs/guides/streams/to-array.md)
+- [Convert a Node.js Readable to a string](docs/guides/streams/node-readable-to-string.md)
+- [Convert a Node.js Readable to JSON](docs/guides/streams/node-readable-to-json.md)
+- [Convert a Node.js Readable to a Blob](docs/guides/streams/node-readable-to-blob.md)
+- [Convert a Node.js Readable to an Uint8Array](docs/guides/streams/node-readable-to-uint8array.md)
+- [Convert a Node.js Readable to an ArrayBuffer](docs/guides/streams/node-readable-to-arraybuffer.md)
+- [Feedback](docs/feedback.md): Share feedback, bug reports, and feature requests
+
+## Optional
+
+- [Reference](https://bun.com/reference)
+- [Blog](https://bun.com/blog)
