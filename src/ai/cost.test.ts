@@ -438,6 +438,57 @@ describe("data residency, endpoint surcharges and long-context tiers", () => {
   });
 });
 
+describe("review findings", () => {
+  test("a residency surcharge applies to inferenceGeo us only", () => {
+    // spec: AC-RCPT-09
+    const usage = { input_tokens: 1000, output_tokens: 0 };
+    expect(computeCost(base({ usage, inferenceGeo: "global" })).usd).toBeCloseTo((1000 * 3) / PER_M, 12);
+    expect(computeCost(base({ usage, inferenceGeo: "us" })).usd).toBeCloseTo((1000 * 3 * 1.1) / PER_M, 12);
+  });
+
+  test("a cache-miss count above the prompt, and cache writes above the creation total, are unknown", () => {
+    // spec: AC-RCPT-06
+    const chat = computeCost({
+      protocol: "openai-chat",
+      model: "example-d",
+      usage: { prompt_tokens: 100, completion_tokens: 5, prompt_cache_miss_tokens: 300 },
+      usageFields: { cacheMiss: "prompt_cache_miss_tokens" },
+      rates: () => ({ price: { input: 1, output: 1, cacheRead: 0.1 } }),
+    });
+    expect(chat.usd).toBeNull();
+    const anthropic = computeCost(
+      base({
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 100,
+          cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 100 },
+        },
+      }),
+    );
+    expect(anthropic.usd).toBeNull();
+  });
+
+  test("tiers are matched by size whatever their order in the catalog", () => {
+    // spec: AC-RCPT-09
+    const p: ModelPrice = {
+      input: 1,
+      output: 1,
+      tiers: [
+        { size: 100_000, input: 2, output: 2 },
+        { size: 200_000, input: 4, output: 4 },
+      ],
+    };
+    const cost = computeCost({
+      protocol: "openai-responses",
+      model: "m",
+      usage: { input_tokens: 300_000, output_tokens: 0 },
+      rates: () => ({ price: p }),
+    });
+    expect(cost.usd).toBeCloseTo((300_000 * 4) / PER_M, 10);
+  });
+});
+
 describe("unusual usage values", () => {
   test("null detail fields, huge counts and a refusal with no output do not break the sum", () => {
     // spec: AC-RCPT-07

@@ -127,20 +127,21 @@ function pathCount(usage: Record<string, unknown>, path: string | undefined): nu
 
 /** Splits a prompt of `total` tokens, `cached` of them cache reads; null when the counts cannot be right. */
 function splitPrompt(model: string, total: number, cached: number, output: number, reasoning: number): Call | null {
-  if (cached > total || reasoning > output) return null;
+  if (cached < 0 || cached > total || reasoning > output) return null;
   return { model, input: total - cached, cacheRead: cached, cacheWrite5m: 0, cacheWrite1h: 0, output, reasoning };
 }
 
 function anthropicCall(model: string, c: z.infer<typeof AnthropicCall>): Call | null {
   if (c.input_tokens === undefined && c.output_tokens === undefined) return null;
-  const written = n(c.cache_creation_input_tokens);
   const w5 = n(c.cache_creation?.ephemeral_5m_input_tokens);
   const w1 = n(c.cache_creation?.ephemeral_1h_input_tokens);
+  const written = c.cache_creation_input_tokens ?? w5 + w1;
+  if (w5 + w1 > written) return null;
   return {
     model: c.model ?? model,
     input: n(c.input_tokens),
     cacheRead: n(c.cache_read_input_tokens),
-    cacheWrite5m: Math.max(written - w1, w5),
+    cacheWrite5m: written - w1,
     cacheWrite1h: w1,
     output: n(c.output_tokens),
     reasoning: 0,
@@ -293,9 +294,7 @@ export function computeCost(input: CostInput): Cost {
     const priced = priceCall(call, rates);
     if (priced.usd === null) return result;
     const residency =
-      input.inferenceGeo !== undefined && rates.rule?.residencyMultiplier !== undefined
-        ? rates.rule.residencyMultiplier
-        : 1;
+      input.inferenceGeo === "us" && rates.rule?.residencyMultiplier !== undefined ? rates.rule.residencyMultiplier : 1;
     tokenUsd += priced.usd * residency * (input.endpointMultiplier ?? 1);
     approximate ||= priced.approximate;
   }
