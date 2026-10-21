@@ -70,6 +70,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
 - On `macos-latest` in the CI run for #172 (a docs-only PR) "the picture is logged as media and the next request carries it as an image part" failed at 5001 ms, the default test timeout, and Bun reported "killed 1 dangling process"; the other tests in the file passed. It is the first test of the file, so the likely cause is the first `Bun.Image` decode plus the headless boot starting cold on a loaded runner. Fix: find what the first run spends the time on (time the boot and the decode separately on macOS) and make the test independent of it (warm the decoder in a `beforeAll`, or set an explicit timeout in the test with the measured figure as evidence); do not just raise the number.
 
+### F19 (M2-09 progress entry): test runs leak `dovet-tool-*` temp directories
+- **Severity:** major · unknown source (the M2-09 tests clean up)
+- 42,000 leftover `dovet-tool-*` directories (31 MB each) filled the 7.6 GB `/tmp` and made `bun run check` fail with EDQUOT in four unrelated tests. Find which test or tool creates them without removing them (count `dovet-tool-*` before and after each test file), fix it, and add a check that a test run leaves none behind.
+
+### F20 (M2-09c reviewer eval): resume then a new writer may glue an event onto a torn line
+- **Severity:** major (unverified: reproduce first, drop with the reason if it doesn't hold) · `src/store/event-log/resume.ts:434`
+- A `medium` reviewer run on M1-29 reported that after resuming a log whose last line is half-written, the next writer appends its event to that half line, corrupting both. Write a log ending in a partial line, resume, append, and read it back.
+
 ## Fixed
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
