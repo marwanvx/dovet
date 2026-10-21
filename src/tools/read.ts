@@ -75,6 +75,9 @@ function deduplicated(ctx: ToolContext, input: ReadInput, result: string, out: T
   return out;
 }
 
+/** An offload file or debug request body of a session: GC removes them after `retention.outputsDays` (event-log "Disk use"). */
+const EXPIRABLE = /[\\/]projects[\\/][^\\/]+[\\/]sessions[\\/][^\\/]+[\\/](?:outputs|requests)[\\/][^\\/]+$/;
+
 export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}): ToolDefinition<ReadInput> {
   async function run(input: ReadInput, ctx: ToolContext): Promise<ToolOutput> {
     if (input.pages?.includes(",")) return fail("Read one page or range per call.");
@@ -90,7 +93,11 @@ export function createReadTool(opts: { afterCheck?: () => Promise<void> } = {}):
     try {
       checked = await stat(path, { bigint: true });
     } catch (e) {
-      if (isErrno(e, "ENOENT", "ENOTDIR")) return fail(`File not found: ${path}`);
+      if (isErrno(e, "ENOENT", "ENOTDIR")) {
+        if (EXPIRABLE.test(path))
+          return fail(`Full output expired (kept ${ctx.settings.retention?.outputsDays ?? 7} days).`);
+        return fail(`File not found: ${path}`);
+      }
       if (isErrno(e, "EACCES", "EPERM")) return fail(`Permission denied: ${path}`);
       throw e;
     }

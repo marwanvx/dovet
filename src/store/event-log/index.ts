@@ -1,5 +1,5 @@
 export { forkAtTurn } from "./fork.ts";
-export { SessionMeta } from "./meta.ts";
+export { rewindExpired, SessionMeta } from "./meta.ts";
 export { type ProjectLocation, projectId, type SessionLocation, sessionPaths } from "./paths.ts";
 export { checkDataPermissions } from "./permissions.ts";
 export { type ReadResult, readSession } from "./reader.ts";

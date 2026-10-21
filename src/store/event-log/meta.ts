@@ -25,6 +25,8 @@ export const SessionMeta = z.object({
   epochOffset: z.number().int().nonnegative().optional(),
   epochEventId: z.string().optional(),
   snapshot: ResumeSnapshot.optional(),
+  /** ISO time after which the session's rewind-only data may be collected; written by GC (event-log "Blob store"). */
+  rewindAvailableUntil: z.string().optional(),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 
@@ -43,4 +45,9 @@ export function foldMeta(meta: SessionMeta, e: Pick<EventEnvelope, "id" | "ts" |
     if (parsed.success) next.title = parsed.data.text.slice(0, TITLE_CHARS).trimEnd();
   }
   return next;
+}
+
+/** `/rewind` shows "expired" for a session whose rewind data GC may have collected; resuming it still works. */
+export function rewindExpired(meta: Pick<SessionMeta, "rewindAvailableUntil">, now: number): boolean {
+  return meta.rewindAvailableUntil !== undefined && Date.parse(meta.rewindAvailableUntil) < now;
 }

@@ -1,5 +1,6 @@
 // Headless agent turn (tui "Headless mode", agent-loop "Turn state machine", event-log "Resume", providers §1).
 import { stat } from "node:fs/promises";
+import { join } from "node:path";
 import pkg from "../../package.json";
 import {
   buildRequest,
@@ -1592,7 +1593,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           ctx = buildCtx();
         },
         onResult: applyResultTaint,
-        offloadDir: `${input.dirs.data}/tmp`,
+        offloadDir: join(sessionPaths(loc).dir, sessionId, "outputs"),
         headless: true,
         capBytes: requestCapFor(provider),
         earlyResults,

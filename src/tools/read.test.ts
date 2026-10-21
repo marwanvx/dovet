@@ -21,6 +21,28 @@ async function read(ctx: ToolContext, input: Record<string, unknown>, tool = cre
 const numbered = (count: number, width = 60): string =>
   Array.from({ length: count }, (_, i) => `line ${i + 1} ${"x".repeat(width)}`).join("\n");
 
+describe("Read: expired offload files", () => {
+  // spec: AC-LOG-14
+  test("a missing offload file says it expired and for how long it is kept; any other missing file is just not found", async () => {
+    const cwd = await workspace();
+    const gone = join(
+      cwd,
+      "projects",
+      "p1-0123456789abcdef",
+      "sessions",
+      "01J0000000000000000000000A",
+      "outputs",
+      "c1.txt",
+    );
+    const ctx = { ...context(cwd), settings: Settings.parse({ retention: { outputsDays: 3 } }) };
+    expect(text(await read(ctx, { file_path: gone }))).toBe("Full output expired (kept 3 days).");
+    expect(text(await read(context(cwd), { file_path: gone }))).toBe("Full output expired (kept 7 days).");
+    expect(text(await read(ctx, { file_path: join(cwd, "outputs", "c1.txt") }))).toBe(
+      `File not found: ${join(cwd, "outputs", "c1.txt")}`,
+    );
+  });
+});
+
 describe("Read: text views", () => {
   // spec: AC-TOOLS-17
   test("lines are `<n>\\t<text>` with no padding", async () => {
