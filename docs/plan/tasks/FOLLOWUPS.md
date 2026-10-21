@@ -83,7 +83,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F19 (M2-09 progress entry): test runs leak `dovet-tool-*` temp directories
 - **Severity:** major · unknown source (the M2-09 tests clean up)
 - 42,000 leftover `dovet-tool-*` directories (31 MB each) filled the 7.6 GB `/tmp` and made `bun run check` fail with EDQUOT in four unrelated tests. Find which test or tool creates them without removing them (count `dovet-tool-*` before and after each test file), fix it, and add a check that a test run leaves none behind.
-- **Fixed:** #PR (cause: `test-context.ts` registered its cleanup hook inside the module, which Bun loads once, so only the first test file's workspaces were removed; the hook is now a preload. Two more leaks fixed: Bash's `<cwd>-tmp` in the checkpoint test and a snapshot still writing after the interrupt test. `bun run test` now fails on any left `dovet-tool-*` directory)
+- **Fixed:** #174 (cause: `test-context.ts` registered its cleanup hook inside the module, which Bun loads once, so only the first test file's workspaces were removed; the hook is now a preload. Two more leaks fixed: Bash's `<cwd>-tmp` in the checkpoint test and a snapshot still writing after the interrupt test. `bun run test` now fails on any left `dovet-tool-*` directory)
 
 ### F2 (live test 2026-10-19): `dovet -p` JSON output reports only the last request's usage
 - **Severity:** major · `src/cli/headless-run.ts:894` (and `:1044` on resume)
