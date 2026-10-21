@@ -38,6 +38,16 @@ describe("retainUserMessages", () => {
     expect(tail.length).toBeGreaterThan(300);
   });
 
+  test("an odd cut through non-BMP text never starts on half a character", () => {
+    const text = `x${"\u{1F600}".repeat(2000)}`;
+    const r = retainUserMessages([text], 1001);
+    const [only] = r.kept;
+    const tail = (only ?? "").slice((only ?? "").indexOf("\n") + 1);
+    expect(tail.isWellFormed()).toBe(true);
+    expect(tail.charCodeAt(0)).toBeGreaterThanOrEqual(0xd800);
+    expect(tail.charCodeAt(0)).toBeLessThanOrEqual(0xdbff);
+  });
+
   test("no messages is no messages", () => {
     expect(retainUserMessages([], 100)).toEqual({ kept: [], omitted: 0 });
   });

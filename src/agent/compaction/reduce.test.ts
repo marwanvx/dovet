@@ -83,6 +83,23 @@ describe("reduceForSummary", () => {
     expect(out?.kind === "text" && out.text.length).toBeLessThan(2200);
   });
 
+  test("dropping turns cuts at an assistant-to-user boundary even when the second item is not one", () => {
+    const items: TranscriptItem[] = [
+      { kind: "user", parts: [text("go")] },
+      { kind: "user", parts: [text("and also this")] },
+      ...Array.from({ length: 10 }, (_, i) => round(i, 1800)).flat(),
+    ];
+    const r = reduceForSummary(items, { budget: 3000, extraChars: 0, imageTokens: 1600 });
+    expect(r.items[1]?.kind).toBe("assistant");
+    const calls = r.items.flatMap((i) =>
+      i.kind === "assistant" ? i.stored.parts.flatMap((p) => (p.kind === "tool_call" ? [p.id] : [])) : [],
+    );
+    const results = r.items.flatMap((i) =>
+      i.kind === "user" ? i.parts.flatMap((p) => (p.kind === "tool_result" ? [p.callId] : [])) : [],
+    );
+    expect(results.sort()).toEqual(calls.sort());
+  });
+
   test("dropping turns keeps every remaining tool call paired with its result", () => {
     const items = [
       { kind: "user", parts: [text("go")] } as TranscriptItem,

@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F23 (M2-14 review): a forced compaction skips the compaction-thrash guard
+- **Severity:** minor · `src/cli/headless-run.ts` (`compact-retry` branch; the auto path calls `guards.noteCompaction`)
+- A first message that is itself over the threshold after a `context_exceeded` compaction is caught only by the second `context_exceeded` response, one paid request later. Run the same `noteCompaction` check after the forced `compactEpoch`, with a test.
+
 ### F3 (live test 2026-10-19): a fresh install refuses to run without a configured model
 - **Severity:** minor · `src/cli/headless-run.ts:149`
 - With an NVIDIA key and no settings file, `dovet -p "…"` exits 2 with "no model configured; set model in settings or --model". Pick a default NVIDIA model (the registry's) or name a working `--model` value in the message.

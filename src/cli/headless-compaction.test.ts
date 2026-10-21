@@ -37,7 +37,7 @@ type Reply = { stop: "tool_use" | "end_turn" | "context_exceeded"; text?: string
 
 /** Replies in order; a request whose last user message holds the compaction prompt is the summary request. */
 function scripted(script: Reply[], onSummary: () => void = () => undefined) {
-  const requests: { transcript: RenderInput["transcript"]; summary: boolean }[] = [];
+  const requests: { transcript: RenderInput["transcript"]; summary: boolean; epoch: number; systemText: string }[] = [];
   let current: RenderInput | undefined;
   let next = 0;
   const adapter = {
@@ -51,7 +51,12 @@ function scripted(script: Reply[], onSummary: () => void = () => undefined) {
       const summary =
         last?.kind === "user" &&
         last.parts.some((p) => p.kind === "text" && p.text.includes("User's requests and constraints"));
-      requests.push({ transcript, summary });
+      requests.push({
+        transcript,
+        summary,
+        epoch: current?.header.epoch ?? -1,
+        systemText: current?.header.systemText ?? "",
+      });
       if (summary) onSummary();
       const step: Reply = summary
         ? { stop: "end_turn", text: "SUMMARY OF THE WORK", usage: { promptTokens: 50, completionTokens: 20 } }
@@ -80,7 +85,7 @@ function scripted(script: Reply[], onSummary: () => void = () => undefined) {
   return { adapter: adapter as never, requests };
 }
 
-async function run(over: Partial<HeadlessRunInput>, dir: { root: string }) {
+async function run(over: Partial<HeadlessRunInput> & { continued?: boolean }, dir: { root: string }) {
   const env = { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" };
   const settings = {
     settings: { provider: "nvidia", model: "test/model" },
@@ -97,6 +102,7 @@ async function run(over: Partial<HeadlessRunInput>, dir: { root: string }) {
     env,
     trust: { project: true, local: true },
   };
+  const { continued = false, ...rest } = over as Partial<HeadlessRunInput> & { continued?: boolean };
   const out = await runHeadless({
     dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
     projectRoot: dir.root,
@@ -110,7 +116,7 @@ async function run(over: Partial<HeadlessRunInput>, dir: { root: string }) {
       output: "text",
       offline: false,
       noSessionPersistence: false,
-      continued: false,
+      continued,
       repair: false,
       allowedTools: [],
       disallowedTools: [],
@@ -122,7 +128,7 @@ async function run(over: Partial<HeadlessRunInput>, dir: { root: string }) {
     host: "h",
     platform: fakePlatform(),
     contextWindow: WINDOW,
-    ...over,
+    ...rest,
   });
   const log = (
     await readSession({ data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId })
@@ -160,6 +166,40 @@ describe("compaction in a headless run", () => {
       expect(text).toContain("SUMMARY OF THE WORK");
       expect(text).toContain("dump");
       expect(out.warnings.some((w) => w.includes("context compacted (auto)"))).toBe(true);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  test("a session resumed after a compaction starts from the first message in the new epoch", async () => {
+    const dir = await project();
+    try {
+      const model = scripted([
+        { stop: "tool_use", call: true, usage: { promptTokens: 4000, completionTokens: 1500 } },
+        { stop: "end_turn", text: "all done" },
+      ]);
+      const { log } = await run({ adapter: model.adapter, toolDefs: [bigTool(10)] }, dir);
+      const compaction = CompactionData.parse(log.find((e) => e.type === "compaction")?.data);
+      const again = scripted([{ stop: "end_turn", text: "resumed" }]);
+      const resumed = await run(
+        {
+          adapter: again.adapter,
+          toolDefs: [bigTool(10)],
+          continued: true,
+          prompt: "one more thing",
+          ids: sequentialIds("D"),
+        },
+        dir,
+      );
+      expect(resumed.out.result).toBe("resumed");
+      const [request] = again.requests;
+      expect(request?.epoch).toBe(1);
+      expect(request?.systemText).toBe(
+        EpochStartData.parse(log.findLast((e) => e.type === "epoch.start")?.data).systemText,
+      );
+      const first = request?.transcript[0];
+      expect(first?.kind === "user" && first.parts[0]).toEqual({ kind: "text", text: compaction.firstMessage });
+      expect(request?.transcript.at(-1)).toEqual({ kind: "user", parts: [{ kind: "text", text: "one more thing" }] });
     } finally {
       await dir.dispose();
     }
