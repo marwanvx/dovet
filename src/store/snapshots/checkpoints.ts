@@ -256,6 +256,8 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
         const st = lstatSync(path, { throwIfNoEntry: false });
         if (st !== undefined && (st.isSymbolicLink() || (st.isFile() && st.nlink > 1))) {
           result.skipped.push({ path, reason: "link" });
+        } else if (st !== undefined && !st.isFile()) {
+          result.skipped.push({ path, reason: "blocked" });
         } else if (skipAbs.has(path)) {
           result.skipped.push({ path, reason: "conflict" });
         } else if (sha === null) {
@@ -266,7 +268,8 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
             keep(path, before, null);
           }
         } else {
-          const saved = await options.blobs.get(sha);
+          // A damaged blob throws from the store; either way this path is one the rewind could not restore.
+          const saved = await options.blobs.get(sha).catch(() => undefined);
           if (saved === undefined) {
             result.failed.push(path);
             continue;

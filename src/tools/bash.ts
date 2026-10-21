@@ -183,7 +183,9 @@ export function createBashTool(opts: {
       const path = join(snapshots.root, c.path) as AbsPath;
       if (c.status === "D") fileChanges.push({ path, op: "delete", added: 0, removed: 0, after: null });
       else {
-        const bytes = await readFile(path).catch(() => undefined);
+        const bytes = await readFile(path).catch((e: unknown) =>
+          isErrno(e, "ENOENT") ? undefined : Promise.reject(e),
+        );
         fileChanges.push({
           path,
           op: c.status === "A" ? "create" : "modify",

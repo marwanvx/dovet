@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deleteObject, unpackToLoose } from "../../../test/helpers/index.ts";
 import { type AbsPath, CheckpointData, type EventEnvelope } from "../../schema/index.ts";
+import type { BlobStore } from "../blobs/index.ts";
 import { createBlobStore } from "../blobs/index.ts";
 import { type CheckpointService, describeRewind, openCheckpoints } from "./index.ts";
 
@@ -39,7 +40,12 @@ interface Rig {
   work: string;
   data: string;
   events: CheckpointData[];
-  open: (over?: { enabled?: boolean; slowMs?: number; session?: string }) => Promise<CheckpointService>;
+  open: (over?: {
+    enabled?: boolean;
+    slowMs?: number;
+    session?: string;
+    blobs?: (real: BlobStore) => BlobStore;
+  }) => Promise<CheckpointService>;
   envelopes: (...changes: EventEnvelope[]) => EventEnvelope[];
 }
 
@@ -79,7 +85,7 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = t
         session: over.session ?? "s1",
         env: ENV,
         platform: process.platform,
-        blobs: createBlobStore(data),
+        blobs: (over.blobs ?? ((real) => real))(createBlobStore(data)),
         enabled: over.enabled ?? true,
         ...(over.slowMs === undefined ? {} : { slowMs: over.slowMs }),
         record: (e) => events.push(CheckpointData.parse(e)),
@@ -249,6 +255,43 @@ describe("rewinding", () => {
     const result = await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(result.failed).toEqual([abs(r, "a.txt")]);
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("edited\n");
+  });
+
+  test("a folder where a file used to be is skipped, not a crash, and the other paths still restore", async () => {
+    const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, false);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+    await svc.recordWrite(abs(r, "b.txt"), bytes("bee\n"));
+    rmSync(join(r.work, "a.txt"));
+    mkdirSync(join(r.work, "a.txt"));
+    writeFileSync(join(r.work, "b.txt"), "changed\n");
+    const result = await svc.restore(r.envelopes(), "c1", "overwrite");
+    expect(result.skipped).toEqual([{ path: abs(r, "a.txt"), reason: "blocked" }]);
+    expect(readFileSync(join(r.work, "b.txt"), "utf8")).toBe("bee\n");
+  });
+
+  // spec: AC-CKPT-11
+  test("a damaged saved copy is a failed path, and bytes that don't read back as saved are failed too", async () => {
+    for (const damage of ["throws", "writes wrong bytes"]) {
+      const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, false);
+      const svc = await r.open({
+        blobs: (real) => ({
+          putSync: (b) => real.putSync(b),
+          getSync: (sha) => real.getSync(sha),
+          get: async (sha) => {
+            if (damage === "throws") throw new Error(`blob ${sha} is damaged`);
+            return bytes("not what was saved\n");
+          },
+        }),
+      });
+      svc.beginTurn(1);
+      await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+      writeFileSync(join(r.work, "a.txt"), "changed\n");
+      const result = await svc.restore(r.envelopes(), "c1", "overwrite");
+      expect(result.failed).toEqual([abs(r, "a.txt")]);
+      expect(result.written).toBe(0);
+    }
   });
 
   test("an unknown checkpoint is an error", async () => {

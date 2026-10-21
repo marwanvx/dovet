@@ -3,8 +3,16 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AbsPath, EventEnvelope, EventType } from "../schema/index.ts";
-import { createBlobStore, openCheckpoints } from "../store/index.ts";
+import { fakeClock, sequentialIds } from "../../test/helpers/index.ts";
+import { type AbsPath, CheckpointData, type EventEnvelope, type EventType } from "../schema/index.ts";
+import {
+  createBlobStore,
+  forkAtTurn,
+  openCheckpoints,
+  openSession,
+  readSession,
+  sessionPaths,
+} from "../store/index.ts";
 import { createReadState } from "../tools/index.ts";
 import { restoreFiles, restoreNote } from "./rewind.ts";
 
@@ -65,7 +73,7 @@ async function session() {
     readState,
     push: (type: string, data: unknown) => pushed.push({ type, data: data as Record<string, unknown> }),
   };
-  return { work, file, log, deps, readState, pushed };
+  return { root, work, file, log, deps, readState, pushed };
 }
 
 test("the note is the fixed text of docs/prompts/instructions.md", () => {
@@ -119,4 +127,48 @@ test("a turn that changed nothing restores from the next checkpoint, and with no
   const none = await restoreFiles(s.deps, s.log, 3, "overwrite");
   expect(none).toEqual({ written: 0, deleted: 0, skipped: [], failed: [], changes: [] });
   expect(s.pushed.filter((p) => p.type === "system.injected")).toHaveLength(1);
+});
+
+// spec: AC-CKPT-12
+test("a fork rewinds the same files as its parent, and still does when the parent's session files are deleted", async () => {
+  const s = await session();
+  const loc = {
+    data: join(s.root, "data"),
+    projectRoot: s.work,
+    os: "linux" as const,
+    session: "01J0000000000000000000000A",
+  };
+  const opened = await openSession({
+    ...loc,
+    clock: fakeClock(Date.UTC(2026, 9, 13)),
+    ids: sequentialIds("1"),
+    pid: 1,
+    host: "h",
+    secrets: [],
+    flushMs: 60_000,
+  });
+  if (opened.mode !== "write") throw new Error(opened.reason);
+  let turn = 0;
+  for (const e of s.log) {
+    const t = e.type === "checkpoint" ? CheckpointData.parse(e.data).turn : turn;
+    if (t !== turn) {
+      turn = t;
+      opened.writer.append({ type: "user.message", epoch: 0, turn, data: { text: `turn ${turn}` } });
+    }
+    opened.writer.append({ type: e.type as EventType, epoch: 0, turn, data: e.data });
+  }
+  opened.writer.append({ type: "user.message", epoch: 0, turn: 3, data: { text: "turn 3" } });
+  await opened.writer.close();
+
+  const fork = "01J0000000000000000000000B";
+  await forkAtTurn(loc, fork, 3, { ids: sequentialIds("F"), clock: fakeClock(Date.UTC(2026, 9, 14)) });
+  const parent = sessionPaths(loc);
+  rmSync(parent.log);
+  rmSync(parent.meta, { force: true });
+
+  const events = (await readSession({ ...loc, session: fork })).events;
+  const result = await restoreFiles(s.deps, events, 1, "overwrite");
+  expect(result).toMatchObject({ written: 2, deleted: 1, failed: [] });
+  expect(readFileSync(s.file("a.txt"), "utf8")).toBe("a0\n");
+  expect(readFileSync(s.file("b.txt"), "utf8")).toBe("b0\n");
 });
