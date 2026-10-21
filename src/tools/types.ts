@@ -132,6 +132,8 @@ export interface ToolContext {
   emit(e: ToolProgressEvent): void;
   /** Lets Bash list the files a command changed (checkpoints); absent until the session wires it (M1-25). */
   snapshots?: Pick<Snapshotter, "root" | "snapshot" | "changes">;
+  /** Why a shell command's changes can't be undone, when `snapshots` is absent; given once per turn (checkpoints "Limits"). */
+  shellNotice?: () => string | undefined;
   platform: Platform;
   /** The environment child processes inherit (ripgrep needs `HOME` to find the global git excludes). */
   env: Readonly<Record<string, string | undefined>>;

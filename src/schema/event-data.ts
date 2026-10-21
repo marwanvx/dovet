@@ -71,6 +71,32 @@ export const TurnEndData = z.object({
   reason: z.enum(["end_turn", "interrupted", "cancelled", "error", "budget", "refusal", "max-turns", "crashed"]),
 });
 
+/** A path a snapshot left out of its tree (over the size limits, a submodule, a link): the receipt lists it as not restorable. */
+const CheckpointSkipped = z.object({
+  path: z.string().min(1),
+  reason: z.enum(["too-large", "gitlink", "unsupported", "link", "blocked"]),
+});
+
+/**
+ * Taken before a turn's first change (checkpoints "Git tree snapshots"). The `blobs` mechanism logs one event per file
+ * Dovet's own tools change, all with the turn's id; `before` is the blob-store hash of the old bytes (null = new file).
+ */
+export const CheckpointData = z.discriminatedUnion("mechanism", [
+  z.object({
+    id: z.string().regex(/^c\d+$/),
+    turn: z.number().int().positive(),
+    mechanism: z.literal("git-tree"),
+    tree: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+    skipped: z.array(CheckpointSkipped),
+  }),
+  z.object({
+    id: z.string().regex(/^c\d+$/),
+    turn: z.number().int().positive(),
+    mechanism: z.literal("blobs"),
+    files: z.array(z.object({ path: z.string().min(1), before: Sha256.nullable() })),
+  }),
+]);
+
 export const PrefixFingerprint = z.object({ tools: Sha256, system: Sha256, messages: z.array(Sha256) });
 
 export const ModelRequestData = z.object({
@@ -90,6 +116,7 @@ export const SettingsChangeData = z.object({
   source: z.string().min(1),
 });
 
+export type CheckpointData = z.infer<typeof CheckpointData>;
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;
 export type InstructionsLoadedData = z.infer<typeof InstructionsLoadedData>;

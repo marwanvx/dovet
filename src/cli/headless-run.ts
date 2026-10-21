@@ -91,6 +91,7 @@ import {
   isHistoryRelated,
   type LoadedSettings,
   type LoadInput,
+  openCheckpoints,
   openSession,
   pollSettings,
   projectId,
@@ -825,6 +826,17 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       claim: (bytes, kind) => mediaBudget.claim(bytes, kind),
       store: (bytes) => blobs.putSync(bytes),
     };
+    const checkpoints = await openCheckpoints({
+      workspace: input.projectRoot,
+      projectDir: `${input.dirs.data}/projects/${projectId(input.projectRoot, input.os)}`,
+      session: sessionId,
+      env: input.env,
+      platform: input.os,
+      blobs,
+      enabled: snapshot.loaded.settings.checkpoints?.enabled !== false,
+      record: (data) => push("checkpoint", epochNum, turn, data),
+    });
+    checkpoints.beginTurn(turn);
     const baseCtx: ToolContext = {
       session: {
         id: sessionId,
@@ -839,7 +851,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       readState,
       readResults: { lookup: () => undefined },
       contextFreeTokens: 200_000,
-      recordWrite: () => Promise.resolve(),
+      recordWrite: (path, before) => checkpoints.recordWrite(path, before),
+      shellNotice: () => checkpoints.shellNotice(),
       emit: () => undefined,
       platform: input.platform as never,
       env: input.env as never,
@@ -890,6 +903,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
     const buildCtx = (): ToolContext => ({
       ...baseCtx,
+      ...(checkpoints.shell === undefined ? {} : { snapshots: checkpoints.shell }),
       settings: effectiveSettings,
       readResults: buildReadResultsIndex(events, epochNum),
       policy: {
