@@ -215,6 +215,74 @@ describe("budgets in a headless run", () => {
   });
 
   // spec: AC-RCPT-04
+  test("a request the guards stop after its reservation is released, and so is one whose stream fails", async () => {
+    const dir = await project();
+    try {
+      const model = counting();
+      const out = await run(dir, model.adapter, {
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          maxRequests: 1,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+      });
+      expect(out.exit).toEqual({ kind: "guard" });
+      const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
+      expect(lines.map((l) => l.split(" ")[0])).toEqual(["reserve", "commit", "reserve", "release"]);
+    } finally {
+      await dir.dispose();
+    }
+    const failing = await project();
+    try {
+      const adapter = {
+        render: () => ({
+          provider: "nvidia",
+          package: "x",
+          modelId: "m",
+          messages: [],
+          tools: [],
+          providerOptions: {},
+        }),
+        stream: async function* () {
+          yield {
+            type: "error",
+            error: { kind: "invalid_request", retryable: false, message: "boom" },
+            completed: null,
+          };
+        },
+      };
+      const out = await run(failing, adapter);
+      expect(out.exit).toEqual({ kind: "error" });
+      const lines = (await readFile(join(failing.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
+      expect(lines.map((l) => l.split(" ")[0])).toEqual(["reserve", "release"]);
+    } finally {
+      await failing.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-03
+  test("a day total at 80% of the daily budget warns when the request is reserved, in the log and in the output", async () => {
+    const dir = await project({ daily: 1 });
+    try {
+      const seed = new DailyLedger({ dir: join(dir.root, "data", "budget"), session: "SEED", now: () => NOW });
+      await seed.reserve("seed", 0.85, null);
+      await seed.commit("seed", 0.85);
+      const out = await run(dir, counting().adapter);
+      expect(out.warnings.some((w) => w.includes("day budget at 80% (0.85 of 1)"))).toBe(true);
+      const warn = (await events(dir, out.sessionId)).find((e) => e.type === "budget.event");
+      expect(warn?.data).toEqual({ kind: "warn", scope: "day", spent: 0.85, limit: 1 });
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-04
   test("two headless sessions racing for the rest of the daily budget dispatch exactly one request", async () => {
     const dir = await project({ daily: 0.1 });
     try {

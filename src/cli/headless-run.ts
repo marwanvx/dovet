@@ -885,8 +885,13 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let lastBodyChars: number | null = null;
     const outputTokens: number[] = [];
     let requestSeq = 0;
-    const budgetEvent = (data: BudgetEventData): void =>
+    const budgetEvent = (data: BudgetEventData): void => {
       push("budget.event", epochNum, turn, BudgetEventData.parse(data));
+      if (data.kind === "warn")
+        warnings.push(
+          `${data.scope} budget at 80% (${data.spent.toFixed(data.scope === "tokens" ? 0 : 2)} of ${data.limit})`,
+        );
+    };
     // cli-config "Live settings reload": one poll+apply shared by the turn top and every tool batch.
     const pollAndApply = async (): Promise<void> => {
       const poll = await pollSettings(snapshot, input.loadInput);
@@ -1412,10 +1417,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
             return null;
           })
         : null;
-      for (const w of meter.warnings(daySpent)) {
-        budgetEvent(w);
-        warnings.push(`${w.scope} budget at 80% (${w.spent.toFixed(w.scope === "tokens" ? 0 : 2)} of ${w.limit})`);
-      }
+      for (const w of meter.warnings(daySpent)) budgetEvent(w);
       const read = cacheReadOf(requestUsage);
       const warn = cacheWarning(prevCache === undefined ? undefined : { turn: prevTurn, cacheReadTokens: prevCache }, {
         turn,

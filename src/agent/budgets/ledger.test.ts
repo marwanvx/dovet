@@ -99,6 +99,23 @@ describe("daily ledger", () => {
     await expect(stat(lock)).rejects.toThrow();
   });
 
+  test("a commit after midnight lands in the file of the day it reserved in", async () => {
+    const dir = await fresh();
+    let now = NOW;
+    const l = new DailyLedger({ dir, session: "S1", now: () => now });
+    await l.reserve("r1", 1, null);
+    now = new Date(2026, 9, 23, 0, 5).getTime();
+    await l.commit("r1", 0.5);
+    const first = await readFile(join(dir, "2026-10-22.ledger"), "utf8");
+    expect(
+      first
+        .split("\n")
+        .filter(Boolean)
+        .map((x) => x.split(" ")[0]),
+    ).toEqual(["reserve", "commit"]);
+    await expect(stat(join(dir, "2026-10-23.ledger"))).rejects.toThrow();
+  });
+
   test("releaseOutstanding releases every reservation this session still holds", async () => {
     const dir = await fresh();
     const l = ledger(dir, "S1");
