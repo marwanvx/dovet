@@ -83,16 +83,16 @@ Per `model.response`, from raw usage fields ([providers](providers.md)) and cata
 **Rules that apply to every formula:**
 - **Prices are looked up by provider + model,** never by model alone. The same model costs differently on Anthropic, Bedrock, Vertex, OpenRouter or a gateway. models.dev prices are per provider.
 - **Every model call is costed and attributed,** with its purpose in the receipt: main requests, compaction summaries, WebSearch's secondary request, keep-alive pings, title generation, repair requests.
-- **Per-attempt usage:** when a response carries `usage.iterations` (Anthropic server-side fallback, server-tool iterations), each iteration is priced at **its own model's** rates, and the receipt names every model that ran. The top-level `model` field is the model that answered.
+- **Per-attempt usage:** when a response carries `usage.iterations` (Anthropic server-side fallback, server-tool iterations), each iteration is priced at **its own model's** rates (the iterations replace the top-level counts; one without a `model` is the answering model's), and the receipt names every model that ran (QUESTIONS Q82). The top-level `model` field is the model that answered.
 - **Refusals:**
-  - a refusal before any output is billed only for the categories Anthropic lists as billed (currently `bio`, `frontier_llm`, `reasoning_extraction`); otherwise it costs $0;
+  - a refusal before any output is billed only for the categories Anthropic lists as billed (currently `bio`, `frontier_llm`, `reasoning_extraction`, in `pricing-rules.jsonc`); otherwise it costs $0. Other protocols bill the usage they report (QUESTIONS Q82);
   - a mid-stream refusal bills input plus the output already streamed.
   - The receipt shows the refusal category either way.
-- **Data residency:** with `providers.anthropic.inferenceGeo: "us"` (sent as `inference_geo`), every price category on Claude 4.6 and later models is multiplied by **1.1**. Regional or multi-region cloud endpoints (Bedrock, Vertex) carry their own **+10%**, from the provider record.
-- **Haiku 5.5 long-context tier:** a request whose prompt (input + cache reads + cache writes) exceeds 100,000 tokens is priced entirely at the higher rates; similar tiers live in `pricing-rules.jsonc`.
+- **Data residency:** with `providers.anthropic.inferenceGeo: "us"` (sent as `inference_geo`), every price category on Claude 4.6 and later models is multiplied by **1.1**. Regional or multi-region cloud endpoints (Bedrock, Vertex) carry their own **+10%**, from the provider record (`Endpoint.priceMultiplier`). The multiplier comes from the model's `pricingRules` entry (`anthropic` for 4.6 and later) and applies to token costs, not to per-call server-tool fees (QUESTIONS Q82).
+- **Haiku 5.5 long-context tier:** a request whose prompt (input + cache reads + cache writes) exceeds 100,000 tokens is priced entirely at the higher rates; other tiers come from models.dev `cost.tiers[]` ([providers §8](providers.md)). A tier replaces every rate for a prompt strictly larger than its size (QUESTIONS Q82).
 - **Web search** (provider backend): $10 per 1,000 searches on Anthropic plus the tokens of the results; searches that error aren't billed. Search-service backends: counted, priced only if `websearch.pricePerSearch` is set.
 
-Prices with tiers come from `pricing-rules.jsonc` ([providers §8](providers.md)). Any cost computed with a missing or unknown price shows `≈` or `?` — never a fake `$0.00`.
+Prices with tiers come from `pricing-rules.jsonc` ([providers §8](providers.md)). Any cost computed with a missing or unknown price shows `≈` or `?` — never a fake `$0.00`: a missing cache price is replaced by the input price and shown `≈`; a missing model price, or usage without token counts, is `?` (QUESTIONS Q82).
 
 ### Budget scopes
 

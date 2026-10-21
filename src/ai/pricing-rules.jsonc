@@ -1,0 +1,21 @@
+// What models.dev lacks (providers §8, receipts-budgets "Cost computation"); a model's `pricingRules` names one entry of `rules`.
+{
+  // Anthropic's list of pre-output refusal categories that are still billed.
+  "billedRefusalCategories": ["bio", "frontier_llm", "reasoning_extraction"],
+  "rules": {
+    // Claude 4.6 and later.
+    "anthropic": {
+      "cacheWrite5mMultiplier": 1.25,
+      "cacheWrite1hMultiplier": 2,
+      "residencyMultiplier": 1.1,
+      // $10 per 1,000 searches.
+      "serverToolUsd": { "web_search": 0.01 }
+    },
+    // Earlier Claude models: no data-residency surcharge.
+    "anthropic-legacy": {
+      "cacheWrite5mMultiplier": 1.25,
+      "cacheWrite1hMultiplier": 2,
+      "serverToolUsd": { "web_search": 0.01 }
+    }
+  }
+}

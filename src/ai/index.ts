@@ -1,5 +1,18 @@
 // Public surface of the `ai` module (docs/specs/architecture.md "Modules"): The model layer: AI SDK adapter, provider registry, model catalog, pricing, retry policy.
 // Other modules import only from this file.
+export {
+  BILLED_REFUSAL_CATEGORIES,
+  type Cost,
+  type CostInput,
+  computeCost,
+  formatCost,
+  LOCAL_PRICE,
+  type ModelPrice,
+  type ModelRates,
+  type PricingRule,
+  pricingRule,
+  type TokenTotals,
+} from "./cost.ts";
 export { endpointOf, imageSupport, PROVIDER_AUTH, pdfSupport, providerRecord } from "./registry.ts";
 export {
   type CallEvent,
