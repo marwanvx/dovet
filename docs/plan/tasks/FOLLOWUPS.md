@@ -114,3 +114,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F13 (M2-05b security review): a failed mid-turn instruction reload is not in the session log
 - **Severity:** minor · `src/cli/headless-run.ts` (the `discoverInstructions(...).catch` in the request loop)
 - The warning reaches stderr and the output's `warnings`, but no event records that a changed instruction file was not applied. The log still matches what the model was told. Fix: a warning-only `instructions.loaded` event (needs the current records kept next to `launchFiles`).
+
+### F22 (M2-10 CI): the 10,000-file checkpoint speed test ran past its 300 s limit once on Windows
+- **Severity:** minor · `src/store/snapshots/checkpoints.test.ts` ("the second snapshot of an unchanged 10,000-file repository is fast", AC-CKPT-05)
+- `windows-latest` in the CI run for #176 (run 39663850374) failed it at 301,090 ms against its 300,000 ms limit; the same test passed on the next push of the PR (no change to `snapshot()` between them) and on `main` before. The time is spent creating and snapshotting 10,000 files on the runner's disk, not in the 200/400 ms assertion. Not reproduced (no Windows here); if it happens again, log the time of the rig's file creation and of the first snapshot separately so the slow part is known before a limit is touched.
