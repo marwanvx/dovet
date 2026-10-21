@@ -2,11 +2,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -173,6 +175,43 @@ describe("rewinding", () => {
     expect(readFileSync(join(r.work, "b.txt"), "utf8")).toBe("bee\n");
     expect(existsSync(join(r.work, "new.txt"))).toBe(false);
   });
+
+  // spec: AC-CKPT-06
+  test("a file changed in two turns comes back as it was before the earlier one", async () => {
+    const r = rig({ "a.txt": "one\n" }, false);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+    writeFileSync(join(r.work, "a.txt"), "two\n");
+    svc.beginTurn(2);
+    await svc.recordWrite(abs(r, "a.txt"), bytes("two\n"));
+    writeFileSync(join(r.work, "a.txt"), "three\n");
+    await svc.restore(r.envelopes(), "c1");
+    expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("one\n");
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a path that became a symlink or a hard link is skipped, never written through",
+    async () => {
+      const r = rig({ "a.txt": "one\n", "b.txt": "bee\n", "target.txt": "target\n", "other.txt": "other\n" }, false);
+      const svc = await r.open();
+      svc.beginTurn(1);
+      await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+      await svc.recordWrite(abs(r, "b.txt"), bytes("bee\n"));
+      rmSync(join(r.work, "a.txt"));
+      symlinkSync(join(r.work, "target.txt"), join(r.work, "a.txt"));
+      linkSync(join(r.work, "other.txt"), join(r.work, "b.txt.link"));
+      rmSync(join(r.work, "b.txt"));
+      linkSync(join(r.work, "other.txt"), join(r.work, "b.txt"));
+      const result = await svc.restore(r.envelopes(), "c1");
+      expect(result.skipped.map((s) => `${s.path}:${s.reason}`).sort()).toEqual([
+        `${abs(r, "a.txt")}:link`,
+        `${abs(r, "b.txt")}:link`,
+      ]);
+      expect(readFileSync(join(r.work, "target.txt"), "utf8")).toBe("target\n");
+      expect(readFileSync(join(r.work, "other.txt"), "utf8")).toBe("other\n");
+    },
+  );
 
   test("restoring turn 2 leaves turn 1's changes alone", async () => {
     const r = rig({ "a.txt": "one\n" }, false);
