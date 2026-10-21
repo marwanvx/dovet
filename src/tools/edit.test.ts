@@ -199,6 +199,9 @@ describe("Edit: looser levels", () => {
     expect(text(out)).toContain("Matched ignoring indentation differences.");
     expect(await readFile(file, "utf8")).toBe("func main() {\n\tif ready {\n\t\trun()\n\t\tstop()\n\t}\n}\n");
     expect(out.meta?.fileChanges?.[0]?.match).toBe("indent");
+    expect(out.meta?.fileChanges?.[0]?.after).toBe(
+      new Bun.CryptoHasher("sha256").update(await readFile(file)).digest("hex"),
+    );
   });
 
   // spec: AC-TOOLS-14

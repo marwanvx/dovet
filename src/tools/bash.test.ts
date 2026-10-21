@@ -318,6 +318,8 @@ async function pidOf(path: string): Promise<number> {
   throw new Error(`${path} never got a pid`);
 }
 
+const sha256 = (text: string): string => new Bun.CryptoHasher("sha256").update(text).digest("hex");
+
 describe("Bash on every OS", () => {
   // spec: AC-PLAT-04
   test("non-ASCII output round-trips", async () => {
@@ -537,6 +539,14 @@ describe.skipIf(process.platform === "win32")("Bash: files read and changed", ()
     return def.run(prepared.input as never, r.ctx);
   };
 
+  // spec: AC-CKPT-07
+  test("a file a command deletes is listed as deleted, with no bytes left", async () => {
+    const r = await repo();
+    const file = join(r.cwd, "a.ts");
+    const out = await bash(r, { command: "rm a.ts" });
+    expect(out.meta?.fileChanges).toEqual([{ path: file, op: "delete", added: 0, removed: 0, after: null }]);
+  });
+
   // spec: AC-TOOLS-41
   test("a command that reformats a read file lists it as changed; the next Write without a re-read is stale", async () => {
     const r = await repo();
@@ -547,8 +557,8 @@ describe.skipIf(process.platform === "win32")("Bash: files read and changed", ()
       "(no output)\nFiles changed while this ran: a.ts (+1 −1, re-read before editing), b.ts (+2 −0)",
     );
     expect(out.meta?.fileChanges).toEqual([
-      { path: file, op: "modify", added: 1, removed: 1 },
-      { path: join(r.cwd, "b.ts"), op: "create", added: 2, removed: 0 },
+      { path: file, op: "modify", added: 1, removed: 1, after: sha256("const a = 1;\n") },
+      { path: join(r.cwd, "b.ts"), op: "create", added: 2, removed: 0, after: sha256("new\nfile\n") },
     ]);
     const refused = await run(r, "Write", { file_path: file, content: "mine\n" });
     expect(refused.status).toBe("error");

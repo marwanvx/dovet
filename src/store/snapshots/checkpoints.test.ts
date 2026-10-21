@@ -14,9 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { deleteObject, unpackToLoose } from "../../../test/helpers/index.ts";
 import { type AbsPath, CheckpointData, type EventEnvelope } from "../../schema/index.ts";
+import type { BlobStore } from "../blobs/index.ts";
 import { createBlobStore } from "../blobs/index.ts";
-import { type CheckpointService, openCheckpoints } from "./index.ts";
+import { type CheckpointService, describeRewind, openCheckpoints } from "./index.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -38,8 +40,13 @@ interface Rig {
   work: string;
   data: string;
   events: CheckpointData[];
-  open: (over?: { enabled?: boolean; slowMs?: number; session?: string }) => Promise<CheckpointService>;
-  envelopes: () => EventEnvelope[];
+  open: (over?: {
+    enabled?: boolean;
+    slowMs?: number;
+    session?: string;
+    blobs?: (real: BlobStore) => BlobStore;
+  }) => Promise<CheckpointService>;
+  envelopes: (...changes: EventEnvelope[]) => EventEnvelope[];
 }
 
 /** A workspace named with a space; a git repository with the files committed, or a plain directory. */
@@ -70,7 +77,7 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = t
     work,
     data,
     events,
-    envelopes: () => events.map((e) => ({ type: "checkpoint", data: e }) as EventEnvelope),
+    envelopes: (...changes) => [...events.map((e) => ({ type: "checkpoint", data: e }) as EventEnvelope), ...changes],
     open: (over = {}) =>
       openCheckpoints({
         workspace: work,
@@ -78,7 +85,7 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = t
         session: over.session ?? "s1",
         env: ENV,
         platform: process.platform,
-        blobs: createBlobStore(data),
+        blobs: (over.blobs ?? ((real) => real))(createBlobStore(data)),
         enabled: over.enabled ?? true,
         ...(over.slowMs === undefined ? {} : { slowMs: over.slowMs }),
         record: (e) => events.push(CheckpointData.parse(e)),
@@ -88,6 +95,13 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = t
 
 const abs = (r: Rig, name: string): AbsPath => join(r.work, name) as AbsPath;
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
+const sha = (text: string): string => new Bun.CryptoHasher("sha256").update(text).digest("hex");
+/** A `file.change` the way a tool logs it: the path and the hash of the bytes it left (null = deleted). */
+const changed = (r: Rig, name: string, text: string | null): EventEnvelope =>
+  ({
+    type: "file.change",
+    data: { path: abs(r, name), op: "modify", added: 0, removed: 0, after: text === null ? null : sha(text) },
+  }) as EventEnvelope;
 
 describe("when a checkpoint is taken", () => {
   test("a git workspace snapshots before the turn's first change, once per turn, and not for a turn that changes nothing", async () => {
@@ -174,7 +188,7 @@ describe("rewinding", () => {
     await svc.recordWrite(abs(r, "b.txt"), bytes("bee\n"));
     writeFileSync(join(r.work, "b.txt"), "changed\n");
 
-    const result = await svc.restore(r.envelopes(), "c1");
+    const result = await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(result).toMatchObject({ written: 2, deleted: 1, failed: [] });
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("one\n");
     expect(readFileSync(join(r.work, "b.txt"), "utf8")).toBe("bee\n");
@@ -191,7 +205,7 @@ describe("rewinding", () => {
     svc.beginTurn(2);
     await svc.recordWrite(abs(r, "a.txt"), bytes("two\n"));
     writeFileSync(join(r.work, "a.txt"), "three\n");
-    await svc.restore(r.envelopes(), "c1");
+    await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("one\n");
   });
 
@@ -208,7 +222,7 @@ describe("rewinding", () => {
       linkSync(join(r.work, "other.txt"), join(r.work, "b.txt.link"));
       rmSync(join(r.work, "b.txt"));
       linkSync(join(r.work, "other.txt"), join(r.work, "b.txt"));
-      const result = await svc.restore(r.envelopes(), "c1");
+      const result = await svc.restore(r.envelopes(), "c1", "overwrite");
       expect(result.skipped.map((s) => `${s.path}:${s.reason}`).sort()).toEqual([
         `${abs(r, "a.txt")}:link`,
         `${abs(r, "b.txt")}:link`,
@@ -227,7 +241,7 @@ describe("rewinding", () => {
     svc.beginTurn(2);
     await svc.recordWrite(abs(r, "a.txt"), bytes("two\n"));
     writeFileSync(join(r.work, "a.txt"), "three\n");
-    await svc.restore(r.envelopes(), "c2");
+    await svc.restore(r.envelopes(), "c2", "overwrite");
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("two\n");
   });
 
@@ -238,15 +252,52 @@ describe("rewinding", () => {
     await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
     writeFileSync(join(r.work, "a.txt"), "edited\n");
     rmSync(join(r.data, "blobs"), { recursive: true });
-    const result = await svc.restore(r.envelopes(), "c1");
+    const result = await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(result.failed).toEqual([abs(r, "a.txt")]);
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("edited\n");
+  });
+
+  test("a folder where a file used to be is skipped, not a crash, and the other paths still restore", async () => {
+    const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, false);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+    await svc.recordWrite(abs(r, "b.txt"), bytes("bee\n"));
+    rmSync(join(r.work, "a.txt"));
+    mkdirSync(join(r.work, "a.txt"));
+    writeFileSync(join(r.work, "b.txt"), "changed\n");
+    const result = await svc.restore(r.envelopes(), "c1", "overwrite");
+    expect(result.skipped).toEqual([{ path: abs(r, "a.txt"), reason: "blocked" }]);
+    expect(readFileSync(join(r.work, "b.txt"), "utf8")).toBe("bee\n");
+  });
+
+  // spec: AC-CKPT-11
+  test("a damaged saved copy is a failed path, and bytes that don't read back as saved are failed too", async () => {
+    for (const damage of ["throws", "writes wrong bytes"]) {
+      const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, false);
+      const svc = await r.open({
+        blobs: (real) => ({
+          putSync: (b) => real.putSync(b),
+          getSync: (sha) => real.getSync(sha),
+          get: async (sha) => {
+            if (damage === "throws") throw new Error(`blob ${sha} is damaged`);
+            return bytes("not what was saved\n");
+          },
+        }),
+      });
+      svc.beginTurn(1);
+      await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+      writeFileSync(join(r.work, "a.txt"), "changed\n");
+      const result = await svc.restore(r.envelopes(), "c1", "overwrite");
+      expect(result.failed).toEqual([abs(r, "a.txt")]);
+      expect(result.written).toBe(0);
+    }
   });
 
   test("an unknown checkpoint is an error", async () => {
     const r = rig({}, false);
     const svc = await r.open();
-    expect(svc.restore(r.envelopes(), "c9")).rejects.toThrow("c9");
+    expect(svc.restore(r.envelopes(), "c9", "overwrite")).rejects.toThrow("c9");
   });
 
   // spec: AC-CKPT-09
@@ -265,7 +316,7 @@ describe("rewinding", () => {
     writeFileSync(join(r.work, "dir with space", "new file.txt"), "made\r\n");
     if (inGit) await svc.recordWrite(file, bytes(crlf));
     else await svc.recordWrite(abs(r, "dir with space/new file.txt"), null);
-    await svc.restore(r.envelopes(), "c1");
+    await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(readFileSync(file)).toEqual(Buffer.from(crlf));
     expect(existsSync(join(r.work, "dir with space", "new file.txt"))).toBe(false);
     expect(readFileSync(join(r.work, "unix.txt"), "utf8")).toBe("a\nb\n");
@@ -279,11 +330,114 @@ describe("rewinding", () => {
     writeFileSync(join(r.work, "a.txt"), "edited\n");
     rmSync(join(r.work, "gone.txt"));
     writeFileSync(join(r.work, "made.txt"), "new\n");
-    const result = await svc.restore(r.envelopes(), "c1");
+    const result = await svc.restore(r.envelopes(), "c1", "overwrite");
     expect(result).toMatchObject({ written: 2, deleted: 1 });
     expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("one\n");
     expect(readFileSync(join(r.work, "gone.txt"), "utf8")).toBe("bye\n");
     expect(existsSync(join(r.work, "made.txt"))).toBe(false);
+  });
+});
+
+describe("rewinding with conflict safety", () => {
+  /** Turn 1 changes a.txt (and the git case also b.txt) after the checkpoint; Dovet logged what it left. */
+  async function turnOne(inGit: boolean) {
+    const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, inGit);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    if (inGit) await svc.shell?.snapshot();
+    await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+    writeFileSync(join(r.work, "a.txt"), "dovet wrote\n");
+    return { r, svc, log: () => r.envelopes(changed(r, "a.txt", "dovet wrote\n")) };
+  }
+
+  // spec: AC-CKPT-07
+  test.each([
+    ["git", true],
+    ["blobs", false],
+  ])(
+    "%s: no conflict while the file is as Dovet left it, one when it changed after Dovet's last write",
+    async (_n, inGit) => {
+      const { r, svc, log } = await turnOne(inGit);
+      expect(await svc.conflicts(log(), "c1")).toEqual([]);
+      writeFileSync(join(r.work, "a.txt"), "the user typed this\n");
+      expect(await svc.conflicts(log(), "c1")).toEqual([abs(r, "a.txt")]);
+    },
+  );
+
+  // spec: AC-CKPT-07
+  test("a path changed only outside Dovet, with no record of Dovet's, counts as a conflict", async () => {
+    const { r, svc } = await turnOne(true);
+    writeFileSync(join(r.work, "b.txt"), "edited between turns\n");
+    const log = r.envelopes(changed(r, "a.txt", "dovet wrote\n"));
+    expect(await svc.conflicts(log, "c1")).toEqual([abs(r, "b.txt")]);
+  });
+
+  // spec: AC-CKPT-07
+  test.each([
+    ["git", true],
+    ["blobs", false],
+  ])(
+    "%s: skipping the conflicts keeps the user's file and restores the rest, overwriting replaces it",
+    async (_n, inGit) => {
+      const { r, svc, log } = await turnOne(inGit);
+      writeFileSync(join(r.work, "a.txt"), "the user typed this\n");
+      const skipped = await svc.restore(log(), "c1", "skip");
+      expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("the user typed this\n");
+      expect(skipped.skipped.map((s) => `${s.path}:${s.reason}`)).toEqual([`${abs(r, "a.txt")}:conflict`]);
+      expect(skipped.failed).toEqual([]);
+      const over = await svc.restore(log(), "c1", "overwrite");
+      expect(readFileSync(join(r.work, "a.txt"), "utf8")).toBe("one\n");
+      expect(over.skipped).toEqual([]);
+    },
+  );
+
+  test("a rewind keeps the bytes it replaced, so it can itself be undone", async () => {
+    const { r, svc, log } = await turnOne(false);
+    const result = await svc.restore(log(), "c1", "overwrite");
+    expect(result.changes).toEqual([
+      { path: abs(r, "a.txt"), op: "modify", before: sha("dovet wrote\n"), after: sha("one\n") },
+    ]);
+    expect(new TextDecoder().decode(await createBlobStore(r.data).get(sha("dovet wrote\n")))).toBe("dovet wrote\n");
+  });
+
+  // spec: AC-CKPT-11
+  test("one snapshot blob deleted: the path is named, the rest comes back with the checkpoint's hashes, and the summary says it failed", async () => {
+    const r = rig({ "a.txt": "alpha\n", "b.txt": "bravo\n", "c.txt": "charlie\n" }, true);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    await svc.shell?.snapshot();
+    for (const n of ["a", "b", "c"]) writeFileSync(join(r.work, `${n}.txt`), `changed ${n}\n`);
+    unpackToLoose(join(r.data, "projects", "p"), ENV);
+    const id = Bun.spawnSync(["git", "hash-object", "--stdin"], { stdin: Buffer.from("bravo\n") })
+      .stdout.toString()
+      .trim();
+    deleteObject(join(r.data, "projects", "p"), id);
+    const log = r.envelopes(...["a", "b", "c"].map((n) => changed(r, `${n}.txt`, `changed ${n}\n`)));
+    const result = await svc.restore(log, "c1", "overwrite");
+    expect(result.failed).toEqual([abs(r, "b.txt")]);
+    expect(sha(readFileSync(join(r.work, "a.txt"), "utf8"))).toBe(sha("alpha\n"));
+    expect(sha(readFileSync(join(r.work, "c.txt"), "utf8"))).toBe(sha("charlie\n"));
+    expect(readFileSync(join(r.work, "b.txt"), "utf8")).toBe("changed b\n");
+    const text = describeRewind(result);
+    expect(text).toContain("could not be restored");
+    expect(text).toContain(abs(r, "b.txt"));
+    expect(text).not.toMatch(/^Restored all/);
+  });
+
+  test("the summary counts what was restored, deleted and skipped", () => {
+    const text = describeRewind({
+      written: 3,
+      deleted: 1,
+      skipped: [
+        { path: "/w/x", reason: "conflict" },
+        { path: "/w/y", reason: "link" },
+      ],
+      failed: [],
+      changes: [],
+    });
+    expect(text).toBe(
+      "Restored 3 files and deleted 1. Skipped 2: 1 changed since Dovet's last write, 1 that is a link now.",
+    );
   });
 });
 

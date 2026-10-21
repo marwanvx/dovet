@@ -35,8 +35,8 @@ const HEARTBEAT_MS = 30_000;
 const FLUSH_MS = 2_000;
 const BLOB_OVER_BYTES = 256 * 1024;
 const MAX_LINE_BYTES = 1024 * 1024;
-const FLUSH_NOW = new Set(["turn.end", "permission.request", "session.end"]);
-const FSYNC = new Set(["turn.end", "session.end"]);
+const FLUSH_NOW = new Set(["user.message", "turn.end", "permission.request", "session.end"]);
+const FSYNC = new Set(["user.message", "turn.end", "session.end"]);
 
 function moveLargeStrings(value: unknown, blobs: BlobStore): unknown {
   if (typeof value === "string") {

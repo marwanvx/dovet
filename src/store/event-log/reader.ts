@@ -26,7 +26,7 @@ function isBlobRef(v: object): v is { $blob: string; bytes: number } {
   );
 }
 
-async function resolveBlobs(value: unknown, blobs: BlobStore): Promise<unknown> {
+export async function resolveBlobs(value: unknown, blobs: BlobStore): Promise<unknown> {
   if (Array.isArray(value)) return Promise.all(value.map((v) => resolveBlobs(v, blobs)));
   if (typeof value !== "object" || value === null) return value;
   if (isBlobRef(value)) {

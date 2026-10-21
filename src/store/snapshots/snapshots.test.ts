@@ -18,6 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { deleteObject, unpackToLoose } from "../../../test/helpers/index.ts";
 import { openSnapshotter, type Snapshotter } from "./index.ts";
 
 const dirs: string[] = [];
@@ -289,6 +290,71 @@ describe("snapshot", () => {
     writeFileSync(join(linked, "a.txt"), "edited\n");
     await snap.restore(tree, []);
     expect(readFileSync(join(linked, "a.txt"), "utf8")).toBe("a\n");
+  });
+});
+
+describe("restore, verified and conflict-aware", () => {
+  function blobId(text: string): string {
+    const r = Bun.spawnSync(["git", "hash-object", "--stdin"], { stdin: Buffer.from(text) });
+    return r.stdout.toString().trim();
+  }
+
+  // spec: AC-CKPT-11
+  test("a blob that is gone is named in failed and the other files still come back", async () => {
+    const f = fixture({ "a.txt": "alpha\n", "b.txt": "bravo\n", "c.txt": "charlie\n" });
+    const snap = await f.open();
+    const { tree } = await snap.snapshot();
+    for (const name of ["a", "b", "c"]) writeFileSync(join(f.repo, `${name}.txt`), `changed ${name}\n`);
+    unpackToLoose(f.project, baseEnv(f.home));
+    deleteObject(f.project, blobId("bravo\n"));
+    const result = await snap.restore(tree, []);
+    expect(result.failed).toEqual(["b.txt"]);
+    expect(result.written).toBe(2);
+    expect(readFileSync(join(f.repo, "a.txt"), "utf8")).toBe("alpha\n");
+    expect(readFileSync(join(f.repo, "b.txt"), "utf8")).toBe("changed b\n");
+    expect(readFileSync(join(f.repo, "c.txt"), "utf8")).toBe("charlie\n");
+  });
+
+  test("plan lists the paths a restore would write or delete, and changes nothing", async () => {
+    const f = fixture({ "keep.txt": "keep\n", "edit.txt": "before\n", "gone.txt": "bye\n" });
+    const snap = await f.open();
+    const { tree } = await snap.snapshot();
+    writeFileSync(join(f.repo, "edit.txt"), "after\n");
+    rmSync(join(f.repo, "gone.txt"));
+    writeFileSync(join(f.repo, "made.txt"), "new\n");
+    expect((await snap.plan(tree, [])).sort()).toEqual(["edit.txt", "gone.txt", "made.txt"]);
+    expect(readFileSync(join(f.repo, "edit.txt"), "utf8")).toBe("after\n");
+    expect(existsSync(join(f.repo, "made.txt"))).toBe(true);
+  });
+
+  // spec: AC-CKPT-07
+  test("paths in skip are left exactly as they are and reported as conflicts", async () => {
+    const f = fixture({ "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
+    const snap = await f.open();
+    const { tree } = await snap.snapshot();
+    for (const name of ["a", "b", "c"]) writeFileSync(join(f.repo, `${name}.txt`), `mine ${name}\n`);
+    const result = await snap.restore(tree, [], { skip: new Set(["b.txt"]) });
+    expect(result.skipped).toEqual([{ path: "b.txt", reason: "conflict" }]);
+    expect(result.written).toBe(2);
+    expect(readFileSync(join(f.repo, "b.txt"), "utf8")).toBe("mine b\n");
+    expect(readFileSync(join(f.repo, "a.txt"), "utf8")).toBe("a\n");
+  });
+
+  test("onChange sees each file's bytes before and after, with null for a file that was not there or is deleted", async () => {
+    const f = fixture({ "edit.txt": "before\n", "gone.txt": "bye\n" });
+    const snap = await f.open();
+    const { tree } = await snap.snapshot();
+    writeFileSync(join(f.repo, "edit.txt"), "after\n");
+    rmSync(join(f.repo, "gone.txt"));
+    writeFileSync(join(f.repo, "made.txt"), "new\n");
+    const seen: string[] = [];
+    await snap.restore(tree, [], {
+      onChange: (c) => {
+        const text = (b: Uint8Array | null): string => (b === null ? "null" : new TextDecoder().decode(b).trim());
+        seen.push(`${c.path}: ${text(c.before)} -> ${text(c.after)}`);
+      },
+    });
+    expect(seen.sort()).toEqual(["edit.txt: after -> before", "gone.txt: null -> bye", "made.txt: new -> null"]);
   });
 });
 

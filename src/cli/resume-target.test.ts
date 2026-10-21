@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fakeClock, sequentialIds, type TempProject, tempProject } from "../../test/helpers/index.ts";
 import type { Os } from "../platform/index.ts";
 import { Ulid } from "../schema/index.ts";
-import { openSession, type ProjectLocation } from "../store/index.ts";
+import { forkAtTurn, openSession, type ProjectLocation } from "../store/index.ts";
 import { ephemeralDataDir, makeUlid, resolveResumeTarget } from "./resume-target.ts";
 
 const OS: Os = process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
@@ -39,6 +39,24 @@ describe("resume target", () => {
     const { loc, cleanup } = await project();
     try {
       expect(await resolveResumeTarget(loc, undefined, true)).toEqual({ error: "no saved sessions for this project" });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  // spec: AC-CKPT-12
+  test("--continue after a rewind fork opens the fork; the original stays listed under its own id", async () => {
+    const { loc, cleanup } = await project();
+    try {
+      const parent = makeUlid(Date.UTC(2026, 9, 13), new Uint8Array(16));
+      await plant(loc, parent);
+      const fork = makeUlid(Date.now(), crypto.getRandomValues(new Uint8Array(16)));
+      await forkAtTurn({ ...loc, session: parent }, fork, 1, {
+        ids: sequentialIds("B"),
+        clock: fakeClock(Date.UTC(2026, 9, 14)),
+      });
+      expect(await resolveResumeTarget(loc, undefined, true)).toEqual({ id: fork });
+      expect(await resolveResumeTarget(loc, parent, false)).toEqual({ id: parent });
     } finally {
       await cleanup();
     }

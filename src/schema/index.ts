@@ -4,6 +4,7 @@ export { EventEnvelope } from "./envelope.ts";
 export {
   CheckpointData,
   EpochStartData,
+  FileChangeData,
   InstructionsLoadedData,
   ModelRequestData,
   PrefixFingerprint,

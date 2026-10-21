@@ -26,6 +26,7 @@ const readFull = (ctx: ToolContext, file_path: string) => call(ctx, "Read", { fi
 const lines = (n: number, tag = "line"): string =>
   `${Array.from({ length: n }, (_, i) => `${tag} ${i + 1}`).join("\n")}\n`;
 const isRoot = process.getuid?.() === 0;
+const sha256 = (text: string): string => new Bun.CryptoHasher("sha256").update(text).digest("hex");
 
 describe("Write: preconditions", () => {
   test("creates a new file with parents and counts its lines", async () => {
@@ -34,7 +35,9 @@ describe("Write: preconditions", () => {
     expect(out.status).toBe("ok");
     expect(text(out)).toBe(`Created ${join(cwd, "a/b/new.txt")} (2 lines)`);
     expect(await readFile(join(cwd, "a/b/new.txt"), "utf8")).toBe("one\ntwo\n");
-    expect(out.meta?.fileChanges).toEqual([{ path: join(cwd, "a/b/new.txt"), op: "create", added: 2, removed: 0 }]);
+    expect(out.meta?.fileChanges).toEqual([
+      { path: join(cwd, "a/b/new.txt"), op: "create", added: 2, removed: 0, after: sha256("one\ntwo\n") },
+    ]);
   });
 
   test("an existing file must have been read in full first", async () => {

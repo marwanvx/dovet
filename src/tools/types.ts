@@ -30,9 +30,11 @@ export type ToolOutput = {
     search?: { backend: string; calls: number; priceUsd?: number };
     fileChanges?: Array<{
       path: AbsPath;
-      op: "create" | "modify";
+      op: "create" | "modify" | "delete";
       added: number;
       removed: number;
+      /** SHA-256 of the bytes the change left (null = deleted): what a rewind treats as Dovet's last write. */
+      after?: string | null;
       match?: "exact" | "prefix-strip" | "indent";
     }>;
   };
