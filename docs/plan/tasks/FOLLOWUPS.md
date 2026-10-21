@@ -66,6 +66,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/store/event-log/resume.test.ts` ("resumes with the sidecar in under 2 s")
 - `windows-latest` in the CI run for #172 (docs-only) measured 2,487 ms against the 2 s limit (the rerun is below). Third flake of this one test (memory on Ubuntu and macOS, now time on Windows). Fix it with F16 above: the test measures the runner's disk and memory state as much as the sidecar resume, so time the resume in a fresh subprocess after the file is flushed, and take the best of three like the 10,000-file checkpoint test does.
 
+### F16 (M2-14 CI): the 500 MB resume test failed a fourth time (macOS, the memory limit)
+- **Severity:** major · `src/store/event-log/resume.test.ts:443` (`rssPeak - rssBefore` against 300 MiB)
+- `macos-latest` in the CI run for #181, which does not touch `resume.ts`; the rerun decides the PR. Four flakes in one test (Ubuntu, macOS twice, Windows), logged as minor three times: now `major`, so step 2.4 fixes it at the cause (measure the scan's own memory in a fresh subprocess, or `heapUsed` after `Bun.gc(true)`), not with a rerun.
+
 ### F17 (M2-09b recheck): CI runs per task rose from 5.0 to 7.3, all of it on deep-tier tasks
 - **Severity:** minor · `docs/background/workflow-audit-2026-10-19.md` "Recheck"
 - M2-06 took 21 CI runs (13 red, including Bun segfaults and hangs on Windows with real local sockets, found only by a temporary CI job), M2-05b 9, M2-09 9; the other four tasks 3 each. For a task that adds sockets, child processes or timing limits, run its new tests on all three OSes in one temporary CI job (repeated) before the first review round, instead of finding each failure through a review-fix-push cycle. Look at the next recheck's CI-run mean before adding a rule.
