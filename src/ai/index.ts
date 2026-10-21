@@ -9,6 +9,7 @@ export {
   LOCAL_PRICE,
   type ModelPrice,
   type ModelRates,
+  type PriceRates,
   type PricingRule,
   pricingRule,
   type TokenTotals,

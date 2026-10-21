@@ -28,7 +28,6 @@
   "src/agent/transcript/fingerprint.ts:firstDivergence": "M3-09",
   "src/agent/transcript/instructions.ts:changedInstructions": "M3-01",
   "src/ai/cost.ts:LOCAL_PRICE": "M4-02",
-  "src/ai/cost.ts:computeCost": "M2-13",
   "src/ai/cost.ts:formatCost": "M3-01",
   "src/ai/cost.ts:pricingRule": "M4-02",
   "src/platform/os-label.ts:describeOs": "M2-16",
