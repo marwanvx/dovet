@@ -30,6 +30,7 @@ A test must prove the feature works, not just turn CI green:
 - **Provider behavior comes from recorded real traffic** (fixtures recorded from the live API), never from hand-written responses that merely match what the code expects.
 - **Red before green:** every new test is run before the implementation and must fail for the right reason; the failing output is part of the PR ([build loop](../workflow/build-loop.md) step 6).
 - **Proof by breaking:** the reviewer breaks each criterion's implementation and the tagged test must fail ([build loop](../workflow/build-loop.md) step 7). A test that survives a broken feature is rejected.
+- **A test run leaves nothing behind.** `bun run test` runs the suite with its temp directory set to a fresh private one and fails, naming them, if any `dovet-tool-*` workspace is left in it (`workspace()` from `src/tools/test-context.ts`; the removal after each test is a preload in `bunfig.toml`, because a hook registered inside an imported module covers only the first test file that loads it).
 - No skipped or focused tests (`.skip`, `.only`, `.todo`) on `main`; no snapshot test as the only check of a behavior unless the snapshot was reviewed against the spec; no assertions weakened to make a test pass (AGENTS.md).
 - **Beyond unit tests, real use decides:** platform tests run real shells on all three OSes; the nightly suite calls the real APIs; each milestone's exit evidence includes real end-to-end work (M1: 10 real coding tasks; M3: the owner's daily use); evals run hidden tests the agent never saw.
 

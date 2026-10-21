@@ -234,12 +234,14 @@ describe.skipIf(process.platform === "win32")("Bash", () => {
     await writeFile(join(r.home, ".bash_profile"), "sleep 30\n");
     const abort = new AbortController();
     r.ctx = { ...r.ctx, signal: abort.signal };
-    const tool = createBashTool({ tmpDir: r.tmp, snapshot: snapshotOf(r) });
+    const snapshot = snapshotOf(r, 1000);
+    const tool = createBashTool({ tmpDir: r.tmp, snapshot });
     setTimeout(() => abort.abort(), 100);
     const started = Date.now();
     const out = await bash(r, { command: "true" }, tool);
     expect(out.status).toBe("interrupted");
     expect(Date.now() - started).toBeLessThan(3000);
+    await snapshot.ready();
   });
 
   test("a failing command reports its exit code and a timeout kills it", async () => {

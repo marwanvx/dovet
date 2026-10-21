@@ -6,8 +6,8 @@ const q = (s: string): string => `'${s.replace(/['‘’‚‛]/g, (c) => c + c)
 const POLICY_ERROR =
   /running scripts is disabled on this system|is not digitally signed|cannot be loaded because|PSSecurityException/i;
 
-/** True when the output shows Group Policy refusing `-File` (the first call; later calls use `-Command`). */
-export const isPolicyRefusal = (output: string): boolean => POLICY_ERROR.test(output);
+/** True when the output shows Group Policy refusing `-File` (the first call; later calls use `-Command`). The console wraps long messages at 80 columns, even inside a phrase, so line breaks count as spaces. */
+export const isPolicyRefusal = (output: string): boolean => POLICY_ERROR.test(output.replace(/\s+/g, " "));
 
 /**
  * The script text. The first line of `cwdFile` is the final directory, the second the language mode. The exit code is

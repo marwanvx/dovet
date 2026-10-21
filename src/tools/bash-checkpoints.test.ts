@@ -30,6 +30,7 @@ const gitIn = (cwd: string, ...args: string[]): void => {
 
 interface Rig {
   cwd: string;
+  tmp: string;
   svc: CheckpointService;
   events: CheckpointData[];
   ctx: ToolContext;
@@ -85,6 +86,7 @@ async function rig(inGit: boolean): Promise<Rig> {
   };
   return {
     cwd,
+    tmp: join(data, "bash-tmp"),
     svc,
     events,
     ctx,
@@ -93,7 +95,7 @@ async function rig(inGit: boolean): Promise<Rig> {
   };
 }
 
-const bashTool = (r: Rig): ToolDefinition<never> => createBashTool({ tmpDir: `${r.cwd}-tmp` }) as never;
+const bashTool = (r: Rig): ToolDefinition<never> => createBashTool({ tmpDir: r.tmp }) as never;
 
 describe.skipIf(process.platform === "win32")("checkpoints behind the tools", () => {
   // spec: AC-CKPT-01
