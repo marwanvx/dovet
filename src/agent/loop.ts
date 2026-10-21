@@ -107,6 +107,8 @@ export const TRUNCATED_INSTRUCTION =
   "Your previous response was cut off at the output limit while writing a tool call. Retry with a smaller step.";
 
 export function decideStopAction(input: StopInput): StopAction {
+  // A full context usually answers with nothing at all, which is not an empty response to retry.
+  if (input.stop === "context_exceeded") return { kind: "compact-retry" };
   if (input.emptyOrThinkingOnly) {
     if (input.emptyRetries < 1) return { kind: "retry" };
     return { kind: "finalize", reason: "end_turn", note: "The model returned no answer." };
@@ -122,7 +124,6 @@ export function decideStopAction(input: StopInput): StopAction {
     if (input.truncatedToolCall || input.toolCalls > 0) return { kind: "prepare", instruction: TRUNCATED_INSTRUCTION };
     return { kind: "finalize", reason: "end_turn", note: "response truncated at output limit" };
   }
-  if (stop === "context_exceeded") return { kind: "compact-retry" };
   if (stop === "refusal") return { kind: "finalize", reason: "refusal" };
   if (stop === "pause") {
     if (input.pauseContinuations < MAX_PAUSE_CONTINUATIONS) return { kind: "pause-continue" };

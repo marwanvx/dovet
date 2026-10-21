@@ -1,4 +1,4 @@
-export { type BuildEpoch, buildRequest } from "./build.ts";
+export { type BuildEpoch, buildRequest, cancelledTurns, epochLineage, type Lineage } from "./build.ts";
 export { headerOf, serializeTools, startEpoch } from "./epoch.ts";
 export {
   type CacheSample,

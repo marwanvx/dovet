@@ -165,6 +165,19 @@ describe("stop reasons", () => {
         refusalRetries: 0,
       }),
     ).toEqual({ kind: "compact-retry" });
+    // spec: AC-CTX-20
+    expect(
+      decideStopAction({
+        stop: "context_exceeded",
+        toolCalls: 0,
+        hasText: false,
+        emptyOrThinkingOnly: true,
+        truncatedToolCall: false,
+        pauseContinuations: 0,
+        emptyRetries: 0,
+        refusalRetries: 0,
+      }),
+    ).toEqual({ kind: "compact-retry" });
     expect(
       decideStopAction({
         stop: "refusal",

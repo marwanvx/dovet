@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F23 (M2-14 review): a forced compaction skips the compaction-thrash guard
+- **Severity:** minor · `src/cli/headless-run.ts` (`compact-retry` branch; the auto path calls `guards.noteCompaction`)
+- A first message that is itself over the threshold after a `context_exceeded` compaction is caught only by the second `context_exceeded` response, one paid request later. Run the same `noteCompaction` check after the forced `compactEpoch`, with a test.
+
 ### F3 (live test 2026-10-19): a fresh install refuses to run without a configured model
 - **Severity:** minor · `src/cli/headless-run.ts:149`
 - With an NVIDIA key and no settings file, `dovet -p "…"` exits 2 with "no model configured; set model in settings or --model". Pick a default NVIDIA model (the registry's) or name a working `--model` value in the message.
@@ -61,6 +65,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F16 (M2-09c CI): the same 500 MB resume test missed its 2 s time limit on Windows
 - **Severity:** minor · `src/store/event-log/resume.test.ts` ("resumes with the sidecar in under 2 s")
 - `windows-latest` in the CI run for #172 (docs-only) measured 2,487 ms against the 2 s limit (the rerun is below). Third flake of this one test (memory on Ubuntu and macOS, now time on Windows). Fix it with F16 above: the test measures the runner's disk and memory state as much as the sidecar resume, so time the resume in a fresh subprocess after the file is flushed, and take the best of three like the 10,000-file checkpoint test does.
+
+### F16 (M2-14 CI): the 500 MB resume test failed a fourth time (macOS, the memory limit)
+- **Severity:** major · `src/store/event-log/resume.test.ts:443` (`rssPeak - rssBefore` against 300 MiB)
+- `macos-latest` in the CI run for #181, which does not touch `resume.ts`; the rerun decides the PR. Four flakes in one test (Ubuntu, macOS twice, Windows), logged as minor three times: now `major`, so step 2.4 fixes it at the cause (measure the scan's own memory in a fresh subprocess, or `heapUsed` after `Bun.gc(true)`), not with a rerun.
 
 ### F17 (M2-09b recheck): CI runs per task rose from 5.0 to 7.3, all of it on deep-tier tasks
 - **Severity:** minor · `docs/background/workflow-audit-2026-10-19.md` "Recheck"

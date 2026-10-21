@@ -205,6 +205,15 @@ No earlier assistant turns and no earlier thinking blocks are carried over. Keep
 
 **Undo:** `/compact undo` (only before the next request is sent) restores the previous epoch (the log still has everything; nothing was deleted).
 
+**Decided while building (QUESTIONS Q84):**
+- Until the catalog knows each model's window (M4-02), `runHeadless` uses a 200,000-token placeholder (`contextWindow` in its input); the usable window is that minus `params.maxTokens`.
+- The pending user message is the epoch's last `user.message` when no `model.response` or `tool.result` follows it. It is left out of the verbatim list, logged again in the new epoch and sent in the same user message as the first message. A compaction after a tool round has no pending message; a forced one first answers the failed response's calls with "Not run: the context window was full."
+- Undo is recorded as a new epoch number whose `epoch.start` copies the restored epoch's stored header and whose `compaction` event has kind `undo` and `restores`; the transcript builder reads an epoch's events from its lineage, so the transcript and header text are the restored epoch's, byte for byte. It is refused once a request has followed the compaction or when the last compaction was already undone.
+- The `compaction` event keeps `retained` (the user messages kept); a later compaction starts its list from it, so earlier words are not lost when epochs chain.
+- The second summary attempt reduces the transcript to 60% of the budget; the failover model, when given, is tried once after two failures. `runHeadless` gives none (no failover plumbing exists yet), so two failures go to the mechanical fallback.
+- The facts' session-scoped grants and extra working directories are empty in headless, which has neither; the plan comes with M2-15 and the interactive state with M3. The "not in a tool round" check sits at the top of the loop, after a round's results are logged, so in headless it only guards states the loop never produces; the unit test of `hasOpenRound` is its proof.
+- "Files changed" lists each path once with its operations in order (repeats as `modify ×2`) and total lines; test/build commands are Bash or PowerShell commands containing test, build, check, lint, typecheck, tsc, pytest, jest, vitest, compile or make as a word.
+
 ## 7. Caching checklist (enforced by tests)
 
 - [ ] **AC-CTX-01** Tools sorted by name; JSON Schema generated deterministically (stable key order).
