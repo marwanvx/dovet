@@ -66,15 +66,17 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `docs/background/workflow-audit-2026-10-19.md` "Recheck"
 - M2-06 took 21 CI runs (13 red, including Bun segfaults and hangs on Windows with real local sockets, found only by a temporary CI job), M2-05b 9, M2-09 9; the other four tasks 3 each. For a task that adds sockets, child processes or timing limits, run its new tests on all three OSes in one temporary CI job (repeated) before the first review round, instead of finding each failure through a review-fix-push cycle. Look at the next recheck's CI-run mean before adding a rule.
 
-### F18 (M2-09c CI): the first headless image test hit the 5 s timeout on macOS
-- **Severity:** major (logged twice: #172 and #177, run 39671350287) · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
-- On `macos-latest` in the CI run for #172 (a docs-only PR) "the picture is logged as media and the next request carries it as an image part" failed at 5001 ms, the default test timeout, and Bun reported "killed 1 dangling process"; the other tests in the file passed. It is the first test of the file, so the likely cause is the first `Bun.Image` decode plus the headless boot starting cold on a loaded runner. Fix: find what the first run spends the time on (time the boot and the decode separately on macOS) and make the test independent of it (warm the decoder in a `beforeAll`, or set an explicit timeout in the test with the measured figure as evidence); do not just raise the number.
-
 ### F21 (F19 fix): other tests leave temp directories that `bun run test` does not check yet
 - **Severity:** minor · `src/agent/session.test.ts`, `src/cli/headless-boot.test.ts`, `src/cli/resume-target.test.ts`, `src/cli/startup.test.ts`, `src/policy/grants/grants.test.ts`, `src/policy/rules/rules.test.ts`, `src/policy/sandbox/hygiene.test.ts`, `src/policy/sandbox/service.test.ts`, `src/store/secrets/secrets.test.ts`, `src/tools/bash-sandbox.test.ts`
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F18 (M2-09c CI): the first headless image test hit the 5 s timeout on macOS
+- **Severity:** major (logged twice: #172 and #177, run 39671350287) · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
+- On `macos-latest` the first two tests of the file took 5.0 s and 4.6 s (the third 0.66 s; Ubuntu 60 ms): "the picture is logged as media…" failed at the 5 s default and Bun reported "killed 1 dangling process".
+- **Cause (timed on `macos-latest`, 2026-10-21):** not the decoder (`Bun.Image` 27-44 ms cold) and not the shell parsers (90-160 ms cold). `openCheckpoints` runs real `git` (`git --version`, then the private snapshot store) and on a cold runner that took 1.7 s in one probe and 3.6 s in another before the model request; the image tests have nothing to do with checkpoints.
+- **Fixed:** #178 (the file's projects set `checkpoints.enabled: false`; the same probe then spent 0 ms there and the first test took 297 ms cold). Other test files that call `runHeadless` still start real git (`headless-boot`, `headless-run`, `headless-websearch`); none has timed out yet, so they are left alone.
 
 ### F20 (M2-09c reviewer eval): resume then a new writer may glue an event onto a torn line
 - **Severity:** major (reproduced) · `src/store/event-log/resume.ts:434`

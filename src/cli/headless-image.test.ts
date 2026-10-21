@@ -77,7 +77,10 @@ type ResultData = { status: string; output: string; media?: Array<{ kind: string
 const resultsOf = (events: readonly EventEnvelope[]): ResultData[] =>
   events.filter((e) => e.type === "tool.result").map((e) => e.data as ResultData);
 
-const withModels = (models: object) => ({ ".dovet/settings.json": JSON.stringify({ models }) });
+// Checkpoints are off: they spawn real git, which on a cold macOS runner took seconds and timed out the first tests (F18).
+const withModels = (models: object) => ({
+  ".dovet/settings.json": JSON.stringify({ checkpoints: { enabled: false }, models }),
+});
 const vision = withModels({ "test/model": { capabilities: { images: true } } });
 
 describe("Read of an image in the headless boot", () => {
@@ -104,7 +107,7 @@ describe("Read of an image in the headless boot", () => {
 
   // spec: AC-TOOLS-35
   test("a model that is not known to take images is told so, and nothing is logged as media", async () => {
-    const dir = await tempProject({});
+    const dir = await tempProject(withModels({}));
     try {
       await Bun.write(join(dir.root, "shot.png"), testPng(300, 200));
       const { events } = await run(dir, [readPng, { text: "cannot" }]);
@@ -160,7 +163,7 @@ describe("Read of a PDF in the headless boot", () => {
 
   // spec: AC-TOOLS-02
   test("a model that does not take PDFs gets the text of the pages, and nothing is logged as media", async () => {
-    const dir = await tempProject({});
+    const dir = await tempProject(withModels({}));
     try {
       await Bun.write(join(dir.root, "doc.pdf"), numberedPdf(30));
       const { events } = await run(dir, [readPdf("2-3"), { text: "read it" }]);
@@ -175,7 +178,7 @@ describe("Read of a PDF in the headless boot", () => {
 
   // spec: AC-TOOLS-02
   test("a long PDF without pages is refused and the error names pages", async () => {
-    const dir = await tempProject({});
+    const dir = await tempProject(withModels({}));
     try {
       await Bun.write(join(dir.root, "doc.pdf"), numberedPdf(30));
       const { events } = await run(dir, [readPdf(), { text: "ok" }]);
