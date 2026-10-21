@@ -59,7 +59,7 @@ async function run(root: string, steps: Parameters<typeof scriptedModel>[0]) {
     ids: sequentialIds("M"),
     pid: 1,
     host: "h",
-    platform: fakePlatform(),
+    platform: fakePlatform({ os: testOs() }),
     adapter: createSdkAdapter({
       endpoint: () => ({ package: "@ai-sdk/openai-compatible", baseURL: "http://unused" }),
       model: () => model,

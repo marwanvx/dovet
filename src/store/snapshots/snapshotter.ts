@@ -150,6 +150,7 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
   // A new session starts from the most recent session's stat cache, so its first snapshot hashes only what changed.
   if (!existsSync(statPath)) seedStatCache(sessionsDir, statPath);
   let cache = loadStatCache(statPath);
+  let last: { entries: string; tree: string } | undefined;
 
   /** Files of the repository at `dir` (relative to the top level; "" for the top), nested repositories included. */
   async function list(dir: string, depth: number): Promise<{ files: Listed[]; skipped: SkippedPath[] }> {
@@ -291,16 +292,23 @@ export async function openSnapshotter(options: SnapshotterOptions): Promise<Snap
       }
     }
 
-    // Rebuild the private index from scratch from object ids only; nothing here reads the working tree.
-    await runGit(ctx, ["read-tree", "--empty"], { env: privateEnv });
-    if (entries.length > 0) {
-      await runGit(ctx, ["update-index", "-z", "--index-info"], { env: privateEnv, input: encode(entries.join("")) });
+    // The tree is a function of the entries alone, so an identical list (the common case between two turns) needs no git.
+    const joined = entries.join("");
+    let tree: string | undefined = last?.entries === joined ? last.tree : undefined;
+    if (tree === undefined) {
+      // Rebuild the private index from scratch from object ids only; nothing here reads the working tree.
+      await runGit(ctx, ["read-tree", "--empty"], { env: privateEnv });
+      if (entries.length > 0) {
+        await runGit(ctx, ["update-index", "-z", "--index-info"], { env: privateEnv, input: encode(joined) });
+      }
+      tree = lines(await runGit(ctx, ["write-tree"], { env: privateEnv }))[0];
+      if (tree === undefined) throw new Error("write-tree printed nothing");
+      last = { entries: joined, tree };
     }
-    const tree = lines(await runGit(ctx, ["write-tree"], { env: privateEnv }))[0];
-    if (tree === undefined) throw new Error("write-tree printed nothing");
 
+    // With nothing hashed every file was a cache hit, so a cache of the same size is the same cache.
+    if (toHash.length > 0 || next.size !== cache.size) saveStatCache(statPath, next);
     cache = next;
-    saveStatCache(statPath, cache);
     const t4 = performance.now();
     const ms = (a: number, b: number): number => Math.round(b - a);
     const timings = { list: ms(t0, t1), stat: ms(t1, t2), hash: ms(t2, t3), index: ms(t3, t4), total: ms(t0, t4) };

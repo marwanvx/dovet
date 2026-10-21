@@ -93,7 +93,7 @@ async function rig(inGit: boolean): Promise<Rig> {
   };
 }
 
-const bashTool = (r: Rig): ToolDefinition<never> => createBashTool({ tmpDir: r.cwd + "-tmp" }) as never;
+const bashTool = (r: Rig): ToolDefinition<never> => createBashTool({ tmpDir: `${r.cwd}-tmp` }) as never;
 
 describe.skipIf(process.platform === "win32")("checkpoints behind the tools", () => {
   // spec: AC-CKPT-01
