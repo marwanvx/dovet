@@ -50,6 +50,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/tools/web-search-services.ts` (`withoutTags`)
 - Fullwidth `＜`/`＞`, small-form `﹤`/`﹥` and `〈`/`〉` are not removed, so `＜system＞` reaches the model as text. Same family as F14: fix both with one shared normalisation (NFKC before cleaning, or add the look-alikes to the removed set) in the same task.
 
+### F16 (M2-09 CI): the 500 MB resume test's memory limit is flaky
+- **Severity:** minor · `src/store/event-log/resume.test.ts:390`
+- `rssPeak - rssBefore` measured 406 MB against the 300 MB limit on one Ubuntu run (green on the rerun, no change to that code). The delta depends on how much garbage the earlier tests in the same process left uncollected; measure after `Bun.gc(true)` or run the test in its own process.
+
 ### F16 (M2-08 CI): the 500 MB resume test's memory limit failed once on macOS
 - **Severity:** minor · `src/store/event-log/resume.test.ts:390`
 - `rssPeak - rssBefore` was 330,744,128 bytes against the 300 MiB (314,572,800) limit on `macos-latest` in the CI run for #168 (the scan code, `resume.ts`, was untouched by that PR; the rerun passed). The test measures sampled RSS of a process that has just written 500 MB, so garbage collection and the page cache move the number. Fix: measure `heapUsed`/external memory, or sample from a fresh subprocess, so the limit tests the scan and not the runner.
