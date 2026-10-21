@@ -21,7 +21,7 @@ import { type CheckpointService, openCheckpoints } from "./index.ts";
 const dirs: string[] = [];
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
+}, 120_000);
 
 const ENV: Record<string, string | undefined> = { ...process.env };
 for (const key of Object.keys(ENV)) if (key.toUpperCase().startsWith("GIT_")) delete ENV[key];
@@ -43,7 +43,7 @@ interface Rig {
 }
 
 /** A workspace named with a space; a git repository with the files committed, or a plain directory. */
-function rig(files: Record<string, string | Uint8Array>, inGit: boolean): Rig {
+function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = true): Rig {
   const root = realpathSync.native(mkdtempSync(join(tmpdir(), "dovet-ckpt-")));
   dirs.push(root);
   const work = join(root, "work tree");
@@ -63,7 +63,7 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean): Rig {
     git(work, "commit", "-q", "-m", "init");
   }
   const past = new Date(Date.now() - 3_600_000);
-  for (const path of Object.keys(files)) utimesSync(join(work, path), past, past);
+  if (age) for (const path of Object.keys(files)) utimesSync(join(work, path), past, past);
   const data = join(root, "data");
   const events: CheckpointData[] = [];
   return {
@@ -292,7 +292,9 @@ describe("speed", () => {
   test("the second snapshot of an unchanged 10,000-file repository is fast", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 10_000; i++) files[`d${i % 100}/f${i}.txt`] = `file ${i}\n`;
-    const r = rig(files, true);
+    // 10,000 utimes calls are slow on Windows; waiting out the 2 s racy-timestamp window does the same.
+    const r = rig(files, true, false);
+    await Bun.sleep(2100);
     const svc = await r.open({ slowMs: 1_000_000 });
     svc.beginTurn(1);
     const first = await svc.shell?.snapshot();
