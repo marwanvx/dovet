@@ -2,6 +2,7 @@
 // compaction, receipts, budgets. Other modules import only from this file; it re-exports `session-api.ts`.
 
 export * from "./budgets/index.ts";
+export * from "./compaction/index.ts";
 export * from "./interrupts.ts";
 export * from "./loop.ts";
 export * from "./session-api.ts";

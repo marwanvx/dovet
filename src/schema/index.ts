@@ -4,6 +4,7 @@ export { EventEnvelope } from "./envelope.ts";
 export {
   BudgetEventData,
   CheckpointData,
+  CompactionData,
   EpochStartData,
   FileChangeData,
   InstructionsLoadedData,

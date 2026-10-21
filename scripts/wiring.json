@@ -1,4 +1,5 @@
 {
+  "src/agent/compaction/compact.ts:undoCompaction": "M3-09",
   "src/agent/interrupts.ts:PROMPT_INTERRUPTED_REASON": "M3-05",
   "src/agent/interrupts.ts:SilenceTracker": "M3-01",
   "src/agent/interrupts.ts:attachQueuedAfterResults": "M3-04",

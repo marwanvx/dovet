@@ -110,6 +110,24 @@ export const CheckpointData = z.discriminatedUnion("mechanism", [
  * Dovet recorded, which a rewind compares with the file on disk. `before` is the blob-store hash of the old bytes
  * (a rewind keeps them so it can be undone).
  */
+/** `undo` restores the transcript of epoch `restores` under a new epoch number; the log is never rewritten (context §6). */
+export const CompactionData = z.object({
+  from: z.number().int().nonnegative(),
+  to: z.number().int().positive(),
+  trigger: z.enum(["auto", "manual", "context-exceeded", "partial"]),
+  kind: z.enum(["summary", "mechanical-fallback", "undo"]),
+  restores: z.number().int().nonnegative().optional(),
+  /** The exact bytes of the new epoch's first user message (empty for `undo`). */
+  firstMessage: z.string(),
+  /** The user messages kept in it, so the next compaction carries them on. */
+  retained: z.array(z.string()),
+  reduced: z.boolean(),
+  tokensBefore: z.number().int().nonnegative(),
+  tokensAfter: z.number().int().nonnegative(),
+  usage: z.record(z.string(), JsonValue).optional(),
+  costUsd: z.number().nonnegative().nullable().optional(),
+});
+
 export const FileChangeData = z.object({
   path: z.string().min(1),
   op: z.enum(["create", "modify", "delete", "rename"]),
@@ -141,6 +159,7 @@ export const SettingsChangeData = z.object({
 });
 
 export type CheckpointData = z.infer<typeof CheckpointData>;
+export type CompactionData = z.infer<typeof CompactionData>;
 export type FileChangeData = z.infer<typeof FileChangeData>;
 export type EpochStartData = z.infer<typeof EpochStartData>;
 export type SystemInjectedData = z.infer<typeof SystemInjectedData>;

@@ -5,17 +5,24 @@ import pkg from "../../package.json";
 import {
   BudgetMeter,
   buildRequest,
+  type ContextMark,
   cacheReadOf,
   cacheWarning,
   checkTranscriptPairing,
+  compact,
+  countImages,
   DailyLedger,
+  DEFAULT_IMAGE_TOKENS,
   decideStopAction,
   discoverInstructions,
   ENDED_NOT_RUN,
   type ExecutedResult,
+  estimateContext,
   estimateRequest,
   executeTools,
   GuardTracker,
+  hasOpenRound,
+  headerOf,
   historyRepairOffer,
   INTERRUPT_INSTRUCTION,
   INTERRUPTED_NOT_RUN,
@@ -36,16 +43,19 @@ import {
   renderSystemPrompt,
   requestCapFor,
   responseSpend,
+  type SendSummary,
   serializeTools,
   sessionDate,
   shellToolFor,
   shellToolName,
   shouldAppendInterrupted,
+  shouldCompact,
   shouldContinueForOpenTasks,
   shouldDiscardEarly,
   startEpoch,
   streamInterruptResults,
   TRUNCATED_NOT_RUN,
+  transcriptChars,
 } from "../agent/index.ts";
 import {
   callModel,
@@ -144,6 +154,8 @@ export type HeadlessAdapter = {
   ): AsyncIterable<StreamEvent>;
 };
 
+const PLACEHOLDER_CONTEXT_WINDOW = 200_000;
+
 export type HeadlessRunInput = {
   dirs: { config: string; data: string; cache: string };
   projectRoot: string;
@@ -162,6 +174,8 @@ export type HeadlessRunInput = {
   platform: Platform;
   adapter?: HeadlessAdapter;
   toolDefs?: readonly ToolDefinition<unknown>[];
+  /** The model's context window in tokens; until the catalog (M4-02) knows it, the placeholder is used. */
+  contextWindow?: number;
   /** The turn's abort signal (SIGINT); an abort ends the turn interrupted with exit 130, never as an error. */
   signal?: AbortSignal;
   /** The open writer, so the CLI's signal handling can flush it before the process exits. */
@@ -640,7 +654,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       projectRoot: input.projectRoot as AbsPath,
       additionalDirs: [],
       settings: input.settings.settings.instructions ?? {},
-      contextWindow: 200_000,
+      contextWindow: input.contextWindow ?? PLACEHOLDER_CONTEXT_WINDOW,
       blockReadsOutsideWorkingDirectories:
         input.settings.settings.permissions?.blockReadsOutsideWorkingDirectories === true,
       readDenied: (canonical) =>
@@ -670,14 +684,14 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const cache: RenderInput["cache"] = { breakpoints: "auto", ttl: "auto" };
     let epochNum: number;
     let turn: number;
-    if (isNew) {
-      const toolsJson = serializeTools(defs.map(toToolDef));
+    // Also re-run at every compaction, so the environment block shows the branch and date of that moment.
+    const renderSystemNow = async (): Promise<string> => {
       const gitPath = await input.platform.resolve("git").catch(() => undefined);
       const git =
         gitPath === undefined
           ? null
           : await readGitHead({ git: gitPath, cwd: input.cwd as AbsPath, env: input.env }).catch(() => null);
-      const systemText = renderSystemPrompt(
+      return renderSystemPrompt(
         {
           mode,
           sandbox: input.settings.settings.sandbox?.enabled !== false,
@@ -695,8 +709,12 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           model,
           provider,
         },
-        instructions.files.map((f) => ({ displayPath: f.displayPath, content: f.content })),
+        launchFiles.map((f) => ({ displayPath: f.displayPath, content: f.content })),
       );
+    };
+    if (isNew) {
+      const toolsJson = serializeTools(defs.map(toToolDef));
+      const systemText = await renderSystemNow();
       const started = startEpoch({
         epoch: 0,
         reason: "session-start",
@@ -1019,8 +1037,93 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         return { status: "error", content: [{ kind: "text", text: err instanceof Error ? err.message : String(err) }] };
       }
     };
+    const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+      new Promise((resolve) => {
+        const done = (): void => {
+          clearTimeout(t);
+          resolve();
+        };
+        const t = setTimeout(done, ms);
+        signal.addEventListener("abort", done, { once: true });
+      });
     // Turn-scoped: `cancelled` means no output anywhere in the turn — an abort on a follow-up request does not relabel it.
     let sawOutput = false;
+
+    let contextMark: ContextMark | null = null;
+    let forcedSinceResponse = false;
+    const contextWindow = input.contextWindow ?? PLACEHOLDER_CONTEXT_WINDOW;
+    const sendSummary: SendSummary = async (transcript) => {
+      let finished: Extract<StreamEvent, { type: "done" }> | undefined;
+      let failure = "the model returned no answer";
+      for await (const e of callModel(
+        { header, params, transcript, cache },
+        { adapter, sleep, random: () => 0 },
+        { signal: baseSignal },
+      )) {
+        if (e.type === "done") finished = e;
+        else if (e.type === "failed") failure = e.error.message;
+        else if (e.type === "aborted") return { ok: false, message: "stopped", aborted: true };
+      }
+      if (finished === undefined) return { ok: false, message: failure, aborted: false };
+      const requestUsage = jsonSafeUsage({ ...(finished.stored.usage as Record<string, unknown>) });
+      usage = addUsage(usage, requestUsage);
+      const spend = responseSpend({
+        protocol,
+        model: header.model,
+        usage: requestUsage,
+        billing: endpoint?.billing ?? "per-token",
+      });
+      guards.cost += spend.usd;
+      const t = spend.tokens;
+      meter.record("compaction", spend.usd, t.input + t.cacheRead + t.cacheWrite + t.output);
+      return { ok: true, stored: finished.stored, stopReason: finished.stopReason, costUsd: spend.usd };
+    };
+    /** Starts the next epoch from a summary of this one; false if the user stopped the summary request. */
+    const compactEpoch = async (trigger: "auto" | "context-exceeded", tokensBefore: number): Promise<boolean> => {
+      const result = await compact({
+        events,
+        header,
+        params,
+        cache,
+        trigger,
+        window: contextWindow,
+        imageTokens: DEFAULT_IMAGE_TOKENS,
+        tokensBefore,
+        facts: { mode, tainted: sessionTaint, grants: [], workingDirs: [input.projectRoot], plan: null },
+        renderSystem: renderSystemNow,
+        send: sendSummary,
+      });
+      if ("aborted" in result) return false;
+      const next = result.epochStart.epoch;
+      push("epoch.start", next, null, result.epochStart);
+      push("compaction", next, null, result.compaction);
+      if (result.pending !== null) push("user.message", next, result.pending.turn, { text: result.pending.text });
+      epochNum = next;
+      header = headerOf(result.epochStart);
+      contextMark = null;
+      lastTokens = null;
+      lastBodyChars = null;
+      warnings.push(
+        result.notice ??
+          `context compacted (${trigger}): about ${result.compaction.tokensBefore} → ${result.compaction.tokensAfter} tokens.`,
+      );
+      return true;
+    };
+    const stoppedDuringCompaction = async (): Promise<HeadlessRunOutput> => {
+      push("turn.end", epochNum, turn, { reason: sawOutput ? "interrupted" : "cancelled" });
+      await flushLog();
+      return {
+        sessionId,
+        result: "",
+        stopReason: "interrupted",
+        incomplete: false,
+        usage,
+        cost: costOut(),
+        receipt: {},
+        exit: { kind: "signal", signal: "SIGINT" },
+        warnings,
+      };
+    };
 
     meter.startTurn();
     for (;;) {
@@ -1067,12 +1170,46 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           if (updates.length > 0) push("instructions.loaded", epochNum, null, event);
         }
       }
-      const built = buildRequest(events, {
-        header,
-        params,
-        cache,
-        ...(input.args.repair ? { repair: true } : {}),
-      });
+      const rebuild = (): ReturnType<typeof buildRequest> =>
+        buildRequest(events, { header, params, cache, ...(input.args.repair ? { repair: true } : {}) });
+      let built = rebuild();
+      const contextTokens = (): number =>
+        estimateContext({
+          mark: contextMark,
+          transcript: built.transcript,
+          fixedChars: header.systemText.length + header.toolsJson.length,
+          imageTokens: DEFAULT_IMAGE_TOKENS,
+        });
+      const overThreshold = (tokens: number): boolean =>
+        shouldCompact({
+          tokens,
+          window: contextWindow,
+          reserve: params.maxTokens,
+          threshold: effectiveSettings.compaction?.threshold ?? 0.9,
+          maxTokens: effectiveSettings.compaction?.maxTokens ?? null,
+        });
+      // Never between a tool call and its result: those turns wait until the round's results are logged.
+      if (!hasOpenRound(built.transcript) && overThreshold(contextTokens())) {
+        if (!(await compactEpoch("auto", contextTokens()))) return stoppedDuringCompaction();
+        built = rebuild();
+        const thrash = guards.noteCompaction(overThreshold(contextTokens()));
+        if (thrash !== null) {
+          push("turn.end", epochNum, turn, { reason: "error" });
+          await flushLog();
+          return {
+            sessionId,
+            result: thrash.message,
+            stopReason: "error",
+            incomplete: true,
+            usage,
+            cost: costOut(),
+            receipt: {},
+            exit: { kind: "guard" },
+            warnings,
+            events,
+          };
+        }
+      }
       try {
         validateTranscriptItems(
           built.transcript.map((t) =>
@@ -1202,15 +1339,6 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       let sawRequest = false;
       const early = new Map<string, Promise<ToolOutput>>();
       const earlyBlocks = new Map<number, { id: string; name: string; json: string }>();
-      const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
-        new Promise((resolve) => {
-          const done = (): void => {
-            clearTimeout(t);
-            resolve();
-          };
-          const t = setTimeout(done, ms);
-          signal.addEventListener("abort", done, { once: true });
-        });
       for await (const e of callModel(
         { header, params, transcript: built.transcript, cache },
         { adapter, sleep, random: () => 0 },
@@ -1410,6 +1538,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       meter.record("main", spend.usd, t.input + t.cacheRead + t.cacheWrite + t.output);
       lastTokens = t;
       lastBodyChars = bodyText.length;
+      contextMark = { tokens: t, chars: transcriptChars(built.transcript), images: countImages(built.transcript) };
       outputTokens.push(t.output);
       const daySpent = reserved
         ? await ledger.commit(requestId, spend.usd).catch((e: unknown) => {
@@ -1470,6 +1599,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           : {}),
       };
       const action = decideStopAction(stopInput);
+      if (action.kind !== "compact-retry") forcedSinceResponse = false;
       // A response with no text and no tool call is not appended (agent-loop "Stop-reason handling"), so an
       // empty or thinking-only retry sees a clean transcript and the log never holds a reasoning-only turn.
       if (hasText || calls.length > 0) {
@@ -1582,6 +1712,12 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       }
       if (action.kind === "pause-continue") {
         pauseContinuations += 1;
+        continue;
+      }
+      if (action.kind === "compact-retry" && !forcedSinceResponse) {
+        recordNotRun(() => "Not run: the context window was full.");
+        forcedSinceResponse = true;
+        if (!(await compactEpoch("context-exceeded", contextTokens()))) return stoppedDuringCompaction();
         continue;
       }
       if (action.kind === "compact-retry") {
