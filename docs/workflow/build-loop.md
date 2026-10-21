@@ -19,11 +19,11 @@ The owner starts every session with the same message, e.g. **"Continue building 
 - The current milestone is the first one in [roadmap](../plan/roadmap.md) whose task file has unfinished tasks (or has no task file yet).
 
 ### 2. Fix what's broken first
-In this order; each one is the whole session's work if it applies:
+Standing goal: `main` green on three OSes, no flaky test, no leaks. In this order; each one is the whole session's work if it applies:
 1. `main` is red in CI → fix it (smallest change; a regression test if it was a real bug).
 2. Uncommitted or half-done work from a crashed session → finish it or revert it, and say which in `PROGRESS.md`.
 3. An open PR of yours with review findings or failing CI → fix it (step 6–7).
-4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the oldest one (a regression test first), then move it to "Fixed" with the PR number.
+4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the oldest one at its cause (a regression test first; a rerun or a raised limit is no fix), then move it to "Fixed" with the PR number. A `minor` logged twice is `major`.
 
 ### 3. Apply the owner's overrides
 You answer your own questions (step 6), so there is normally nothing to wait for. `bun run next` lists any answered question where the owner added an `**Override (owner, <date>):**` line. Apply each override where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes), change the code that followed the old answer, and add an `**Override applied:**` line saying what changed. Anything left under "Waiting for the owner" is something only the owner can do (an account, money, a key); don't start work that depends on it.
@@ -35,14 +35,14 @@ Every v0.1 milestone (M0–M5) already has a task list. **When a milestone's fir
 - **Check the plan with a fresh reviewer** (a subagent if your tool has them; otherwise the next session does it before building): every criterion placed once, dependencies in order, no task needing a spec that isn't in its Read list, and `bun run next <task>` prints real sections for every task (no "couldn't find" lines). Fix what it finds. Commit the task file to `main` with a PR.
 
 ### 5. Pick the task
-The first task in the current milestone's file whose `Status:` is `todo` and whose **Depends on** tasks are all `done`. Skip tasks `blocked` on an unanswered question. If every remaining task is blocked, write a clear summary for the owner and stop. If the milestone's tasks are all `done`, do its exit-check task.
+The first task in the current milestone's file whose `Status:` is `todo` and whose **Depends on** tasks are all `done`. Skip tasks `blocked` on an unanswered question. If every remaining task is blocked, write a clear summary for the owner and stop. If the milestone's tasks are all `done`, do its exit-check task. There `security-reviewer` tries to make Dovet hide an action, a cost or an instruction; log what works in FOLLOWUPS.md.
 
 Set its `Status:` to `in-progress` and start a branch `task/<id>`.
 
 ### 6. Build it
 1. Read what `bun run next` printed for the task (its **Read** sections and their "Before you build" boxes); open a linked doc only when those sections point to it for this task. Nothing else unless a test failure points you there.
 2. If the task depends on an unresolved spike, resolve the spike first (its "How to resolve" in [open questions](../plan/open-questions.md), for real, with code and runs); record the result in open questions and [background/feature-research.md](../background/feature-research.md); apply its fallback if the answer is no.
-3. Write the tests for the task's criteria (`// spec: AC-xx-yy`) following the test-quality rules in [testing](../specs/testing.md), **run them before implementing and keep the failing output** (it goes in the PR: a test that passes before the code exists tests nothing), then implement until they pass. Verify every library or provider API against the installed types or official docs.
+3. Write the tests for the task's criteria (`// spec: AC-xx-yy`) following the test-quality rules in [testing](../specs/testing.md), **run them before implementing and keep the failing output** (it goes in the PR: a test that passes before the code exists tests nothing), then implement until they pass. Code that parses text, offsets, paths or commands also gets a test over unusual inputs (non-BMP text, empty, huge, quoted paths): reviews miss what needs an input tried. Verify every library or provider API against the installed types or official docs.
 4. `bun run check` must pass. An export that only tests call yet goes into `scripts/wiring.json` with the task that will call it (`bun run wiring` fails once that task is done and it still isn't).
 
 **When the spec doesn't say:** don't guess and don't go searching beyond the task's Read list for an answer that isn't there. **Answer it yourself.** Choose the best answer (the one that follows the [product principles](../product/principles.md) and the surrounding specs, and is safest and easiest to change later). Write an entry under "Answered" in `QUESTIONS.md`: what was missing, why it matters, your answer and why. **Write the answer into the spec in the same PR**, at the line it fills, followed by `(QUESTIONS Qn)`, and end the entry with `- **Spec:** <spec and section>` (or `none: <why>` for a plan-only answer); `bun run docs:check` fails without it. Later sessions read the specs, not `QUESTIONS.md`, so an answer that lives only there is lost. An answer that changes a decision (an ADR, the roadmap, a product decision) also waits for the owner (step 8.4). Never set a task to `blocked` or stop just to wait for the owner. Only if the answer needs something no agent can provide (an account, money, a secret, a physical device) does the question go under "Waiting for the owner"; then build everything that doesn't depend on it.
@@ -58,7 +58,7 @@ Spawn **fresh reviewers** (subagents with no memory of your work), **in parallel
 | `standard` | Any other change | One reviewer covering `tests`, `spec` and `scope` |
 | `deep` | The diff touches a high-risk path listed in REVIEW.md | That reviewer plus the `security` lens |
 
-Scripts check what a script can (types, lint, tests on three OSes, docs, coverage, and `bun run wiring`: built-and-tested code nothing calls, the largest class of bugs that escaped review); the model reviewer spends its tokens on what only reading can judge.
+Scripts check what a script can (types, lint, tests on three OSes, docs, coverage, and `bun run wiring`: built-and-tested code nothing calls, the largest class of bugs that escaped review).
 
 The lenses, split between them:
 
@@ -99,6 +99,8 @@ Review: <tier>, <rounds> rounds, <n> fixed, <n> dropped, <n> logged to FOLLOWUPS
 Learned: <anything the next session must know: a quirk, a decision, a workaround>.
 Next: <the next task id>, or what's blocking.
 ```
+A defect you saw but didn't fix goes into FOLLOWUPS.md, not only `Learned:`.
+
 Then tell the owner, in three plain sentences at most: what got done, what's next, and whether anything waits for them.
 
 **One task per session.** When it's shipped, stop, even if context is left: a fresh session does the next one better. Exception: if your tool can run subagents and the owner said "keep going", act as an orchestrator: run steps 5–9 for each task in its own fresh subagent, keep only the summaries in your session, and stop at a blocked task, an Owner step, the end of the milestone, or after 5 tasks.

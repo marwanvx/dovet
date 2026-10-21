@@ -1,0 +1,12 @@
+# Convert a Buffer to an ArrayBuffer
+
+The Node.js [`Buffer`](https://nodejs.org/api/buffer.html) class views and manipulates data in an underlying `ArrayBuffer`. The `buffer` property returns that `ArrayBuffer`.
+
+```ts
+const nodeBuf = Buffer.alloc(64);
+const arrBuf = nodeBuf.buffer;
+```
+
+---
+
+See [Binary Data](/runtime/binary-data#conversion).

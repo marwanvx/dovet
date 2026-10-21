@@ -72,6 +72,7 @@ function contextSizes(root: string, taskIds: Iterable<string>): Record<string, n
 function markdownFiles(root: string): string[] {
   return [...new Bun.Glob("docs/**/*.md").scanSync({ cwd: root })]
     .map((p) => p.replaceAll("\\", "/"))
+    .filter((p) => !p.startsWith("docs/bun-docs/")) // vendored snapshot: its links point at bun.com
     .concat("AGENTS.md");
 }
 
