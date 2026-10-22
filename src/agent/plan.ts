@@ -36,11 +36,11 @@ export function planReattach(path: string, content: string | null): PlanInstruct
 
 /** A fork re-pointed the plan file and the model has not been told yet. */
 export function forkedPlanUnannounced(events: readonly EventEnvelope[]): boolean {
-  const at = events.findLastIndex(
+  const last = events.findLast(
     (e) => e.type === "settings.change" && (e.data as { key?: unknown }).key === PLAN_FILE_KEY,
   );
-  if (at < 0 || (events[at]?.data as { source?: unknown }).source !== "fork") return false;
+  if (last === undefined || (last.data as { source?: unknown }).source !== "fork") return false;
   return !events
-    .slice(at + 1)
+    .slice(events.lastIndexOf(last) + 1)
     .some((e) => e.type === "system.injected" && (e.data as { reason?: unknown }).reason === "plan-reattach");
 }
