@@ -5,6 +5,7 @@ export { ruleTexts } from "./parse.ts";
 export { escapeLiteral, toPosix } from "./paths.ts";
 export type { Redirect, Subcommand } from "./shell.ts";
 export {
+  allowRuleArgv,
   canonicalCmdlet,
   commandName,
   isSafeEnv,
@@ -12,5 +13,6 @@ export {
   shellScriptAt,
   splitCommand,
   strippedArgvs,
-  XARGS_VALUED,
+  unwrapCommand,
+  xargsCommandStarts,
 } from "./shell.ts";

@@ -488,7 +488,7 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
   test("odd inputs end without a command or a crash", () => {
     expect(strippedArgvs([])).toEqual([[]]);
     expect(strippedArgvs([""])).toEqual([[""]]);
-    expect(strippedArgvs(["env", "-S", ""])).toEqual([["env", "-S", ""], ["env"]]);
+    expect(strippedArgvs(["env", "-S", ""])).toContainEqual(["env"]);
     expect(strippedArgvs(["env", "-S"])).toEqual([["env", "-S"]]);
     expect(strippedArgvs(["find", ".", "-exec", ";"])).toEqual([["find", ".", "-exec", ";"]]);
     expect(strippedArgvs(["find", "-exec"])).toEqual([["find", "-exec"]]);
@@ -507,6 +507,45 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
     expect(strippedArgvs(["env", "-S", "git\\_push"])).toContainEqual(["git", "push"]);
     const deep = Array.from({ length: 200 }, () => "env -S").join(" ");
     expect(strippedArgvs([...deep.split(" "), "git", "push"]).length).toBeGreaterThan(1);
+  });
+
+  // spec: AC-PERM-03
+  test("whatever grammar a wrapper's options really have, the command it runs is among the readings", () => {
+    let seed = 7;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed % n;
+    };
+    const wrappers = [
+      "sudo",
+      "/usr/bin/env",
+      "doas",
+      "nice",
+      "timeout",
+      "ionice",
+      "setsid",
+      "xargs",
+      "stdbuf",
+      "watch",
+    ];
+    for (let round = 0; round < 2000; round++) {
+      const argv: string[] = [];
+      for (let w = 0; w <= rand(3); w++) {
+        const name = wrappers[rand(wrappers.length)] ?? "sudo";
+        argv.push(name);
+        for (let o = 0; o < rand(4); o++) {
+          const letter = "abcdefghjklmnopqrtuvwxyzQ".charAt(rand(25));
+          const form = rand(4);
+          if (form === 0) argv.push(`-${letter}`);
+          else if (form === 1) argv.push(`-${letter}`, `v${o}`);
+          else if (form === 2) argv.push(`--made-up-${letter}=v`);
+          else argv.push(`--made-up-${letter}`, `v${o}`);
+        }
+        if (name === "timeout") argv.push("5");
+      }
+      argv.push("git", "push");
+      expect(strippedArgvs(argv)).toContainEqual(["git", "push"]);
+    }
   });
 
   // spec: AC-PERM-03

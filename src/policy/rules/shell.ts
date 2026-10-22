@@ -88,74 +88,49 @@ export function splitCommand(command: string): Subcommand[] | undefined {
   return endCommand() ? out : undefined;
 }
 
-export const XARGS_VALUED = new Set([
-  "-n",
-  "-I",
-  "-P",
-  "-L",
-  "-d",
-  "-E",
-  "-s",
-  "-a",
-  "--max-args",
-  "--max-procs",
-  "--delimiter",
-  "--max-chars",
-  "--arg-file",
-  "--process-slot-var",
-]);
+type Kind = "none" | "value";
+type Grammar = { short: Record<string, Kind>; long: Record<string, Kind>; operands: number; numeric?: boolean };
+const NO_OPTIONS: Grammar = { short: {}, long: {}, operands: 0 };
 
-type Wrapper = { safe: boolean; valued: string[]; positional: number; noFlags?: boolean };
-const WRAPPERS = new Map<string, Wrapper>([
-  ["timeout", { safe: true, valued: ["-k", "-s", "--kill-after", "--signal"], positional: 1 }],
-  ["time", { safe: true, valued: ["-f", "-o", "--format", "--output"], positional: 0 }],
-  ["nice", { safe: true, valued: ["-n", "--adjustment"], positional: 0 }],
-  ["nohup", { safe: true, valued: [], positional: 0 }],
-  ["stdbuf", { safe: true, valued: ["-i", "-o", "-e", "--input", "--output", "--error"], positional: 0 }],
-  ["command", { safe: true, valued: [], positional: 0, noFlags: true }],
-  ["builtin", { safe: true, valued: [], positional: 0, noFlags: true }],
-  ["noglob", { safe: true, valued: [], positional: 0, noFlags: true }],
-  ["xargs", { safe: true, valued: [...XARGS_VALUED], positional: 0 }],
-  ["env", { safe: false, valued: ["-u", "-C", "-S", "-a", "-P", "--unset", "--chdir", "--argv0"], positional: 0 }],
+/** The wrappers allow rules see past, with their whole option grammar (GNU coreutils): an option not listed hides the command. */
+const SAFE_WRAPPERS = new Map<string, Grammar>([
   [
-    "sudo",
+    "timeout",
     {
-      safe: false,
-      valued: [
-        "-u",
-        "-g",
-        "-h",
-        "-p",
-        "-C",
-        "-D",
-        "-R",
-        "-T",
-        "-U",
-        "-a",
-        "-c",
-        "-r",
-        "-t",
-        "--user",
-        "--group",
-        "--host",
-        "--prompt",
-        "--chdir",
-        "--role",
-        "--type",
-        "--login-class",
-        "--close-from",
-        "--command-timeout",
-        "--other-user",
-        "--chroot",
-      ],
-      positional: 0,
+      short: { f: "none", p: "none", v: "none", k: "value", s: "value" },
+      long: { foreground: "none", "preserve-status": "none", verbose: "none", "kill-after": "value", signal: "value" },
+      operands: 1,
     },
   ],
-  ["doas", { safe: false, valued: ["-a", "-u", "-C"], positional: 0 }],
-  ["watch", { safe: false, valued: ["-n", "-q", "--interval", "--equexit"], positional: 0 }],
-  ["ionice", { safe: false, valued: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata"], positional: 0 }],
-  ["setsid", { safe: false, valued: [], positional: 0 }],
-  ["flock", { safe: false, valued: ["-w", "-E", "--timeout", "--conflict-exit-code"], positional: 1 }],
+  [
+    "time",
+    {
+      short: { a: "none", p: "none", q: "none", v: "none", f: "value", o: "value" },
+      long: { append: "none", portability: "none", quiet: "none", verbose: "none", format: "value", output: "value" },
+      operands: 0,
+    },
+  ],
+  ["nice", { short: { n: "value" }, long: { adjustment: "value" }, operands: 0, numeric: true }],
+  [
+    "stdbuf",
+    {
+      short: { i: "value", o: "value", e: "value" },
+      long: { input: "value", output: "value", error: "value" },
+      operands: 0,
+    },
+  ],
+  ["nohup", NO_OPTIONS],
+  ["command", NO_OPTIONS],
+  ["builtin", NO_OPTIONS],
+  ["noglob", NO_OPTIONS],
+  ["xargs", NO_OPTIONS],
+]);
+
+/** Every wrapper deny and ask rules and the built-in checks see past, with the operands before its command (`flock FILE`). */
+const DEEP_WRAPPERS = new Map<string, number>([
+  ...[...SAFE_WRAPPERS].map(([name, g]): [string, number] => [name, g.operands]),
+  ...["env", "sudo", "doas", "watch", "ionice", "setsid"].map((name): [string, number] => [name, 0]),
+  ["flock", 1],
 ]);
 export const SAFE_ENV = new Set([
   "NODE_ENV",
@@ -200,55 +175,94 @@ export function shellScriptAt(args: readonly string[]): number {
   return fallback;
 }
 
-/** `--sig` for `--signal`: GNU programs take any unambiguous prefix of a long option. */
-const longPrefix = (tok: string, full: string): boolean => {
-  const name = tok.split("=")[0] ?? "";
-  return name.length >= 3 && full.startsWith(name);
-};
+/** Where the command a safe wrapper runs starts, read with its exact grammar, or undefined when an option isn't in it. */
+function safeCommandAt(argv: string[], g: Grammar): number | undefined {
+  let i = 1;
+  for (; i < argv.length; i++) {
+    const tok = argv[i] ?? "";
+    if (tok === "--") {
+      i++;
+      break;
+    }
+    if (!tok.startsWith("-") || tok === "-") break;
+    if (g.numeric === true && /^-[-+]?\d+$/.test(tok)) continue;
+    if (tok.startsWith("--")) {
+      const eq = tok.indexOf("=");
+      const name = tok.slice(2, eq < 0 ? undefined : eq);
+      const names = Object.keys(g.long);
+      // GNU programs take any unambiguous prefix of a long option (`--sig`).
+      const matches = names.includes(name) ? [name] : names.filter((n) => name !== "" && n.startsWith(name));
+      const kind = matches.length === 1 ? g.long[matches[0] ?? ""] : undefined;
+      if (kind === undefined || (kind === "none" && eq >= 0)) return undefined;
+      if (kind === "value" && eq < 0) i++;
+      continue;
+    }
+    for (let k = 1; k < tok.length; k++) {
+      const c = tok.charAt(k);
+      if (!Object.hasOwn(g.short, c)) return undefined;
+      if (g.short[c] === "value") {
+        if (k === tok.length - 1) i++;
+        break;
+      }
+    }
+  }
+  i += g.operands;
+  return i < argv.length ? i : undefined;
+}
 
-/** `-u`, `-iu` and `-uroot` → whether the flag's value is the next word. */
-function takesNext(tok: string, valued: string[]): boolean {
-  if (valued.includes(tok)) return true;
-  if (tok.startsWith("--")) return !tok.includes("=") && valued.some((v) => v.startsWith("--") && longPrefix(tok, v));
-  for (let k = 1; k < tok.length; k++) if (valued.includes(`-${tok.charAt(k)}`)) return k === tok.length - 1;
-  return false;
+/**
+ * Every word the command a wrapper runs could start at. Each option is read both as taking the next word and as not,
+ * so an option Dovet has no grammar for, or reads with the wrong value kind, can't move the command out of sight.
+ */
+function commandStarts(argv: string[], operands: number, env: boolean): { starts: number[]; none: boolean } {
+  const starts = new Set<number>();
+  let none = false;
+  const seen = new Set<number>();
+  const todo: [number, number][] = [[1, operands]];
+  for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
+    const [p, left] = next;
+    if (p >= argv.length) none = true;
+    if (p >= argv.length || seen.has(p * 8 + left)) continue;
+    seen.add(p * 8 + left);
+    const tok = argv[p] ?? "";
+    if (tok === "--") starts.add(p + 1 + left);
+    else if ((tok.startsWith("-") && tok.length > 1) || (env && tok === "-")) todo.push([p + 1, left], [p + 2, left]);
+    else if (env && ASSIGNMENT.test(tok)) todo.push([p + 1, left]);
+    // `flock FILE -c cmd`: options may follow an operand.
+    else if (left > 0) todo.push([p + 1, left - 1]);
+    else starts.add(p);
+  }
+  if ([...starts].some((s) => s >= argv.length)) none = true;
+  return { starts: [...starts].filter((s) => s < argv.length).sort((a, b) => a - b), none };
+}
+
+/** Where the command `xargs` runs could start (every reading of its options), and whether a reading leaves it none. */
+export const xargsCommandStarts = (argv: string[]): { starts: number[]; none: boolean } =>
+  commandStarts(argv, 0, false);
+
+/** The values an option word could hand over, each with the index after it: attached after `letter`, after `=`, or the next word. */
+function optionValues(argv: string[], j: number, letter: string, long: string): [string, number][] {
+  const tok = argv[j] ?? "";
+  const next = argv[j + 1];
+  const following: [string, number][] = next === undefined ? [] : [[next, j + 2]];
+  if (tok.startsWith("--")) {
+    const eq = tok.indexOf("=");
+    const name = tok.slice(0, eq < 0 ? undefined : eq);
+    if (name.length < 3 || !long.startsWith(name)) return [];
+    return eq >= 0 ? [[tok.slice(eq + 1), j + 1]] : following;
+  }
+  const at = tok.indexOf(letter, 1);
+  if (!tok.startsWith("-") || at < 0) return [];
+  return at < tok.length - 1 ? [[tok.slice(at + 1), j + 1], ...following] : following;
 }
 
 /** `env -S 'a b' c` → `env a b c`: env splits the string and goes on reading its own options from it. */
-function splitString(argv: string[], j: number): string[] | undefined {
-  const tok = argv[j] ?? "";
-  let value: string | undefined;
-  let next = j + 1;
-  if (tok.startsWith("--") && longPrefix(tok, "--split-string")) {
-    const eq = tok.indexOf("=");
-    if (eq >= 0) value = tok.slice(eq + 1);
-    else [value, next] = [argv[j + 1], j + 2];
-  } else if (!tok.startsWith("--")) {
-    const at = [...tok.slice(1)].findIndex((c) => c === "S" || c === "u" || c === "C") + 1;
-    if (tok.charAt(at) === "S")
-      [value, next] = at === tok.length - 1 ? [argv[j + 1], j + 2] : [tok.slice(at + 1), j + 1];
-  }
-  if (value === undefined) return undefined;
-  value = value.replace(/\\_/g, " ");
-  const words = splitCommand(value)?.flatMap((s) => s.argv) ?? value.split(/\s+/).filter(Boolean);
-  return [argv[0] ?? "env", ...words, ...argv.slice(next)];
-}
-
-/** `flock [opts] file -c 'cmd'` → `sh -c 'cmd'`. */
-function flockScript(argv: string[], valued: string[]): string[] | undefined {
-  let file = false;
-  for (let k = 1; k < argv.length; k++) {
-    const tok = argv[k] ?? "";
-    // `--com`: any prefix longer than `--co` (`--conflict-exit-code`, `--close`) is `--command`.
-    const long = tok.startsWith("--com") && longPrefix(tok, "--command");
-    if (long && tok.includes("=")) return ["sh", "-c", tok.slice(tok.indexOf("=") + 1)];
-    if (long || /^-[A-Za-z]*c$/.test(tok)) return k + 1 < argv.length ? ["sh", "-c", argv[k + 1] ?? ""] : [];
-    if (tok.startsWith("-") && tok.length > 1) {
-      if (takesNext(tok, valued)) k++;
-    } else if (file) return undefined;
-    else file = true;
-  }
-  return undefined;
+function splitStrings(argv: string[], j: number): string[][] {
+  return optionValues(argv, j, "S", "--split-string").map(([raw, after]) => {
+    const value = raw.replace(/\\_/g, " ");
+    const words = splitCommand(value)?.flatMap((s) => s.argv) ?? value.split(/\s+/).filter(Boolean);
+    return [argv[0] ?? "env", ...words, ...argv.slice(after)];
+  });
 }
 
 const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
@@ -267,10 +281,30 @@ function findCommands(argv: string[]): string[][] {
   return out;
 }
 
+/** What an exec wrapper may run, read every way its options allow (deny side). */
+function wrapperReadings(argv: string[], name: string, operands: number): string[][] {
+  // `command -v x` only prints where x is.
+  if (name === "command" && argv.some((a) => /^-[a-zA-Z]*[vV]/.test(a))) return [];
+  const out = commandStarts(argv, operands, name === "env").starts.map((s) => argv.slice(s));
+  for (let j = 1; j < argv.length; j++) {
+    const tok = argv[j] ?? "";
+    if (!tok.startsWith("-")) continue;
+    if (name === "env") out.push(...splitStrings(argv, j));
+    // `flock FILE -c 'cmd'` and `--command`: the shell runs the string.
+    if (name === "flock")
+      for (const [script] of optionValues(argv, j, "c", "--command")) out.push(["sh", "-c", script]);
+  }
+  // watch hands its words, joined, to `sh -c`.
+  if (name === "watch")
+    for (const rest of [...out]) if (rest.some((a) => /[\s;&|<>()$`]/.test(a))) out.push(["sh", "-c", rest.join(" ")]);
+  return out;
+}
+
 /**
  * The commands inside this one, one wrapper or leading assignment removed. `deep` (deny and ask rules, and every
- * built-in check) also strips exec wrappers and any assignment, knows a wrapper written as a path and looks into
- * `find -exec`; an allow rule only sees through a safe wrapper called by its bare name.
+ * built-in check) also strips exec wrappers and any assignment, knows a wrapper written as a path, reads each wrapper
+ * option every way it could be read and looks into `find -exec`; an allow rule only sees through a safe wrapper called
+ * by its bare name whose every option it knows.
  */
 function inner(argv: string[], deep: boolean): string[][] {
   let i = 0;
@@ -280,53 +314,51 @@ function inner(argv: string[], deep: boolean): string[][] {
     i++;
   }
   if (i > 0) return i < argv.length ? [argv.slice(i)] : [];
-  const name = deep ? commandName(argv[0]) : (argv[0] ?? "");
-  if (deep && name === "find") return findCommands(argv);
-  const w = WRAPPERS.get(name);
-  if (w === undefined || !(w.safe || deep)) return [];
-  const script = name === "flock" ? flockScript(argv, w.valued) : undefined;
-  if (script !== undefined) return script.length > 0 ? [script] : [];
-  let j = 1;
-  for (; j < argv.length; j++) {
-    const tok = argv[j] ?? "";
-    if (tok === "--") {
-      j++;
-      break;
-    }
-    if ((tok.startsWith("-") && tok.length > 1) || (name === "env" && tok === "-")) {
-      if (w.noFlags || (name === "xargs" && !deep)) return [];
-      const split = name === "env" ? splitString(argv, j) : undefined;
-      if (split !== undefined) return [split];
-      if (takesNext(tok, w.valued)) j++;
-    } else if (!(name === "env" && ASSIGNMENT.test(tok))) break;
+  if (!deep) {
+    const g = SAFE_WRAPPERS.get(argv[0] ?? "");
+    const at = g === undefined ? undefined : safeCommandAt(argv, g);
+    return at === undefined ? [] : [argv.slice(at)];
   }
-  j += w.positional;
-  if (j >= argv.length) return [];
-  const rest = argv.slice(j);
-  // watch hands its words, joined, to `sh -c`.
-  if (name === "watch" && rest.some((a) => /[\s;&|<>()$`]/.test(a))) return [rest, ["sh", "-c", rest.join(" ")]];
-  return [rest];
+  const name = commandName(argv[0]);
+  if (name === "find") return findCommands(argv);
+  const operands = DEEP_WRAPPERS.get(name);
+  return operands === undefined ? [] : wrapperReadings(argv, name, operands);
 }
 
-function unwrapAll(argv: string[], deep: boolean): string[][] {
+/** Far more words than any real command's readings hold; past it the command is not checked further and asks (decide). */
+const MAX_WORDS = 2_000_000;
+
+/** The command and every command it may run, and whether all of them were looked at. */
+export function unwrapCommand(argv: string[], deep = true): { argvs: string[][]; complete: boolean } {
   const out: string[][] = [];
+  const seen = new Set<string>();
   const queue = [argv];
+  let words = 0;
   for (let a = queue.shift(); a !== undefined; a = queue.shift()) {
+    const key = a.join("\0");
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(a);
-    queue.push(...inner(a, deep));
+    const more = inner(a, deep);
+    for (const m of more) words += m.length;
+    if (words > MAX_WORDS) return { argvs: out, complete: false };
+    queue.push(...more);
   }
-  return out;
+  return { argvs: out, complete: true };
 }
 
 /** The command and every command it wraps (`sudo env X=1 git push` → `git push`; `find . -exec rm {} ;` → `rm {}`). */
 export function strippedArgvs(argv: string[]): string[][] {
-  return unwrapAll(argv, true);
+  return unwrapCommand(argv).argvs;
 }
+
+/** The command an allow rule is matched against last: every safe wrapper and safe assignment stripped. */
+export const allowRuleArgv = (argv: string[]): string[] => unwrapCommand(argv, false).argvs.at(-1) ?? argv;
 
 /** The text a rule is tried against: the argv re-joined with single spaces, then once per wrapper stripped off the front; deny and ask rules also see a path-named program by its name (`/bin/rm` → `rm`). */
 export function shellVariants(argv: string[], deep: boolean): string[] {
   const out = new Set<string>();
-  for (const v of unwrapAll(argv, deep)) {
+  for (const v of unwrapCommand(argv, deep).argvs) {
     out.add(v.join(" "));
     if (deep) out.add([commandName(v[0]), ...v.slice(1)].join(" "));
   }

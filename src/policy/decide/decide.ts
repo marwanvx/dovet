@@ -9,8 +9,8 @@ import {
   type RuleSet,
   type Subcommand,
   shellScriptAt,
-  strippedArgvs,
-  XARGS_VALUED,
+  unwrapCommand,
+  xargsCommandStarts,
 } from "../rules/index.ts";
 import { shouldRefuseLocalHost } from "../sandbox/network.ts";
 import type { Analysis } from "../shell-parse/analyze.ts";
@@ -52,7 +52,8 @@ export type FindingKind =
   | "unresolved"
   | "self"
   | "remote"
-  | "force-push";
+  | "force-push"
+  | "unchecked";
 
 /** One thing a built-in check found; M1-23b derives `Effects` from these. */
 export type Finding = {
@@ -91,6 +92,7 @@ const SECTION: Record<FindingKind, string> = {
   self: "self-protection check (§4.4b)",
   remote: "remote-action check (§4.8)",
   "force-push": "force-push check (§5)",
+  unchecked: "wrapper reading (§3.2)",
 };
 const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote"]);
 const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
@@ -190,13 +192,16 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
 
 const PEELED = new Set(["exec", "busybox"]);
 
-/** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front. */
-function variants(argv: string[]): string[][] {
+/** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front; `complete` is false when not every reading was looked at. */
+function variants(argv: string[]): { all: string[][]; complete: boolean } {
   const out: string[][] = [];
   const seen = new Set<string>();
   const queue = [argv];
+  let complete = true;
   for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
-    for (const v of strippedArgvs(a)) {
+    const unwrapped = unwrapCommand(a);
+    complete &&= unwrapped.complete;
+    for (const v of unwrapped.argvs) {
       const key = v.join("\0");
       if (seen.has(key)) continue;
       seen.add(key);
@@ -204,7 +209,7 @@ function variants(argv: string[]): string[][] {
       if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
     }
   }
-  return out;
+  return { all: out, complete };
 }
 
 function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shell" }>): Finding[] {
@@ -215,7 +220,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   for (const sub0 of a.analysis.commands ?? []) {
     const unwrapped = unwrapCmd(sub0);
     const viaCmd = unwrapped !== sub0;
-    const all = variants(unwrapped.argv);
+    const { all, complete } = variants(unwrapped.argv);
+    if (!complete) out.push(finding("unchecked", "a wrapper's options can be read too many ways to check", "ask"));
     for (const v of all) {
       const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
       const system = systemRemoval(env, sub, viaCmd);
@@ -323,24 +329,8 @@ function isDynamicVariant(v: string[]): boolean {
   const name = program(raw);
   if (DYNAMIC_NAMES.has(name)) return true;
   if (name === "xargs") {
-    let i = 1;
-    let cmd: string | undefined;
-    while (i < v.length) {
-      const text = v[i] ?? "";
-      if (text === "--") {
-        cmd = v[i + 1];
-        break;
-      }
-      if (text.startsWith("-") && text.length > 1) {
-        if (text.includes("=")) i += 1;
-        else if (XARGS_VALUED.has(text)) i += 2;
-        else i += 1;
-      } else {
-        cmd = text;
-        break;
-      }
-    }
-    if (cmd === undefined || DYNAMIC_WORD.test(cmd)) return true;
+    const { starts, none } = xargsCommandStarts(v);
+    if (none || starts.some((i) => DYNAMIC_WORD.test(v[i] ?? ""))) return true;
   }
   if (SHELL_COMMANDS.has(name)) {
     const at = shellScriptAt(v.slice(1));
@@ -351,7 +341,7 @@ function isDynamicVariant(v: string[]): boolean {
 }
 
 function hasDynamicName(subs: Subcommand[]): boolean {
-  return subs.some((s) => variants(unwrapCmd(s).argv).some(isDynamicVariant));
+  return subs.some((s) => variants(unwrapCmd(s).argv).all.some(isDynamicVariant));
 }
 
 function shellDefault(

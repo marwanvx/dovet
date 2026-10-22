@@ -6,8 +6,8 @@ import {
   type Redirect,
   type Subcommand,
   shellScriptAt,
-  strippedArgvs,
-  XARGS_VALUED,
+  unwrapCommand,
+  xargsCommandStarts,
 } from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import { classify, type Word } from "./read-only.ts";
@@ -40,22 +40,6 @@ function hasUnescaped(raw: string, chars: string): boolean {
 const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(.)/gs, "$1");
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
-
-function xargsCommandWord(args: Word[]): Word | undefined {
-  let i = 0;
-  while (i < args.length) {
-    const text = args[i]?.text ?? "";
-    if (text === "--") return args[i + 1];
-    if (text.startsWith("-") && text.length > 1) {
-      if (text.includes("=")) i += 1;
-      else if (XARGS_VALUED.has(text)) i += 2;
-      else i += 1;
-    } else {
-      return args[i];
-    }
-  }
-  return undefined;
-}
 
 export function walkBash(root: Node, walk: Walk, st: State): void {
   const { ctx } = walk;
@@ -236,13 +220,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     sub.argv.push(name.text, ...args.map((a) => a.text));
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
     if (commandName(name.text) === "xargs") {
-      const cmd = xargsCommandWord(args);
-      if (
-        cmd === undefined ||
-        !cmd.literal ||
-        cmd.values !== undefined ||
-        args.some((a) => !a.literal || a.values !== undefined)
-      ) {
+      const { starts, none } = xargsCommandStarts([name.text, ...args.map((a) => a.text)]);
+      if (none || starts.length === 0 || args.some((a) => !a.literal || a.values !== undefined)) {
         ctx.state.literalNames = false;
         ctx.fail("xargs runs a computed command");
       }
@@ -282,7 +261,9 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       const seen = words.get(w.text);
       words.set(w.text, seen === undefined || (seen.literal && !w.literal) || w.glob ? w : seen);
     }
-    for (const [i, v] of strippedArgvs([name.text, ...args.map((a) => a.text)]).entries()) {
+    const { argvs, complete } = unwrapCommand([name.text, ...args.map((a) => a.text)]);
+    if (!complete) ctx.fail("too many ways to read the wrapper's options");
+    for (const [i, v] of argvs.entries()) {
       const head = commandName(v[0]);
       const rest = i === 0 ? args : v.slice(1).map((text) => words.get(text) ?? { text, literal: true, glob: false });
       if (NEVER_UNDERSTOOD.has(head)) ctx.fail(head);

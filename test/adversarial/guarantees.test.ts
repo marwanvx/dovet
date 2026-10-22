@@ -414,6 +414,72 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
       notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
     expect(shell("timeout 5 git status", state("default", { allow: ["Bash(git status)"] })).behavior).toBe("allow");
   });
+
+  // An option Dovet has no table entry for, or reads with the wrong value kind, must not move the inner command.
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "sudo --made-up x git push",
+    "sudo -h host git push",
+    "env --made-up x git push",
+    "doas -X x git push",
+    "xargs --max-lines 1 git push",
+    "ionice -c2 -Z x git push",
+    "setsid --made-up x git push",
+    "nice -n 5 --made-up x git push",
+    "timeout --made-up x 5 git push",
+    "flock --made-up x /tmp/l git push",
+    "watch --made-up x git push",
+    "stdbuf --made-up x git push",
+    "time --made-up x git push",
+    "command -p git push",
+  ])("%s is a remote action while tainted, whatever the unknown option takes", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each(["timeout --made-up x 5 rm -rf /", "sudo -Q x rm -rf ~", "env --made-up x cat .env"])(
+    "%s keeps the built-in checks under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: AC-PERM-03
+  test.each(["sudo --made-up x rm y", "env -Q x rm y", "doas -X x rm y"])(
+    "%s is caught by a deny rule for rm",
+    (command) => {
+      const rules = loadRules(
+        [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
+        { os, home: "/home/u", canonicalize: (p) => p },
+      ).rules;
+      expect(shell(command, { mode: "default", rules, env: env() }).behavior).toBe("deny");
+    },
+  );
+
+  // spec: AC-PERM-03
+  test("an allow rule sees past a safe wrapper only when every option is known", () => {
+    for (const command of [
+      "timeout --made-up 5 git status",
+      "timeout -Z 5 git status",
+      "nice --made-up git status",
+      "stdbuf -Z git status",
+      "time --made-up git status",
+      "timeout --help 5 git status",
+    ])
+      notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
+    for (const command of [
+      "timeout -k5 10 git status",
+      "timeout --sig=KILL 5 git status",
+      "timeout -fv -s KILL 5 git status",
+      "nice -n 5 git status",
+      "nice -5 git status",
+      "stdbuf -oL git status",
+      "time -p git status",
+    ])
+      expect(shell(command, state("default", { allow: ["Bash(git status)"] })).behavior).toBe("allow");
+  });
 });
 
 // Found by the M2 exit check and logged in FOLLOWUPS (F41-F42); `test.failing` passes while the bug is there and
