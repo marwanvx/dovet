@@ -116,6 +116,7 @@ import {
   openCheckpoints,
   openSession,
   PLAN_FILE_KEY,
+  planDir,
   planFileAllowed,
   pollSettings,
   projectId,
@@ -646,6 +647,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       pid: input.pid,
       ppid: input.pid,
       selfNames: ["dovet", "bun"] as readonly string[],
+      ownFiles: [planDir(loc)] as readonly string[],
     };
     if (defs.some((d) => SHELL_TOOLS.includes(d.name)) && input.settings.settings.sandbox?.enabled !== false) {
       const rg = input.platform.libexec("rg");
@@ -682,6 +684,22 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         throw err;
       }
     })();
+    const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
+    // The plan text goes to the model, so it is read only where Read would be allowed (tools §11.1).
+    const readPlanText = async (path: string): Promise<string | null> => {
+      const decision =
+        instructionRules === undefined
+          ? undefined
+          : decide(
+              { tool: "Read", action: { kind: "read", paths: [path, policyEnv.canonicalize(path)] } },
+              { mode, rules: instructionRules, env: policyEnv, tainted: sessionTaint.length > 0 },
+            );
+      if (decision?.behavior !== "allow") {
+        warnings.push(`did not read the plan file ${path}: ${decision?.reason ?? "the settings did not load"}`);
+        return null;
+      }
+      return readFile(path, "utf8").catch((err: unknown) => (isErrno(err, "ENOENT") ? null : Promise.reject(err)));
+    };
     const instructionContext: InstructionContext = {
       os: input.os,
       home: home as AbsPath,
@@ -836,10 +854,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (instructions.resumeUpdates.length > 0) push("instructions.loaded", epochNum, null, instructions.launchEvent);
       announcePlanFile(epochNum, turn);
       if (planFile !== undefined && forkedPlanUnannounced(events)) {
-        const text = await readFile(planFile, "utf8").catch((err: unknown) =>
-          isErrno(err, "ENOENT") ? null : Promise.reject(err),
-        );
-        const part = planReattach(planFile, text);
+        const part = planReattach(planFile, await readPlanText(planFile));
         push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
       }
       if (flagMode !== undefined && resumedFrom !== undefined && resumedFrom !== mode) {
@@ -872,7 +887,6 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = input.signal ?? new AbortController().signal;
-    const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
     const taintFrom = (sources: readonly string[]): void => {
       for (const source of sources) {
         if (sessionTaint.includes(source)) continue;
@@ -1168,9 +1182,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
               ? null
               : {
                   path: planFile,
-                  text: await readFile(planFile, "utf8").catch((err: unknown) =>
-                    isErrno(err, "ENOENT") ? null : Promise.reject(err),
-                  ),
+                  text: await readPlanText(planFile),
                 },
         },
         renderSystem: renderSystemNow,

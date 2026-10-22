@@ -351,6 +351,35 @@ describe("the plan file across compaction", () => {
   });
 
   // spec: tools §11.1
+  test("a plan file a Read rule denies keeps its text out of the compaction; only its path is carried", async () => {
+    const dir = await tempProject({
+      ".dovet/settings.json": JSON.stringify({
+        checkpoints: { enabled: false },
+        plan: { directory: "docs/plans" },
+        permissions: { deny: ["Read(docs/plans/**)"] },
+      }),
+    });
+    try {
+      const a = await run({ adapter: scripted([{ text: "first" }]).adapter, mode: "plan" }, dir);
+      const plan = planFileIn(a.log) ?? "";
+      await mkdir(dirname(plan), { recursive: true });
+      await writeFile(plan, "PLAN BODY: secret");
+      const model = scripted([
+        { calls: [{ name: "Read", input: { file_path: join(dir.root, "nothing.txt") } }], usage: big },
+        { text: "after" },
+      ]);
+      const b = await run({ adapter: model.adapter, continued: true, prompt: "go on", ids: sequentialIds("D") }, dir);
+      const compaction = CompactionData.parse(b.log.find((e) => e.type === "compaction")?.data);
+      expect(compaction.firstMessage).toContain(`Plan file: ${plan}`);
+      expect(JSON.stringify(b.log)).not.toContain("PLAN BODY: secret");
+      expect(JSON.stringify(model.requests)).not.toContain("PLAN BODY: secret");
+      expect(b.out.warnings.join("\n")).toContain(`did not read the plan file ${plan}`);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
   test("after the plan is approved the plan still comes back with a compaction while it is being implemented", async () => {
     const dir = await project();
     try {

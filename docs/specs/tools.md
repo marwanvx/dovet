@@ -423,7 +423,7 @@ Further behavior:
 - A fork copies the plan file and ends its copied events with a `planFile` change (source `fork`); its first run adds `plan-reattach` (new path and plan text), since the system prompt names the parent's.
 - After a compaction the plan file's path and text come back in the Dovet facts ([context §6](context.md)).
 - The plan file is named by its real path: Edit and Write offer the policy the written and the real path, and plan mode allows the edit only when both are the plan file.
-- `plan.directory` is used only inside the project (links followed) with no dot-prefixed part (never `.git`, `.dovet`, `.claude`), else the session's own folder with a warning: the plan file is writable unasked and no path check runs on it. A logged plan file (resume, fork) is accepted only from the session's plan folder, or directly in `plan.directory` named `<slug>-<4 characters>.md`, and never as a link; else it is ignored with a warning and a fork records none. A resume without `--permission-mode` records no mode change.
+- `plan.directory` is used only inside the project (links followed) with no dot-prefixed part (never `.git`, `.dovet`, `.claude`), else the session's own folder with a warning. For the plan file the policy skips only the plan-mode default and the working-directory check; its text is re-attached only where Read is allowed. A logged plan file (resume, fork) is accepted only from the session's plan folder, or directly in `plan.directory` named `<slug>-<4 characters>.md`, and never as a link; else it is ignored with a warning and a fork records none. A resume without `--permission-mode` records no mode change.
 - Headless ExitPlanMode is not wired yet: it is denied as an interaction (FOLLOWUPS F25).
 
 ## 12. TodoWrite
