@@ -293,10 +293,16 @@ function envSplit(s: string): string[] | undefined {
     else if (c === "#" && word === undefined) break;
     else if (c === "$") return undefined;
     else if (c === "'") {
-      const close = s.indexOf("'", i + 1);
-      if (close < 0) return undefined;
-      word = (word ?? "") + s.slice(i + 1, close);
-      i = close;
+      // Inside single quotes only `\\` and `\'` are escapes.
+      let text = "";
+      for (i++; i < s.length && s.charAt(i) !== "'"; i++) {
+        const d = s.charAt(i);
+        const e = s.charAt(i + 1);
+        if (d === "\\" && (e === "\\" || e === "'")) text += s.charAt(++i);
+        else text += d;
+      }
+      if (i >= s.length) return undefined;
+      word = (word ?? "") + text;
     } else if (c === '"') {
       let text = "";
       for (i++; i < s.length && s.charAt(i) !== '"'; i++) {
@@ -306,7 +312,7 @@ function envSplit(s: string): string[] | undefined {
         else {
           const e = s.charAt(++i);
           if (e === "c") return undefined;
-          const out = e === "_" ? " " : e === '"' ? '"' : ENV_ESCAPES[e];
+          const out = e === "_" ? " " : e === '"' || e === "'" ? e : ENV_ESCAPES[e];
           if (out === undefined) return undefined;
           text += out;
         }

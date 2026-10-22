@@ -436,6 +436,7 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "watch \"'git'\" push origin main",
     "env -S \"'git' push origin main (\"",
     "env -S 'git\u{0B}push'",
+    "env -S \"A='\\\\'' git push origin main #'\"",
   ])("%s is a remote action while tainted, whatever the unknown option takes", (command) => {
     const d = shell(command, state("bypassPermissions", { tainted: true }));
     expect(d.behavior).toBe("deny");
@@ -449,6 +450,7 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "env --made-up x cat .env",
     "watch \"'rm'\" -rf /",
     "watch \"'cat'\" .env",
+    "env -S \"A='\\\\'' rm -rf / #'\"",
   ])("%s keeps the built-in checks under a tool-wide allow", (command) => {
     for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
   });
