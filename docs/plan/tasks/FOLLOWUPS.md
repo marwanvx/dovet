@@ -14,6 +14,34 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F34 (M2-16 spec review): compaction requests never reach the daily ledger
+- **Severity:** major (pre-existing) · `src/cli/headless-run.ts:1141-1162` (`sendSummary`; `ledger.reserve/commit/release` are only on the main-request path, lines 1374, 1393, 1639)
+- A summary request (often the session's largest) calls `meter.record("compaction", …)` and adds to `guards.cost`, but writes no `reserve`/`commit` line: other sessions' day totals and this session's next daily check leave it out, so the hard daily cap (receipts-budgets "Behavior" 5, AC-RCPT-10 "counted toward budgets") is undercounted. Reserve before the call with the same estimate path as the main request and commit or release after; test: a day limit the summary would cross refuses it, and a second session sees its cost.
+
+### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
+- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
+- A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
+
+### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
+- **Severity:** major (pre-existing) · `src/cli/headless-run.ts:583` (`events.push(writer.append(...))`), `src/agent/transcript/build.ts:133`
+- `append` returns the envelope with large strings already replaced by `{ $blob, bytes }`, and the run keeps that envelope in its in-memory events, so building the transcript parses a blob reference where text is expected: `runHeadless` with a 300 KB prompt, or a model `Write` call with 300 KB of content, throws `ZodError: path ["text"] / ["parts",0,"inputJson"]: expected string, received object`. Event-log "Writer rules" 5 says readers resolve blobs transparently, and resume does, but the live path doesn't. Fix at the cause: `append` returns the inflated data (or the run reads its events back through the reader's inflate), with a test for a 300 KB user message, tool input and tool output. Reproduce: `runIn(root, { adapter: scripted([[]]), prompt: "y".repeat(300_000) })` from `test/adversarial/harness.ts`.
+
+### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
+- **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
+- 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
+
+### F31 (M2-16 kill -9 probe): a file change made in the last two seconds before `kill -9` has no event in the log
+- **Severity:** minor (design choice in event-log "Writer rules" 3) · `src/store/event-log/writer.ts` (`FLUSH_NOW`)
+- The probe (`test/adversarial/kill9.test.ts`) kills a session that writes a file per request: at 1.8 s the files are on disk and the log holds only `user.message`, because `tool.call`/`file.change` wait for the next 2 s flush. After resume nothing says those files changed (and `/rewind` can't undo them). "The agent can't hide what it did": flush `tool.call` of a mutating tool before it runs (no fsync needed).
+
+### F32 (M2-16 adversarial fixtures): the critical-path check doesn't see `xargs` stdin or `find -delete` under a broad allow rule
+- **Severity:** minor · `src/policy/decide/critical.ts`, `src/policy/decide/decide.ts` (`TOOL_WIDE`)
+- With only `Bash(xargs *)` allowed, `xargs rm -rf <<< /` and `echo / | xargs rm -rf` are allowed; with a tool-wide `Bash` allow rule, `find ~ -delete` and `find / -delete` are allowed too (a prefix `Bash(find *)` correctly asks, AC-PERM-04). Permissions §4.4 says no allow rule approves a removal of a critical path and lists "a recursive rm whose target is only a command substitution" as critical; a target that arrives on stdin is the same case. Treat `xargs` with `rm`/`rmdir` and `find -delete` on a critical start path as unresolvable targets.
+
+### F33 (M2-16 adversarial fixtures): two credential and startup files are missing from the §4.3/§4.7 lists
+- **Severity:** minor · `src/policy/decide/paths.ts` (protected files, home credential list), permissions §4.3, §7.2
+- With a blanket `Read`/`Edit` allow rule, `~/.config/gh/hosts.yml` (the GitHub CLI token) is read and `~/.config/fish/config.fish` (fish's startup file) is written without a prompt; both are outside the working directory only, so only the "outside" ask protects them and a user allow rule lifts it. Add them (and `~/.config/gh` to the §7.2 sandbox deny list) in the spec and the data files.
+
 ### F28 (F24): a windows-latest runner stalled for about 20 s in the middle of a test file
 - **Severity:** minor · `.github/workflows/ci.yml` (windows job), seen once in CI run 39714803004 attempt 1
 - Details in F24's cause. If a Windows test exceeds the new 30 s default (look for "timed out after 30000ms"), find what ran just before it (leftover processes, Defender scanning the temp tree, a disk wait) instead of raising the limit again.

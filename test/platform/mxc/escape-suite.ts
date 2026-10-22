@@ -26,7 +26,7 @@ writeFileSync(join(cred, "secret.txt"), "TOPSECRET-9f3a");
 writeFileSync(join(outside, "readable.txt"), "OUTSIDE-READ-7c1d");
 const fs = { readwritePaths: [allowed] };
 
-type Row = { name: string; kind: "control" | "escape"; ok: boolean; detail: string };
+type Row = { name: string; kind: "control" | "escape" | "info"; ok: boolean; detail: string };
 const rows: Row[] = [];
 async function run(request: Request): Promise<Result | { error: string }> {
   try {
@@ -74,7 +74,7 @@ await hostWrites(
   `cmd /c echo x > "\\\\localhost\\${outside[0]}$${outside.slice(2)}\\share.txt"`,
 );
 await hostWrites(
-  "write outside from a child PowerShell",
+  "write outside from a child PowerShell (exit -1073741502: the child did not start)",
   join(outside, "child.txt"),
   `powershell -NoProfile -Command "Set-Content -Path '${join(outside, "child.txt")}' -Value x"`,
 );
@@ -118,8 +118,8 @@ record(
 );
 const readOutside = await run({ command: `cmd /c type "${join(outside, "readable.txt")}"`, filesystem: fs });
 record(
-  "read an ordinary file outside the root (allowed by design)",
-  "control",
+  "read an ordinary file outside the root (MXC denies it; permissions §7.2 allows it)",
+  "info",
   "stdout" in readOutside && readOutside.stdout.includes("OUTSIDE-READ"),
   readOutside,
 );
@@ -174,11 +174,20 @@ const header = {
   platformSupport: JSON.stringify(sdk.getPlatformSupport()),
   backends: JSON.stringify(sdk.getAvailableBackends()),
 };
+const verdict = (r: Row): string =>
+  r.kind === "control"
+    ? r.ok
+      ? "works"
+      : "BROKEN"
+    : r.kind === "info"
+      ? r.ok
+        ? "allowed"
+        : "denied"
+      : r.ok
+        ? "held"
+        : "ESCAPED";
 const table = rows
-  .map(
-    (r) =>
-      `| ${r.kind} | ${r.name} | ${r.ok ? (r.kind === "control" ? "works" : "held") : r.kind === "control" ? "BROKEN" : "ESCAPED"} | ${r.detail.replaceAll("|", "/").replaceAll("\n", " ")} |`,
-  )
+  .map((r) => `| ${r.kind} | ${r.name} | ${verdict(r)} | ${r.detail.replaceAll("|", "/").replaceAll("\n", " ")} |`)
   .join("\n");
 const text = `${JSON.stringify(header)}\n\n| kind | case | result | detail |\n|---|---|---|---|\n${table}\n`;
 console.log(text);
