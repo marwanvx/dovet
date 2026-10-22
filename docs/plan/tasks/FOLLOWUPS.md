@@ -82,10 +82,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
 - A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
 
-### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
-- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
-- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
-
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
 - **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
 - 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
@@ -164,6 +160,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Fixed
 
+### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
+- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
+- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
+- **Fixed (PR 187):** `append` returns the scrubbed data with large strings inline (what a reader gets); the line on disk keeps the blob references. `test/adversarial/large-strings.test.ts` runs a 300 KB prompt, Write content and model text through a headless run and resumes it.
+
 ### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
 - **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
 - `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
@@ -174,6 +175,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.
 - **Cause (CI run 39714803004, attempt 1):** a stall of the runner, not slowness of the code. In `headless-budget.test.ts` four tests in a row ran 5 s or more (5,001, 5,001, 5,002 and 4,739 ms, about 20 s in all, the first with zero requests sent), then "two headless sessions racing" ran two full `runHeadless` calls in 137 ms in the same file; the two snapshot tests stalled the same way later (`git fast-import` killed). `checkpoints` was off and `fakePlatform` spawns nothing in the budget tests, and the ledger lock waits only 5-25 ms per try. What stalled the machine is unknown (a quiet runner needs about 1 s per `runHeadless` on Windows, 0.12 s on Linux).
 - **Fixed (PR 184):** `test/helpers/timeout.ts`, a second `bunfig.toml` preload, sets the default test timeout to 30 s on Windows only (5 s elsewhere); tests with their own limit keep it. This tolerates a stall like the one seen; it does not explain it, so F28 watches for a longer one.
+- **Fixed again (PR 187):** that preload never worked past a run's first file (Bun 1.4.3 applies a preload's `setDefaultTimeout` to the first file only; PR 187's Windows CI timed out at 5 s in `snapshots.test.ts`). `scripts/test-run.ts` now passes `--timeout 30000` on Windows; a file's own default still wins.
 
 ### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
 - **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)

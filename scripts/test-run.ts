@@ -9,10 +9,16 @@ export async function leftovers(root: string): Promise<string[]> {
   return (await readdir(root)).filter((name) => name.startsWith(WORKSPACE_PREFIX)).sort();
 }
 
+/** One windows-latest run stalled for about 20 s, so tests that take 0.1 s elsewhere took over 5 s each (F24). A flag, not a
+ * preload: a preload's `setDefaultTimeout` covers only the first test file of a run. A file's own default still wins. */
+export function testCommand(platform: NodeJS.Platform, args: string[]): string[] {
+  return ["bun", "test", "--check", "--timeout", platform === "win32" ? "30000" : "5000", ...args];
+}
+
 export async function runTests(args: string[]): Promise<number> {
   const root = await mkdtemp(join(tmpdir(), "dovet-testrun-"));
   try {
-    const proc = Bun.spawn(["bun", "test", "--check", ...args], {
+    const proc = Bun.spawn(testCommand(process.platform, args), {
       stdio: ["inherit", "inherit", "inherit"],
       env: { ...process.env, TMPDIR: root, TEMP: root, TMP: root },
     });

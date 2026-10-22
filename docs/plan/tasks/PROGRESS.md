@@ -791,3 +791,9 @@ Done: the deny side reads every wrapper option with and without a value; allow r
 Review: deep, 3 rounds (round 3 clean). 1 blocker + 3 majors + 3 test gaps fixed, 0 dropped, 1 logged (into F32).
 Learned: trying every reading ends a parser-gap class that tables don't. Keep entries short: `next M1-23c` has a token ceiling.
 Next: F29.
+
+## 2026-10-23 — F29 A string over 256 KB in an event crashed the headless run
+Done: `append` returns inline data, not the blob references written to disk; a 300 KB prompt, Write content and model text now run and resume. Also F24 again: the Windows 30 s test default reached only the first file of a run, so `bun run test` passes `--timeout` instead. PR: #187 (merged).
+Review: standard, 2 rounds (round 2: the F24 re-fix), 0 findings, 0 fixed, 0 dropped, 0 logged to FOLLOWUPS.
+Learned: a preload's `setDefaultTimeout` covers one file only (Bun 1.4.3). `runIn` has a 10,000-token window, so a big prompt compacts first: pass `contextWindow`. Locally AGENTS.md and build-loop.md are skip-worktree owner copies, so `docs:check` reports the instruction budget over its limit; CI checks the committed files.
+Next: F32.
