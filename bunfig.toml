@@ -1,2 +1,2 @@
 [test]
-preload = ["./test/helpers/workspaces.ts"]
+preload = ["./test/helpers/workspaces.ts", "./test/helpers/timeout.ts"]
