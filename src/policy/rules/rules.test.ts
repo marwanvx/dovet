@@ -494,6 +494,17 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
     expect(strippedArgvs(["find", "-exec"])).toEqual([["find", "-exec"]]);
     expect(strippedArgvs(["sudo", "--"])).toEqual([["sudo", "--"]]);
     expect(inner("/usr/bin/env \u{1F600} x")).toContain("\u{1F600} x");
+    expect(strippedArgvs(["flock", "-c"])).toEqual([["flock", "-c"]]);
+    expect(strippedArgvs(["flock", "-n", "/l", "--command=git push"])).toContainEqual(["sh", "-c", "git push"]);
+    expect(strippedArgvs(["flock", "/l", "-c", "git push"])).toContainEqual(["sh", "-c", "git push"]);
+    expect(strippedArgvs(["flock", "/l", "git", "push"])).toContainEqual(["git", "push"]);
+    expect(strippedArgvs(["watch", "-n1", "git push; rm x"])).toContainEqual(["sh", "-c", "git push; rm x"]);
+    expect(strippedArgvs(["watch", "git", "status"])).toEqual([
+      ["watch", "git", "status"],
+      ["git", "status"],
+    ]);
+    expect(strippedArgvs(["env", "-"])).toEqual([["env", "-"]]);
+    expect(strippedArgvs(["env", "-S", "git\\_push"])).toContainEqual(["git", "push"]);
     const deep = Array.from({ length: 200 }, () => "env -S").join(" ");
     expect(strippedArgvs([...deep.split(" "), "git", "push"]).length).toBeGreaterThan(1);
   });

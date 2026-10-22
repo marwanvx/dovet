@@ -134,16 +134,26 @@ const WRAPPERS = new Map<string, Wrapper>([
         "-R",
         "-T",
         "-U",
+        "-a",
+        "-c",
+        "-r",
+        "-t",
         "--user",
         "--group",
         "--host",
         "--prompt",
         "--chdir",
+        "--role",
+        "--type",
+        "--login-class",
+        "--close-from",
+        "--command-timeout",
+        "--other-user",
       ],
       positional: 0,
     },
   ],
-  ["doas", { safe: false, valued: ["-u", "-C"], positional: 0 }],
+  ["doas", { safe: false, valued: ["-a", "-u", "-C"], positional: 0 }],
   ["watch", { safe: false, valued: ["-n", "--interval"], positional: 0 }],
   ["ionice", { safe: false, valued: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata"], positional: 0 }],
   ["setsid", { safe: false, valued: [], positional: 0 }],
@@ -174,6 +184,9 @@ export const commandName = (word: string | undefined): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
+/** `-c`, `-lc`, `-ec`: the shell flag whose next word is a script. */
+export const isShellScriptFlag = (tok: string): boolean => /^-[A-Za-z]*c[A-Za-z]*$/.test(tok);
+
 /** `-u`, `-iu` and `-uroot` → whether the flag's value is the next word. */
 function takesNext(tok: string, valued: string[]): boolean {
   if (valued.includes(tok)) return true;
@@ -196,8 +209,25 @@ function splitString(argv: string[], j: number): string[] | undefined {
       [value, next] = at === tok.length - 1 ? [argv[j + 1], j + 2] : [tok.slice(at + 1), j + 1];
   }
   if (value === undefined) return undefined;
+  value = value.replace(/\\_/g, " ");
   const words = splitCommand(value)?.flatMap((s) => s.argv) ?? value.split(/\s+/).filter(Boolean);
   return [argv[0] ?? "env", ...words, ...argv.slice(next)];
+}
+
+/** `flock [opts] file -c 'cmd'` → `sh -c 'cmd'`. */
+function flockScript(argv: string[], valued: string[]): string[] | undefined {
+  let file = false;
+  for (let k = 1; k < argv.length; k++) {
+    const tok = argv[k] ?? "";
+    if (tok.startsWith("--command=")) return ["sh", "-c", tok.slice(10)];
+    if (tok === "--command" || /^-[A-Za-z]*c$/.test(tok))
+      return k + 1 < argv.length ? ["sh", "-c", argv[k + 1] ?? ""] : [];
+    if (tok.startsWith("-") && tok.length > 1) {
+      if (takesNext(tok, valued)) k++;
+    } else if (file) return undefined;
+    else file = true;
+  }
+  return undefined;
 }
 
 const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
@@ -232,6 +262,8 @@ function inner(argv: string[], deep: boolean): string[][] {
   if (deep && name === "find") return findCommands(argv);
   const w = WRAPPERS.get(name);
   if (w === undefined || !(w.safe || deep)) return [];
+  const script = name === "flock" ? flockScript(argv, w.valued) : undefined;
+  if (script !== undefined) return script.length > 0 ? [script] : [];
   let j = 1;
   for (; j < argv.length; j++) {
     const tok = argv[j] ?? "";
@@ -239,7 +271,7 @@ function inner(argv: string[], deep: boolean): string[][] {
       j++;
       break;
     }
-    if (tok.startsWith("-") && tok.length > 1) {
+    if ((tok.startsWith("-") && tok.length > 1) || (name === "env" && tok === "-")) {
       if (w.noFlags || (name === "xargs" && !deep)) return [];
       const split = name === "env" ? splitString(argv, j) : undefined;
       if (split !== undefined) return [split];
@@ -247,7 +279,11 @@ function inner(argv: string[], deep: boolean): string[][] {
     } else if (!(name === "env" && ASSIGNMENT.test(tok))) break;
   }
   j += w.positional;
-  return j < argv.length ? [argv.slice(j)] : [];
+  if (j >= argv.length) return [];
+  const rest = argv.slice(j);
+  // watch hands its words, joined, to `sh -c`.
+  if (name === "watch" && rest.some((a) => /[\s;&|<>()$`]/.test(a))) return [rest, ["sh", "-c", rest.join(" ")]];
+  return [rest];
 }
 
 function unwrapAll(argv: string[], deep: boolean): string[][] {

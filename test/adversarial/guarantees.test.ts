@@ -327,18 +327,24 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
   );
 
   // spec: AC-PERM-03
-  test.each(["/bin/rm x", "/usr/bin/env /bin/rm x", "sudo -iu me rm x", "sudo -uroot rm x", "find . -exec rm {} +"])(
-    "%s is caught by a deny rule for rm",
-    (command) => {
-      const rules = loadRules(
-        [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
-        { os, home: "/home/u", canonicalize: (p) => p },
-      ).rules;
-      const d = shell(command, { mode: "default", rules, env: env() });
-      expect(d.behavior).toBe("deny");
-      expect(d.reason).toBe("denied by Bash(rm *)");
-    },
-  );
+  test.each([
+    "/bin/rm x",
+    "/usr/bin/env /bin/rm x",
+    "sudo -iu me rm x",
+    "sudo -uroot rm x",
+    "find . -exec rm {} +",
+    "sudo -t type rm x",
+    "env - rm x",
+    "flock /tmp/l -c 'rm x'",
+  ])("%s is caught by a deny rule for rm", (command) => {
+    const rules = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    const d = shell(command, { mode: "default", rules, env: env() });
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toBe("denied by Bash(rm *)");
+  });
 
   // spec: permissions §0 guarantee 3
   test.each([
@@ -349,6 +355,12 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "find . -maxdepth 0 -exec git push origin main \\;",
     "find . -execdir npm publish +",
     "C:/Windows/System32/cmd.exe /c git push",
+    "sudo -r role git push",
+    "doas -a style git push",
+    "env bash -lc 'git push'",
+    "watch -n1 'git push origin main'",
+    "flock /tmp/l --command 'git push'",
+    "env -S 'git\\_push'",
   ])("%s is a remote action while tainted, even in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions", { tainted: true }));
     expect(d.behavior).toBe("deny");

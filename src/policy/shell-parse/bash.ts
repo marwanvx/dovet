@@ -1,6 +1,14 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
 import type { Node } from "web-tree-sitter";
-import { commandName, isSafeEnv, type Redirect, type Subcommand, strippedArgvs, XARGS_VALUED } from "../rules/index.ts";
+import {
+  commandName,
+  isSafeEnv,
+  isShellScriptFlag,
+  type Redirect,
+  type Subcommand,
+  strippedArgvs,
+  XARGS_VALUED,
+} from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import { classify, type Word } from "./read-only.ts";
 
@@ -288,7 +296,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
 
   function shellScript(args: Word[], st: State): void {
     ctx.fail("sh -c runs a nested script");
-    const at = args.findIndex((a) => a.text === "-c");
+    const at = args.findIndex((a) => isShellScriptFlag(a.text));
     const script = at < 0 ? undefined : args[at + 1];
     if (script === undefined) return;
     if (!script.literal) {

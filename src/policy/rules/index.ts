@@ -8,6 +8,7 @@ export {
   canonicalCmdlet,
   commandName,
   isSafeEnv,
+  isShellScriptFlag,
   needsExactRule,
   splitCommand,
   strippedArgvs,

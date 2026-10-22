@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName, strippedArgvs } from "../rules/index.ts";
+import { commandName } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 
 export const REMOTE_VERSION = 1;
@@ -52,7 +52,8 @@ const ghApiWrites = (args: string[]): boolean =>
   );
 const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;
 
-function oneRemote(argv: string[]): Remote | undefined {
+/** The remote action one command, already unwrapped by `strippedArgvs`, is. */
+export function remoteAction(argv: string[]): Remote | undefined {
   const name = program(argv[0]);
   const rest = argv.slice(1);
   const plain = name === "git" ? gitArgs(rest) : positional(rest);
@@ -129,32 +130,20 @@ function oneRemote(argv: string[]): Remote | undefined {
   }
 }
 
-/** The remote action a command is, looking through wrappers (`sudo git push`). */
-export function remoteAction(argv: string[]): Remote | undefined {
-  for (const v of strippedArgvs(argv)) {
-    const hit = oneRemote(v);
-    if (hit !== undefined) return hit;
-  }
-  return undefined;
-}
-
-/** A force-push (`--force*`, `-f`, `+refspec`) of one of the `branches`, as the full command text; else undefined. */
-export function forcePushToDefault(argv: string[], branches: readonly string[]): string | undefined {
-  for (const v of strippedArgvs(argv)) {
-    if (program(v[0]) !== "git") continue;
-    const args = gitArgs(v.slice(1));
-    if (args[0] !== "push") continue;
-    const rest = args.slice(1);
-    const [, ...refs] = positional(rest);
-    const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
-    const hits = (refs.length === 0 ? [""] : refs).some((r) => {
-      const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
-      // No named branch, or HEAD, may be the default branch: fail closed.
-      return (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || branches.includes(dst));
-    });
-    if (hits) return v.join(" ");
-  }
-  return undefined;
+/** A force-push (`--force*`, `-f`, `+refspec`) of one of the `branches` by this unwrapped command, as its text; else undefined. */
+export function forcePushToDefault(v: string[], branches: readonly string[]): string | undefined {
+  if (program(v[0]) !== "git") return undefined;
+  const args = gitArgs(v.slice(1));
+  if (args[0] !== "push") return undefined;
+  const rest = args.slice(1);
+  const [, ...refs] = positional(rest);
+  const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
+  const hits = (refs.length === 0 ? [""] : refs).some((r) => {
+    const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
+    // No named branch, or HEAD, may be the default branch: fail closed.
+    return (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || branches.includes(dst));
+  });
+  return hits ? v.join(" ") : undefined;
 }
 
 const KILLERS = new Set(["kill", "taskkill", "stop-process", "pkill", "killall"]);

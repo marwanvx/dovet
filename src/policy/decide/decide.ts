@@ -4,6 +4,7 @@ import type { PermissionMode } from "../../schema/index.ts";
 import {
   type Behavior,
   evaluateRules,
+  isShellScriptFlag,
   type RuleCall,
   type RuleMatch,
   type RuleSet,
@@ -192,10 +193,13 @@ const PEELED = new Set(["exec", "busybox"]);
 /** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front. */
 function variants(argv: string[]): string[][] {
   const out: string[][] = [];
+  const seen = new Set<string>();
   const queue = [argv];
   for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
     for (const v of strippedArgvs(a)) {
-      if (out.some((o) => o.join("\0") === v.join("\0"))) continue;
+      const key = v.join("\0");
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(v);
       if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
     }
@@ -339,7 +343,7 @@ function isDynamicVariant(v: string[]): boolean {
     if (cmd === undefined || DYNAMIC_WORD.test(cmd)) return true;
   }
   if (SHELL_COMMANDS.has(name)) {
-    const at = v.indexOf("-c");
+    const at = v.findIndex(isShellScriptFlag);
     const script = at < 0 ? undefined : v[at + 1];
     if (script === undefined || DYNAMIC_WORD.test(script)) return true;
   }
