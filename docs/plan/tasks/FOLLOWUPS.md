@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F28 (F24): a windows-latest runner stalled for about 20 s in the middle of a test file
+- **Severity:** minor · `.github/workflows/ci.yml` (windows job), seen once in CI run 39714803004 attempt 1
+- Details in F24's cause. If a Windows test exceeds the new 30 s default (look for "timed out after 30000ms"), find what ran just before it (leftover processes, Defender scanning the temp tree, a disk wait) instead of raising the limit again.
+
 ### F27 (M2-15 security review): `permissions.sensitiveFiles` never reaches the policy
 - **Severity:** minor (pre-existing) · `src/cli/headless-run.ts` (`policyEnv` has no `sensitiveFiles`); nothing in `src/` sets `Env.sensitiveFiles`, which only ripgrep's globs use (`src/tools/sensitive-files.ts`, `src/tools/rg.ts`)
 - A user who adds `**/*.secret` to `permissions.sensitiveFiles` still gets Read of such a file allowed without the sensitive-file ask, and a plan file matching it is still re-attached. Pass the setting into every `Env` the policy gets.
@@ -21,10 +25,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F25 (M2-15): headless `ExitPlanMode` is denied, so a headless plan is never presented
 - **Severity:** minor · `src/cli/headless-run.ts` (`decideFn`), `src/tools/plan-mode.ts:99`
 - A scripted model that writes its plan and calls `ExitPlanMode` in `--permission-mode plan` gets `Permission denied: needs the user's answer` (interaction actions ask, headless denies). Tools §11.3 says headless returns the plan as the turn's result with a `plan` event, mode staying `plan`. Allow the call when the mode is `plan`, log `plan.presented`, and make the result the turn's text; the `plan` stream event waits for `--output stream-json`. `ExitPlanMode` is the only tool that reads `ctx.session.mode`, so the rebuild of the tool context after EnterPlanMode (`applyResultMode`) has no observable effect until then: add a test that ExitPlanMode called after EnterPlanMode in the same round is not told "Not in plan mode".
-
-### F24 (F16 CI): two more Windows tests timed out on a slow runner
-- **Severity:** major (second sighting, M2-15 CI run 39714803004: `headless-budget.test.ts` ×3 at 5,001 ms and `snapshots.test.ts` "a blob that is gone…" / "plan lists the paths…" at 5,004–5,218 ms with `git fast-import` failing and EBUSY on cleanup; all passed on a rerun of the same commit) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
-- `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.
 
 ### F23 (M2-14 review): a forced compaction skips the compaction-thrash guard
 - **Severity:** minor · `src/cli/headless-run.ts` (`compact-retry` branch; the auto path calls `guards.noteCompaction`)
@@ -75,6 +75,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F24 (F16 CI): two more Windows tests timed out on a slow runner
+- **Severity:** major (second sighting, M2-15 CI run 39714803004: `headless-budget.test.ts` ×3 at 5,001 ms and `snapshots.test.ts` "a blob that is gone…" / "plan lists the paths…" at 5,004–5,218 ms with `git fast-import` failing and EBUSY on cleanup; all passed on a rerun of the same commit) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
+- `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.
+- **Cause (CI run 39714803004, attempt 1):** a stall of the runner, not slowness of the code. In `headless-budget.test.ts` four tests in a row ran 5 s or more (5,001, 5,001, 5,002 and 4,739 ms, about 20 s in all, the first with zero requests sent), then "two headless sessions racing" ran two full `runHeadless` calls in 137 ms in the same file; the two snapshot tests stalled the same way later (`git fast-import` killed). `checkpoints` was off and `fakePlatform` spawns nothing in the budget tests, and the ledger lock waits only 5-25 ms per try. What stalled the machine is unknown (a quiet runner needs about 1 s per `runHeadless` on Windows, 0.12 s on Linux).
+- **Fixed (PR 184):** `test/helpers/timeout.ts`, a second `bunfig.toml` preload, sets the default test timeout to 30 s on Windows only (5 s elsewhere); tests with their own limit keep it. This tolerates a stall like the one seen; it does not explain it, so F28 watches for a longer one.
 
 ### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
 - **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)

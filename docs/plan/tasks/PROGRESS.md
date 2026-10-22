@@ -766,3 +766,9 @@ Done: F26 fixed at the policy: the plan file now skips only the plan-mode defaul
 Review: deep, 2 rounds (reviewer + security-reviewer, then security on the fix). 1 fixed (minor: an ask rule matching the plan file was ignored), 1 dropped (plan file's real path: it is always stored canonical), 1 logged (F27: `permissions.sensitiveFiles` never reaches the policy).
 Learned: a policy shortcut must sit after the findings and the ask-rule match, never before them. `planFileAllowed` stays as the location rule for a logged path; its link check is still needed because the fork's `copyFile` follows links.
 Next: M2-16 (exit check).
+
+## 2026-10-22 — F24 Windows tests time out at Bun's 5 s default
+Done: the only open `major` follow-up. The CI log of the second sighting shows a stall of the runner, not slow code: four `headless-budget` tests in a row ran 5 s or more (one sent no request), then "two headless sessions racing" ran two full `runHeadless` calls in 137 ms in the same file. `test/helpers/timeout.ts`, a second `bunfig.toml` preload, now sets the default test timeout to 30 s on Windows only; tests with their own limit keep it. PR: #184 (merged after CI on three OSes).
+Review: standard, 1 round, 3 fixed (major: the first Cause line claimed constant slowness the 137 ms test contradicts, so it now says what stalled is unknown and F28 watches for a longer stall; minor: the test only checked the number, it now also checks `bunfig.toml` loads the preload; nit: a blank line), 0 dropped, 0 logged except F28 (minor).
+Learned: on this machine `AGENTS.md` and `docs/workflow/build-loop.md` carry local OpenCode edits (`git ls-files -v` shows `S`, skip-worktree), so `bun run docs:check` fails here with "instruction files … over its ceiling of 7500" while CI passes; CI decides, don't edit those files to fix it. A local `bun run check` otherwise ends with only the known sandbox and SPIKE-5 secrets failures.
+Next: M2-16 (exit check).
