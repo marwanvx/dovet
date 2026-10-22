@@ -749,6 +749,7 @@ Next: M2-15 (see `bun run next`).
 
 ## 2026-10-22 — F16 The 500 MB resume test flakes
 Done: AC-LOG-13's big-log test now runs the resume in a fresh `bun` child (`test/fixtures/resume/scan-child.ts`) that collects garbage, samples its own RSS and times the sidecar resume three times (best counts); the 30 s, 2 s and 300 MiB limits are unchanged. Measured on Linux: 34 MB growth; a whole-file read in `resumeSession` gives 920 MB and fails the test. PR: #182 (merged after CI on three OSes).
-Review: standard, 1 round, 1 fixed (nit: the child is killed by a spawn timeout if the test hangs), 1 dropped (nit: the sampler also runs during the fast resumes, which only makes the limit stricter), 0 logged to FOLLOWUPS.
+Also fixed a Windows failure CI found in M2-13's AC-RCPT-04 test: it seeded the day so that two $0.012 first-request estimates both fit (0.03 + 2 × 0.012 < 0.10), so it passed only when one session finished before the other reserved; it now seeds $0.085, which fits one reservation and not two whatever the order (with the day check removed it fails, 4 requests sent).
+Review: standard, 1 round, 1 fixed (nit: the child is killed by a spawn timeout if the test hangs), 1 dropped (nit: the sampler also runs during the fast resumes, which only makes the limit stricter), 1 logged to FOLLOWUPS (F24: two Windows tests timed out on a slow runner).
 Learned: when a limit flakes, measure in a fresh process. The other tests in `resume.test.ts` that write big logs are small, so they were left alone. `bun run check` takes about 13 minutes here, past the 10-minute foreground limit: run it in the background.
 Next: M2-15 (see `bun run next`).

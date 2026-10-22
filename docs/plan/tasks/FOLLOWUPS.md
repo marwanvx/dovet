@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F24 (F16 CI): two more Windows tests timed out on a slow runner
+- **Severity:** minor (first sighting) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
+- `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.
+
 ### F23 (M2-14 review): a forced compaction skips the compaction-thrash guard
 - **Severity:** minor · `src/cli/headless-run.ts` (`compact-retry` branch; the auto path calls `guards.noteCompaction`)
 - A first message that is itself over the threshold after a `context_exceeded` compaction is caught only by the second `context_exceeded` response, one paid request later. Run the same `noteCompaction` check after the forced `compactEpoch`, with a test.

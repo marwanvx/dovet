@@ -284,11 +284,13 @@ describe("budgets in a headless run", () => {
 
   // spec: AC-RCPT-04
   test("two headless sessions racing for the rest of the daily budget dispatch exactly one request", async () => {
+    // A first request is estimated at $0.012, so $0.015 left fits one reservation, never two, whichever session
+    // reserves first or whether the other has committed by then.
     const dir = await project({ daily: 0.1 });
     try {
       const seed = new DailyLedger({ dir: join(dir.root, "data", "budget"), session: "SEED", now: () => NOW });
-      await seed.reserve("seed", 0.03, null);
-      await seed.commit("seed", 0.03);
+      await seed.reserve("seed", 0.085, null);
+      await seed.commit("seed", 0.085);
       const a = counting();
       const b = counting();
       const [oa, ob] = await Promise.all([
