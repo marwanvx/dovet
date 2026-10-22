@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { testCommand } from "./test-run.ts";
 
 const dirs: string[] = [];
 afterEach(async () => {
@@ -63,4 +64,32 @@ test("makes a workspace", async () => { await workspace(); });
     expect(out).not.toContain("left");
     expect(code).toBe(0);
   }, 30_000);
+});
+
+describe("the default test timeout", () => {
+  test("Windows gets six times Bun's 5 s default, other systems keep it", () => {
+    expect(testCommand("win32", ["a.test.ts"])).toEqual(["bun", "test", "--check", "--timeout", "30000", "a.test.ts"]);
+    expect(testCommand("linux", [])).toEqual(["bun", "test", "--check", "--timeout", "5000"]);
+    expect(testCommand("darwin", [])).toEqual(["bun", "test", "--check", "--timeout", "5000"]);
+  });
+
+  // A preload's setDefaultTimeout covered only the first file of a run, so F24's 30 s never reached the rest.
+  test("the Windows command gives a 6 s test in the second file of a run the 30 s limit", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "dovet-testrun-"));
+    dirs.push(dir);
+    const files = await Promise.all(
+      ["first", "second"].map(async (name) => {
+        const file = join(dir, `${name}.test.ts`);
+        await writeFile(
+          file,
+          `// @ts-nocheck\nimport { test } from "bun:test";\ntest("${name}", async () => { await Bun.sleep(6000); });\n`,
+        );
+        return file;
+      }),
+    );
+    const proc = Bun.spawn(testCommand("win32", files), { cwd: dir, stdout: "pipe", stderr: "pipe" });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(out + err).toContain(" 2 pass");
+    expect(code).toBe(0);
+  }, 60_000);
 });
