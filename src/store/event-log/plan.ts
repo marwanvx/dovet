@@ -17,6 +17,20 @@ export function planFileOf(e: Pick<EventEnvelope, "type" | "data">): string | nu
   return typeof d.new === "string" ? d.new : null;
 }
 
+/**
+ * The plan file as the tools see it: Edit and Write offer the policy the written and the real path, and plan mode
+ * allows the edit only when both are the plan file, so the file is named by its real path (short names and links
+ * resolved) from the start.
+ */
+export function canonicalPlanFile(loc: SessionLocation, file: string): string {
+  try {
+    return canonicalizePath(file, loc.projectRoot, loc.os);
+  } catch (err) {
+    if (err instanceof PathRefused) return file;
+    throw err;
+  }
+}
+
 /** Plan files are `<slug>-<4 characters>.md` (tools §11.1), which no instruction, settings or environment file is. */
 const PLAN_FILE_NAME = /-[0-9a-z]{4}\.md$/i;
 
@@ -55,11 +69,13 @@ export function planFileAllowed(loc: SessionLocation, file: string, projectPlans
   try {
     const lexical = lexicalPath(file, loc.projectRoot, loc.os);
     if (isLink(lexical)) return false;
-    if (isWithin(lexical, planDir(loc), loc.os)) return true;
+    const real = canonicalPlanFile(loc, file);
+    if (isWithin(lexical, planDir(loc), loc.os) || isWithin(real, canonicalPlanFile(loc, planDir(loc)), loc.os))
+      return true;
     return (
       projectPlans !== undefined &&
-      PLAN_FILE_NAME.test(lexical) &&
-      pathKey(dirname(lexical), loc.os) === pathKey(lexicalPath(projectPlans, loc.projectRoot, loc.os), loc.os) &&
+      PLAN_FILE_NAME.test(real) &&
+      pathKey(dirname(real), loc.os) === pathKey(canonicalPlanFile(loc, projectPlans), loc.os) &&
       inProject(loc, file)
     );
   } catch (err) {
@@ -98,12 +114,15 @@ export async function forkPlanLine(
       { key: PLAN_FILE_KEY, old: parentPlan, new: null, source: "fork" },
       deps,
     );
-  const target = isWithin(lexicalPath(parentPlan, parent.projectRoot, parent.os), planDir(parent), parent.os)
-    ? join(planDir(child), basename(parentPlan))
-    : join(
-        dirname(parentPlan),
-        `${basename(parentPlan, extname(parentPlan))}-${child.session.slice(-4).toLowerCase()}${extname(parentPlan)}`,
-      );
+  const target = canonicalPlanFile(
+    child,
+    isWithin(lexicalPath(parentPlan, parent.projectRoot, parent.os), planDir(parent), parent.os)
+      ? join(planDir(child), basename(parentPlan))
+      : join(
+          dirname(parentPlan),
+          `${basename(parentPlan, extname(parentPlan))}-${child.session.slice(-4).toLowerCase()}${extname(parentPlan)}`,
+        ),
+  );
   await mkdir(dirname(target), { recursive: true, mode: 0o700 });
   await copyFile(parentPlan, target, constants.COPYFILE_EXCL).catch((err: unknown) => {
     if (!isErrno(err, "ENOENT")) throw err;

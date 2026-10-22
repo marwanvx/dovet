@@ -188,6 +188,34 @@ describe("plan mode in a headless run", () => {
   });
 
   // spec: tools §11.1
+  test.skipIf(process.platform === "win32")(
+    "the plan file is named by its real path, so the write is allowed when the data folder is reached through a link",
+    async () => {
+      const dir = await project();
+      try {
+        await mkdir(join(dir.root, "real-data"), { recursive: true });
+        await symlink(join(dir.root, "real-data"), join(dir.root, "data"));
+        const { log } = await run({ adapter: scripted([{ text: "ok" }]).adapter, mode: "plan" }, dir);
+        const plan = planFileIn(log) ?? "";
+        expect(plan).toStartWith(join(dir.root, "real-data"));
+        const model = scripted([
+          { calls: [{ name: "Write", input: { file_path: plan, content: "1. read\n" } }] },
+          { text: "written" },
+        ]);
+        const again = await run(
+          { adapter: model.adapter, continued: true, prompt: "write it", ids: sequentialIds("D") },
+          dir,
+        );
+        expect(results(again.log).at(-1)?.status).toBe("ok");
+        expect(again.out.warnings).toEqual([]);
+        expect(await readFile(plan, "utf8")).toBe("1. read\n");
+      } finally {
+        await dir.dispose();
+      }
+    },
+  );
+
+  // spec: tools §11.1
   test("a resumed session is still in plan mode with the same plan file and the stored system prompt", async () => {
     const dir = await project();
     try {

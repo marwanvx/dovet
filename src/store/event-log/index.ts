@@ -2,7 +2,7 @@ export { forkAtTurn } from "./fork.ts";
 export { rewindExpired, SessionMeta } from "./meta.ts";
 export { type ProjectLocation, planDir, projectId, type SessionLocation, sessionPaths } from "./paths.ts";
 export { checkDataPermissions } from "./permissions.ts";
-export { PLAN_FILE_KEY, planFileAllowed, projectPlanDir } from "./plan.ts";
+export { canonicalPlanFile, PLAN_FILE_KEY, planFileAllowed, projectPlanDir } from "./plan.ts";
 export { type ReadResult, readSession } from "./reader.ts";
 export { secretValuesFromEnv } from "./redact.ts";
 export {

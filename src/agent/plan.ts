@@ -1,16 +1,18 @@
 // The session's plan file and the instructions that tell the model its mode changed (tools §11; QUESTIONS Q85).
 import { join } from "node:path";
 import type { AbsPath, EventEnvelope, InstructionReason, PermissionMode } from "../schema/index.ts";
-import { PLAN_FILE_KEY, planDir, projectPlanDir, type SessionLocation } from "../store/index.ts";
+import { canonicalPlanFile, PLAN_FILE_KEY, planDir, projectPlanDir, type SessionLocation } from "../store/index.ts";
 import { planFileFor, planSlug } from "../tools/index.ts";
 import { escapeReservedMarkers, modeText, type PromptState } from "./transcript/index.ts";
 
 /** A new plan file named after the words that started planning; in the session's own folder unless `plan.directory` is set and inside the project. */
 export function newPlanFile(loc: SessionLocation, planDirectory: string | undefined, promptText: string): AbsPath {
   const slug = planSlug(promptText, loc.session.slice(-4).toLowerCase());
-  if (planDirectory !== undefined && planDirectory !== "" && projectPlanDir(loc, planDirectory) !== undefined)
-    return planFileFor("", loc.projectRoot, planDirectory, slug);
-  return join(planDir(loc), `${slug}.md`) as AbsPath;
+  const file =
+    planDirectory !== undefined && planDirectory !== "" && projectPlanDir(loc, planDirectory) !== undefined
+      ? planFileFor("", loc.projectRoot, planDirectory, slug)
+      : (join(planDir(loc), `${slug}.md`) as AbsPath);
+  return canonicalPlanFile(loc, file) as AbsPath;
 }
 
 export type PlanInstruction = {
