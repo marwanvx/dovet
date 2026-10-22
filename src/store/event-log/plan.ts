@@ -1,7 +1,7 @@
 // A fork's own copy of the session's plan file (tools §11.1 "A fork gets its own copy"; QUESTIONS Q85).
 import { constants, copyFile, mkdir } from "node:fs/promises";
-import { basename, dirname, extname, join, sep } from "node:path";
-import { isErrno } from "../../platform/index.ts";
+import { basename, dirname, extname, join } from "node:path";
+import { isErrno, isWithin } from "../../platform/index.ts";
 import type { EventEnvelope } from "../../schema/index.ts";
 import { eventLine } from "./lines.ts";
 import { planDir, type SessionLocation } from "./paths.ts";
@@ -28,8 +28,7 @@ export async function forkPlanLine(
   epoch: number,
   deps: { ids: { ulid(): string }; clock: { now(): number } },
 ): Promise<string> {
-  const own = planDir(parent) + sep;
-  const target = parentPlan.startsWith(own)
+  const target = isWithin(parentPlan, planDir(parent), parent.os)
     ? join(planDir(child), basename(parentPlan))
     : join(
         dirname(parentPlan),

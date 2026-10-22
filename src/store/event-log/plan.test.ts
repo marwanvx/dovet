@@ -61,6 +61,7 @@ async function parent(loc: SessionLocation, planFile: string): Promise<void> {
 
 const planOf = async (loc: SessionLocation): Promise<string | null> => (await resumeSession(loc)).state.planFile;
 
+// spec: tools §11.1
 test("resume gives the latest plan file, and null once it was cleared", async () => {
   const loc = await location();
   await parent(loc, join(planDir(loc), "plan-aaaa.md"));
@@ -84,6 +85,7 @@ test("resume gives the latest plan file, and null once it was cleared", async ()
   expect(await planOf(loc)).toBeNull();
 });
 
+// spec: tools §11.1
 test("a fork gets its own copy of the plan, and editing either leaves the other alone", async () => {
   const loc = await location();
   const parentPlan = join(planDir(loc), "refactor-the-parser-aaaa.md");
@@ -106,6 +108,7 @@ test("a fork gets its own copy of the plan, and editing either leaves the other 
   expect((await resumeSession(forkLoc)).state.mode).toBe("plan");
 });
 
+// spec: tools §11.1
 test("a plan under the project (plan.directory) is copied beside the original under a name of the fork's own", async () => {
   const loc = await location();
   const parentPlan = join(loc.projectRoot, "plans", "fix-bug-aaaa.md");
@@ -121,6 +124,7 @@ test("a plan under the project (plan.directory) is copied beside the original un
   expect((await readdir(join(loc.projectRoot, "plans"))).sort()).toEqual(["fix-bug-aaaa-000b.md", "fix-bug-aaaa.md"]);
 });
 
+// spec: tools §11.1
 test("a plan that was never written is still re-pointed, and nothing is copied or fails", async () => {
   const loc = await location();
   const parentPlan = join(planDir(loc), "never-aaaa.md");
@@ -131,6 +135,7 @@ test("a plan that was never written is still re-pointed, and nothing is copied o
   await expect(readFile(copy ?? "", "utf8")).rejects.toThrow();
 });
 
+// spec: tools §11.1
 test("a session without a plan forks without any plan event", async () => {
   const loc = await location();
   await parent(loc, join(planDir(loc), "x.md"));
@@ -156,6 +161,7 @@ test("a session without a plan forks without any plan event", async () => {
   expect(types).not.toContain("settings.change");
 });
 
+// spec: tools §11.1
 test("a crash-repair fork carries the plan too", async () => {
   const loc = await location();
   const parentPlan = join(planDir(loc), "repair-aaaa.md");

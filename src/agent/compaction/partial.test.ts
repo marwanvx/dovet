@@ -2,8 +2,10 @@
 import { describe, expect, test } from "bun:test";
 import type { TranscriptItem } from "../../ai/index.ts";
 import type { EpochStartData, EventEnvelope, StoredResponse } from "../../schema/index.ts";
+import { CHARS_PER_TOKEN } from "../budgets/estimate.ts";
 import { buildRequest, headerOf } from "../transcript/index.ts";
 import { compact, undoCompaction } from "./compact.ts";
+import { transcriptChars } from "./estimate.ts";
 import type { SummaryReply } from "./summarize.ts";
 
 let n = 0;
@@ -164,10 +166,30 @@ describe("summarize up to here", () => {
     expect(JSON.stringify(items)).not.toContain("answer 4");
     expect(r.compaction).toMatchObject({ from: 0, to: 1, trigger: "partial", keepFromTurn: 5, kind: "summary" });
     expect(r.pending).toBeNull();
+    const full = buildRequest(nine(), {
+      header: headerOf(startData(0)),
+      params: { maxTokens: 4096 },
+      cache: { breakpoints: "auto", ttl: "auto" },
+    }).transcript;
+    const sent = (seen[0] ?? []).slice(0, -1);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(JSON.stringify(sent)).toBe(JSON.stringify(full.slice(0, sent.length)));
     const prefix = seen[0]?.map(textOf).join("\n") ?? "";
     expect(prefix).toContain("ask 4");
     expect(prefix).not.toContain("ask 5");
     expect(prefix).not.toContain("answer 5");
+  });
+
+  // spec: AC-CKPT-13
+  test("tokensAfter counts the system prompt, the tools and the transcript the next request will carry", async () => {
+    const { r, all } = await summarizeUpTo(nine(), 5);
+    const request = buildRequest(all, {
+      header: headerOf(r.epochStart),
+      params: { maxTokens: 4096 },
+      cache: { breakpoints: "auto", ttl: "auto" },
+    });
+    const chars = "SYSTEM".length + '[{"name":"Read"}]'.length + transcriptChars(request.transcript);
+    expect(r.compaction.tokensAfter).toBe(Math.ceil(chars / CHARS_PER_TOKEN));
   });
 
   // spec: AC-CKPT-13
@@ -192,6 +214,35 @@ describe("summarize up to here", () => {
     if ("aborted" in second) throw new Error("aborted");
     for (const t of [1, 2, 3, 4, 5, 6, 7, 8, 9]) expect(second.compaction.firstMessage).toContain(`ask ${t}`);
     expect(second.pending).toEqual({ text: "ask 10", turn: 10 });
+  });
+
+  // spec: AC-CKPT-13
+  test("undoing a later compaction brings back the kept turns of the partial one", async () => {
+    const first = await summarizeUpTo(nine(), 5);
+    const events = [...first.all, ev("user.message", { text: "ask 10" }, 1, 10)];
+    const second = await compact(input(events, () => Promise.resolve(ok("SECOND")), { trigger: "auto" }));
+    if ("aborted" in second) throw new Error("aborted");
+    const mid = [
+      ...events,
+      ev("epoch.start", second.epochStart, second.epochStart.epoch, null),
+      ev("compaction", second.compaction, second.epochStart.epoch, null),
+    ];
+    const undone = undoCompaction(mid);
+    if ("refused" in undone) throw new Error(undone.refused);
+    const all = [
+      ...mid,
+      ev("epoch.start", undone.epochStart, undone.epochStart.epoch, null),
+      ev("compaction", undone.compaction, undone.epochStart.epoch, null),
+    ];
+    const request = buildRequest(all, {
+      header: headerOf(undone.epochStart),
+      params: { maxTokens: 4096 },
+      cache: { breakpoints: "auto", ttl: "auto" },
+    });
+    const text = JSON.stringify(request.transcript);
+    for (const t of [5, 6, 7, 8, 9]) expect(text).toContain(`answer ${t}`);
+    expect(text).not.toContain("answer 4");
+    expect(text).toContain("SUMMARY OF EARLY TURNS");
   });
 
   // spec: AC-CKPT-13

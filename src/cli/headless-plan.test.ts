@@ -240,6 +240,28 @@ describe("plan mode in a headless run", () => {
     }
   });
 
+  // spec: tools §11.2
+  test("a Write called in the same round after EnterPlanMode is refused", async () => {
+    const dir = await project();
+    try {
+      const other = join(dir.root, "same-round.txt");
+      const model = scripted([
+        {
+          calls: [
+            { name: "EnterPlanMode", input: {} },
+            { name: "Write", input: { file_path: other, content: "x" } },
+          ],
+        },
+        { text: "done" },
+      ]);
+      const { log } = await run({ adapter: model.adapter }, dir);
+      expect(results(log).map((r) => r.status)).toEqual(["ok", expect.not.stringMatching(/^ok$/)]);
+      await expect(readFile(other, "utf8")).rejects.toThrow();
+    } finally {
+      await dir.dispose();
+    }
+  });
+
   // spec: permissions §2
   test("leaving plan mode on a resume is logged, told to the model with the approval, and keeps the plan file", async () => {
     const dir = await project();
