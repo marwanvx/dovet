@@ -116,8 +116,11 @@ import {
   openCheckpoints,
   openSession,
   PLAN_FILE_KEY,
+  planDir,
+  planFileAllowed,
   pollSettings,
   projectId,
+  projectPlanDir,
   REPAIR_HINT,
   readSession,
   repairEpochEvent,
@@ -607,10 +610,23 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     const parsers = await loadShellParsers().catch(() => undefined);
     const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
     const resumedFrom = resumed.lines > 0 && resumed.state.mode !== "" ? resumed.state.mode : undefined;
+    const planDirectory = snapshot.loaded.settings.plan?.directory;
+    const projectPlans =
+      planDirectory === undefined || planDirectory === "" ? undefined : projectPlanDir(loc, planDirectory);
+    if (projectPlans === undefined && planDirectory !== undefined && planDirectory !== "")
+      warnings.push(
+        `plan.directory "${planDirectory}" is not inside the project (or is in .git): plans go in the session's own folder`,
+      );
     let planFile: string | undefined = resumed.lines > 0 ? (resumed.state.planFile ?? undefined) : undefined;
+    if (planFile !== undefined && !planFileAllowed(loc, planFile, projectPlans ?? planDir(loc))) {
+      warnings.push(
+        `ignored the logged plan file ${planFile}: it is not in this session's plan folder or plan.directory`,
+      );
+      planFile = undefined;
+    }
     let planAnnounced = planFile !== undefined;
     const ensurePlanFile = (): string => {
-      planFile ??= newPlanFile(loc, snapshot.loaded.settings.plan?.directory, input.prompt);
+      planFile ??= newPlanFile(loc, planDirectory, input.prompt);
       return planFile;
     };
     const announcePlanFile = (epoch: number, turnNo: number | null): void => {
@@ -827,7 +843,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         const part = planReattach(planFile, text);
         push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
       }
-      if (resumedFrom !== undefined && resumedFrom !== mode) {
+      if (flagMode !== undefined && resumedFrom !== undefined && resumedFrom !== mode) {
         push("settings.change", epochNum, turn, { key: "mode", old: resumedFrom, new: mode, source: "flag" });
         for (const part of modeChangeInstructions(resumedFrom as PermissionMode, mode, planFile))
           push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });

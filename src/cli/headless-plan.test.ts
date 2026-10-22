@@ -1,13 +1,13 @@
 // Plan mode and the plan file in the headless run (tools §11.1, permissions §2; QUESTIONS Q85).
 import { describe, expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fakePlatform, sequentialIds, tempProject } from "../../test/helpers/index.ts";
 import type { RenderInput } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import { CompactionData, type EventEnvelope, SystemInjectedData, ToolResultData } from "../schema/index.ts";
 import type { LoadedSettings, LoadInput } from "../store/index.ts";
-import { forkAtTurn, PLAN_FILE_KEY, planDir, readSession } from "../store/index.ts";
+import { forkAtTurn, PLAN_FILE_KEY, planDir, readSession, sessionPaths } from "../store/index.ts";
 import { builtinTools, type ToolDefinition } from "../tools/index.ts";
 import { type HeadlessRunInput, runHeadless } from "./headless-run.ts";
 
@@ -388,6 +388,142 @@ describe("the plan file in a fork", () => {
         dir,
       );
       expect(c.log.filter((e) => e.type === "system.injected")).toHaveLength(1);
+    } finally {
+      await dir.dispose();
+    }
+  });
+});
+
+describe("the plan file stays where plan mode may write", () => {
+  const projectWith = (plan: object) =>
+    tempProject({ ".dovet/settings.json": JSON.stringify({ checkpoints: { enabled: false }, plan }) });
+  const writePlan = async (dir: { root: string }, plan: string) => {
+    const model = scripted([
+      { calls: [{ name: "Write", input: { file_path: plan, content: "PLAN TEXT" } }] },
+      { text: "w" },
+    ]);
+    return run({ adapter: model.adapter, continued: true, prompt: "w", ids: sequentialIds("D") }, dir);
+  };
+
+  // spec: tools §11.1
+  test("plan.directory with .. does not move the plan file out of the project", async () => {
+    const dir = await projectWith({ directory: "../escaped" });
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      const plan = planFileIn(a.log) ?? "";
+      expect(plan).toStartWith(planDir(a.loc));
+      expect(a.out.warnings.join("\n")).toContain("plan.directory");
+      const b = await writePlan(dir, plan);
+      expect(results(b.log).at(-1)?.status).toBe("ok");
+      await expect(readFile(join(dir.root, "..", "escaped"), "utf8")).rejects.toThrow();
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
+  test("plan.directory inside .git is refused, so a plan cannot be written into the repository's own files", async () => {
+    const dir = await projectWith({ directory: ".git/hooks" });
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      expect(planFileIn(a.log)).toStartWith(planDir(a.loc));
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
+  test.skipIf(process.platform === "win32")("plan.directory that is a link out of the project is refused", async () => {
+    const dir = await projectWith({ directory: "plans" });
+    try {
+      const outside = `${dir.root}-outside`;
+      await mkdir(outside, { recursive: true });
+      await symlink(outside, join(dir.root, "plans"));
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      expect(planFileIn(a.log)).toStartWith(planDir(a.loc));
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
+  test("plan.directory inside the project is still used", async () => {
+    const dir = await projectWith({ directory: "docs/plans" });
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      expect(planFileIn(a.log)).toStartWith(join(dir.root, "docs", "plans"));
+      expect(a.out.warnings.join("\n")).not.toContain("plan.directory");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
+  test("a plan file the log names outside the plan folders is ignored on resume", async () => {
+    const dir = await project();
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      const victim = join(dir.root, "home", ".bashrc");
+      await mkdir(dirname(victim), { recursive: true });
+      await writeFile(victim, "original");
+      const logPath = sessionPaths(a.loc).log;
+      const text = await readFile(logPath, "utf8");
+      await writeFile(logPath, text.split(JSON.stringify(planFileIn(a.log))).join(JSON.stringify(victim)));
+      const model = scripted([
+        { calls: [{ name: "Write", input: { file_path: victim, content: "PWNED" } }] },
+        { text: "w" },
+      ]);
+      const b = await run(
+        { adapter: model.adapter, continued: true, mode: "default", prompt: "w", ids: sequentialIds("D") },
+        dir,
+      );
+      expect(results(b.log).at(-1)?.status).not.toBe("ok");
+      expect(await readFile(victim, "utf8")).toBe("original");
+      expect(b.out.warnings.join("\n")).toContain("ignored the logged plan file");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: tools §11.1
+  test("a fork does not copy a file the parent's log names outside the plan folders", async () => {
+    const dir = await project();
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+      const secret = join(dir.root, "home", ".ssh", "id_ed25519");
+      await mkdir(dirname(secret), { recursive: true });
+      await writeFile(secret, "SECRETKEY");
+      const own = planDir(a.loc);
+      await mkdir(own, { recursive: true });
+      const forged = `${own}/${"../".repeat(20)}${secret.slice(1)}`;
+      const logPath = sessionPaths(a.loc).log;
+      const text = await readFile(logPath, "utf8");
+      await writeFile(logPath, text.split(JSON.stringify(planFileIn(a.log))).join(JSON.stringify(forged)));
+      const fork = sequentialIds("F").ulid();
+      await forkAtTurn(a.loc, fork, 1, { ids: sequentialIds("G"), clock: { now: () => NOW } });
+      const model = scripted([{ text: "done" }]);
+      const b = await run({ adapter: model.adapter, prompt: "carry on", resume: fork, ids: sequentialIds("H") }, dir);
+      expect(JSON.stringify(model.requests[0]?.transcript)).not.toContain("SECRETKEY");
+      expect(JSON.stringify(b.log)).not.toContain("SECRETKEY");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: event-log "Event types (v0.1)"
+  test("resuming a session logged in mode auto without a flag records no mode change", async () => {
+    const dir = await project();
+    try {
+      const a = await run({ adapter: scripted([{ text: "x" }]).adapter }, dir);
+      const logPath = sessionPaths(a.loc).log;
+      const text = await readFile(logPath, "utf8");
+      expect(text).toContain('"data":{"mode":"default"');
+      await writeFile(logPath, text.replace('"data":{"mode":"default"', '"data":{"mode":"auto"'));
+      const b = await run(
+        { adapter: scripted([{ text: "y" }]).adapter, continued: true, prompt: "w", ids: sequentialIds("D") },
+        dir,
+      );
+      expect(modeChanges(b.log)).toEqual([]);
     } finally {
       await dir.dispose();
     }
