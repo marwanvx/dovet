@@ -302,14 +302,227 @@ describe("guarantee 4: critical-path removals can never be approved by rules", (
   );
 });
 
-// Found by the M2 exit check and logged in FOLLOWUPS (F40-F42); `test.failing` passes while the bug is there and
-// fails the day it is fixed, which is the cue to turn it into a plain test.
-describe("known gaps (FOLLOWUPS F40-F42)", () => {
+describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)", () => {
   // spec: permissions §0 guarantee 4
-  test.failing("F40: a wrapper written as a path still gets the critical-path check", () => {
-    notAllowed(shell("/usr/bin/env rm -rf /", state("default", { allow: ["Bash"] })));
+  test.each([
+    "/usr/bin/env rm -rf /",
+    "/usr/bin/sudo rm -rf /",
+    "/usr/bin/sudo -iu me rm -rf /",
+    "/bin/sh -c 'rm -rf /'",
+    "/usr/bin/env -S 'rm -rf /'",
+    "/usr/bin/nice -n5 /bin/rm -rf ~",
+    "find . -exec rm -rf / \\;",
+    "sudo sh -c 'rm -rf ~'",
+    "find . -exec sh -c 'rm -rf /' \\;",
+  ])("%s still gets the critical-path check under a tool-wide allow", (command) => {
+    for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
   });
 
+  // spec: permissions §0 guarantee 2
+  test.each(["env cat .env", "/usr/bin/env cat .env", "/usr/bin/cat .env", "timeout 5 cat ~/.ssh/id_rsa"])(
+    "%s still reads a sensitive file under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: AC-PERM-03
+  test.each([
+    "/bin/rm x",
+    "/usr/bin/env /bin/rm x",
+    "sudo -iu me rm x",
+    "sudo -uroot rm x",
+    "find . -exec rm {} +",
+    "sudo -t type rm x",
+    "env - rm x",
+    "flock /tmp/l -c 'rm x'",
+  ])("%s is caught by a deny rule for rm", (command) => {
+    const rules = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    const d = shell(command, { mode: "default", rules, env: env() });
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toBe("denied by Bash(rm *)");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "/usr/bin/env git push origin main",
+    "sudo -iu me git push origin main",
+    "env -S 'git push origin main'",
+    "env --split-string='git push' origin main",
+    "find . -maxdepth 0 -exec git push origin main \\;",
+    "find . -execdir npm publish +",
+    "C:/Windows/System32/cmd.exe /c git push",
+    "sudo -r role git push",
+    "doas -a style git push",
+    "env bash -lc 'git push'",
+    "watch -n1 'git push origin main'",
+    "flock /tmp/l --command 'git push'",
+    "env -S 'git\\_push'",
+    "bash -c -e 'git push'",
+    "sh -c -- 'git push'",
+    "cmd /d /q /c git push",
+    "sudo -a type git push",
+    "sudo -c class git push",
+    "sudo --role r git push",
+    "sudo --type t git push",
+    "sudo --login-class c git push",
+    "sudo --close-from 3 git push",
+    "sudo --command-timeout 5 git push",
+    "sudo --other-user u git push",
+    "bash -euo pipefail -c 'git push'",
+    "bash --rcfile x -c 'git push'",
+    "bash -co pipefail 'git push'",
+    "find . -exec env -u + git push {} ;",
+    "env --s 'git push'",
+    "env --sp 'git push'",
+    "timeout --sig KILL 5 git push",
+    "nice --adj 3 git push",
+    "env -a x git push",
+    "env --argv0 x git push",
+    "env -P /bin git push",
+    "watch -q 2 git push",
+    "sudo --chroot /x git push",
+    "xargs --replace git push",
+    "xargs --eof git push",
+    "flock /tmp/l --com 'git push'",
+    "flock /tmp/l --comm='git push'",
+  ])("%s is a remote action while tainted, even in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each(["sudo eval 'rm -rf /'", "/usr/bin/env source ./x", '/usr/bin/xargs sh -c "$X"'])(
+    "%s behind a wrapper fails closed under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test('a shell script after other flags (`bash -c -e "$CMD"`) is still a computed command in the sandbox', () => {
+    notAllowed(shell('bash -c -e "$CMD"', state("default", { sandboxAutoAllow: true }), true));
+  });
+
+  // spec: AC-PERM-03
+  test("a program written as a path is not stripped like the wrapper of the same name for an allow rule", () => {
+    for (const command of ["./timeout 5 git status", "/tmp/x/env git status"])
+      notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
+    expect(shell("timeout 5 git status", state("default", { allow: ["Bash(git status)"] })).behavior).toBe("allow");
+  });
+
+  // An option Dovet has no table entry for, or reads with the wrong value kind, must not move the inner command.
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "sudo --made-up x git push",
+    "sudo -h host git push",
+    "env --made-up x git push",
+    "doas -X x git push",
+    "xargs --max-lines 1 git push",
+    "ionice -c2 -Z x git push",
+    "setsid --made-up x git push",
+    "nice -n 5 --made-up x git push",
+    "timeout --made-up x 5 git push",
+    "flock --made-up x /tmp/l git push",
+    "watch --made-up x git push",
+    "stdbuf --made-up x git push",
+    "time --made-up x git push",
+    "command -p git push",
+    "flock -- /tmp/l git push",
+    "watch \"'git'\" push origin main",
+    "env -S \"'git' push origin main (\"",
+    "env -S 'git\u{0B}push'",
+    "env -S \"A='\\\\'' git push origin main #'\"",
+  ])("%s is a remote action while tainted, whatever the unknown option takes", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each([
+    "timeout --made-up x 5 rm -rf /",
+    "sudo -Q x rm -rf ~",
+    "env --made-up x cat .env",
+    "watch \"'rm'\" -rf /",
+    "watch \"'cat'\" .env",
+    "env -S \"A='\\\\'' rm -rf / #'\"",
+  ])("%s keeps the built-in checks under a tool-wide allow", (command) => {
+    for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+  });
+
+  // spec: AC-PERM-03
+  test.each(["sudo --made-up x rm y", "env -Q x rm y", "doas -X x rm y", "watch '\"rm\"' y", "env -S \"'rm' x {\""])(
+    "%s is caught by a deny rule for rm",
+    (command) => {
+      const rules = loadRules(
+        [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
+        { os, home: "/home/u", canonicalize: (p) => p },
+      ).rules;
+      expect(shell(command, { mode: "default", rules, env: env() }).behavior).toBe("deny");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test("a wrapper with more readings than the checker's budget asks, even in bypassPermissions", () => {
+    const command = `sudo ${"-u x ".repeat(1800)}git push`;
+    const started = performance.now();
+    for (const st of [state("bypassPermissions"), state("bypassPermissions", { tainted: true })]) {
+      const d = shell(command, st);
+      expect(d.behavior).toBe("ask");
+      expect(d.findings.map((f) => f.kind)).toContain("unchecked");
+    }
+    const analysis = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: HOME(),
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(analysis.understood).toBe(false);
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["env -S $'git\\vpush'", "env -S 'git push ${X}'"])(
+    "%s, an env -S string Dovet can't split exactly, asks even in bypassPermissions",
+    (command) => {
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("ask");
+    },
+  );
+
+  // spec: AC-PERM-03
+  test("an allow rule sees past a safe wrapper only when every option is known", () => {
+    for (const command of [
+      "timeout --made-up 5 git status",
+      "timeout -Z 5 git status",
+      "nice --made-up git status",
+      "stdbuf -Z git status",
+      "time --made-up git status",
+      "timeout --help 5 git status",
+      "timeout --foreground=x 5 git status",
+    ])
+      notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
+    for (const command of [
+      "timeout -k5 10 git status",
+      "timeout --sig=KILL 5 git status",
+      "timeout -fv -s KILL 5 git status",
+      "nice -n 5 git status",
+      "nice -5 git status",
+      "stdbuf -oL git status",
+      "time -p git status",
+    ])
+      expect(shell(command, state("default", { allow: ["Bash(git status)"] })).behavior).toBe("allow");
+  });
+});
+
+// Found by the M2 exit check and logged in FOLLOWUPS (F41-F42); `test.failing` passes while the bug is there and
+// fails the day it is fixed, which is the cue to turn it into a plain test.
+describe("known gaps (FOLLOWUPS F41-F42)", () => {
   // spec: permissions §0 guarantee 3
   test.failing("F41: a git alias for push is still a remote action while tainted", () => {
     notAllowed(shell("git -c alias.p=push p origin main", state("bypassPermissions", { tainted: true })));

@@ -2,12 +2,12 @@ import { posix, win32 } from "node:path";
 import { isWithin } from "../../platform/index.ts";
 import { type Decision, decide, type Request, type State } from "../decide/index.ts";
 import {
+  allowRuleArgv,
   escapeLiteral,
   evaluateRules,
   loadRules,
   needsExactRule,
   type Subcommand,
-  strippedArgvs,
   toPosix,
 } from "../rules/index.ts";
 
@@ -134,7 +134,7 @@ const program = (argv0: string | undefined): string =>
     .toLowerCase();
 
 function shellRule(tool: string, called: Subcommand): string | undefined {
-  const argv = strippedArgvs(called.argv).at(-1) ?? called.argv;
+  const argv = allowRuleArgv(called.argv);
   const [first = "", second] = argv;
   if (first === "" || NON_ASCII.test(first) || argv.some((w) => w.includes("*"))) return undefined;
   const name = program(first);

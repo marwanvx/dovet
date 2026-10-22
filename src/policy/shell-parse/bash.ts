@@ -1,6 +1,14 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
 import type { Node } from "web-tree-sitter";
-import { isSafeEnv, type Redirect, type Subcommand, XARGS_VALUED } from "../rules/index.ts";
+import {
+  commandName,
+  isSafeEnv,
+  type Redirect,
+  type Subcommand,
+  shellScriptAt,
+  unwrapCommand,
+  xargsCommandStarts,
+} from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import { classify, type Word } from "./read-only.ts";
 
@@ -32,22 +40,6 @@ function hasUnescaped(raw: string, chars: string): boolean {
 const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(.)/gs, "$1");
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
-
-function xargsCommandWord(args: Word[]): Word | undefined {
-  let i = 0;
-  while (i < args.length) {
-    const text = args[i]?.text ?? "";
-    if (text === "--") return args[i + 1];
-    if (text.startsWith("-") && text.length > 1) {
-      if (text.includes("=")) i += 1;
-      else if (XARGS_VALUED.has(text)) i += 2;
-      else i += 1;
-    } else {
-      return args[i];
-    }
-  }
-  return undefined;
-}
 
 export function walkBash(root: Node, walk: Walk, st: State): void {
   const { ctx } = walk;
@@ -227,20 +219,14 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     }
     sub.argv.push(name.text, ...args.map((a) => a.text));
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
-    if (name.text === "xargs") {
-      const cmd = xargsCommandWord(args);
-      if (
-        cmd === undefined ||
-        !cmd.literal ||
-        cmd.values !== undefined ||
-        args.some((a) => !a.literal || a.values !== undefined)
-      ) {
+    if (commandName(name.text) === "xargs") {
+      const { starts, none } = xargsCommandStarts([name.text, ...args.map((a) => a.text)]);
+      if (none || starts.length === 0 || args.some((a) => !a.literal || a.values !== undefined)) {
         ctx.state.literalNames = false;
         ctx.fail("xargs runs a computed command");
       }
     }
-    if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
-    if (SHELLS.has(name.text)) shellScript(args, st);
+    wrapped(name, args, st);
     if (name.text === "cd" || name.text === "pushd" || name.text === "popd") {
       const stayed = changeDirectory(name.text, args, st, cond);
       sub.readOnly = stayed && name.text === "cd" && redirectsOk && !prefixed;
@@ -268,10 +254,32 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     sub.readOnly = ctx.checkPaths(result.paths, st.cwd, "read") && redirectsOk && !awayGit;
   }
 
+  /** What a wrapper runs (`sudo sh -c …`, `/usr/bin/env cat .env`, `find -exec`) gets the same checks as a bare command. */
+  function wrapped(name: Word, args: Word[], st: State): void {
+    const words = new Map<string, Word>();
+    for (const w of [name, ...args]) {
+      const seen = words.get(w.text);
+      words.set(w.text, seen === undefined || (seen.literal && !w.literal) || w.glob ? w : seen);
+    }
+    const { argvs, complete } = unwrapCommand([name.text, ...args.map((a) => a.text)]);
+    if (!complete) ctx.fail("a wrapper's options can't all be checked");
+    for (const [i, v] of argvs.entries()) {
+      const head = commandName(v[0]);
+      const rest = i === 0 ? args : v.slice(1).map((text) => words.get(text) ?? { text, literal: true, glob: false });
+      if (NEVER_UNDERSTOOD.has(head)) ctx.fail(head);
+      if (head === "env" && rest.some((a) => /^-[^-]*[CS]/.test(a.text) || /^--(c|s|ch|sp)/.test(a.text)))
+        ctx.fail("env -C");
+      if (SHELLS.has(head)) shellScript(rest, st);
+      if (i === 0 && head === name.text) continue;
+      const read = classify(head, rest);
+      if (read.ok) ctx.checkPaths(read.paths, st.cwd, "read");
+    }
+  }
+
   function shellScript(args: Word[], st: State): void {
     ctx.fail("sh -c runs a nested script");
-    const at = args.findIndex((a) => a.text === "-c");
-    const script = at < 0 ? undefined : args[at + 1];
+    const at = shellScriptAt(args.map((a) => a.text));
+    const script = at < 0 ? undefined : args[at];
     if (script === undefined) return;
     if (!script.literal) {
       ctx.state.literalNames = false;

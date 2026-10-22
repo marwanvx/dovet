@@ -1,7 +1,7 @@
 // Critical-path removals (permissions §4.4): a circuit breaker against model error that no allow rule can lift.
 import { posix, win32 } from "node:path";
 import { isWithin, pathKey } from "../../platform/index.ts";
-import type { Subcommand } from "../rules/index.ts";
+import { commandName, type Subcommand } from "../rules/index.ts";
 import { type Env, resolveForms } from "./paths.ts";
 
 const REMOVERS = new Set(["rm", "rmdir", "remove-item", "rd", "del", "erase"]);
@@ -19,9 +19,13 @@ const targets = (sub: Subcommand): string[] => {
 
 /** `cmd /c rd /s C:\x` as the command it runs (the same sub when it is not a `cmd` wrapper). */
 export function unwrapCmd(sub: Subcommand): Subcommand {
-  const [name = "", flag = "", ...rest] = sub.argv;
-  if (!/^cmd(\.exe)?$/i.test(name) || !/^\/[ck]$/i.test(flag)) return sub;
-  return { ...sub, argv: rest.flatMap((a) => a.split(/\s+/).filter(Boolean)) };
+  if (commandName(sub.argv[0]) !== "cmd") return sub;
+  // `cmd /d /q /c …`: other switches may come before /c or /k.
+  let i = 1;
+  while (i < sub.argv.length && /^\/[a-z](:\S*)?$/i.test(sub.argv[i] ?? "") && !/^\/[ck]$/i.test(sub.argv[i] ?? ""))
+    i++;
+  if (!/^\/[ck]$/i.test(sub.argv[i] ?? "")) return sub;
+  return { ...sub, argv: sub.argv.slice(i + 1).flatMap((a) => a.split(/\s+/).filter(Boolean)) };
 }
 
 function isRootOrTop(env: Env, p: string): boolean {

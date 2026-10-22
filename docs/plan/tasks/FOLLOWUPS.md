@@ -14,9 +14,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
-- **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
-- `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
+### F50 (F40 review): wrappers outside §3.2's list hide the command
+- **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
+- `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
+
+### F51 (F40 review): an unparseable command is allowed in tainted bypass
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
+- Over 10,000 characters or the 200 ms budget (checked too rarely), a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
@@ -90,9 +94,9 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (design choice in event-log "Writer rules" 3) · `src/store/event-log/writer.ts` (`FLUSH_NOW`)
 - The probe (`test/adversarial/kill9.test.ts`) kills a session that writes a file per request: at 1.8 s the files are on disk and the log holds only `user.message`, because `tool.call`/`file.change` wait for the next 2 s flush. After resume nothing says those files changed (and `/rewind` can't undo them). "The agent can't hide what it did": flush `tool.call` of a mutating tool before it runs (no fsync needed).
 
-### F32 (M2-16 adversarial fixtures): the critical-path check doesn't see `xargs` stdin or `find -delete` under a broad allow rule
-- **Severity:** minor · `src/policy/decide/critical.ts`, `src/policy/decide/decide.ts` (`TOOL_WIDE`)
-- With only `Bash(xargs *)` allowed, `xargs rm -rf <<< /` and `echo / | xargs rm -rf` are allowed; with a tool-wide `Bash` allow rule, `find ~ -delete` and `find / -delete` are allowed too (a prefix `Bash(find *)` correctly asks, AC-PERM-04). Permissions §4.4 says no allow rule approves a removal of a critical path and lists "a recursive rm whose target is only a command substitution" as critical; a target that arrives on stdin is the same case. Treat `xargs` with `rm`/`rmdir` and `find -delete` on a critical start path as unresolvable targets.
+### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
+- **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
+- Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
 
 ### F33 (M2-16 adversarial fixtures): two credential and startup files are missing from the §4.3/§4.7 lists
 - **Severity:** minor · `src/policy/decide/paths.ts` (protected files, home credential list), permissions §4.3, §7.2
@@ -159,6 +163,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
+- **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
+- `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
+- **Fixed (PR 186):** the deny side reads each wrapper option both as taking the next word and as not, so a missing or wrong option table entry can't hide the command; allow rules keep an exact GNU grammar of the safe wrappers and see nothing inside on an unknown option; a wrapper with more readings than a 2M-word budget, or an `env -S` string that can't be split exactly, asks in every mode (QUESTIONS Q89).
 
 ### F24 (F16 CI): two more Windows tests timed out on a slow runner
 - **Severity:** major (second sighting, M2-15 CI run 39714803004: `headless-budget.test.ts` ×3 at 5,001 ms and `snapshots.test.ts` "a blob that is gone…" / "plan lists the paths…" at 5,004–5,218 ms with `git fast-import` failing and EBUSY on cleanup; all passed on a rerun of the same commit) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)

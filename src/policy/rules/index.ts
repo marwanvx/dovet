@@ -4,4 +4,15 @@ export type { Behavior, Rule, RuleContext, RuleIssue, RuleSource, RuleText } fro
 export { ruleTexts } from "./parse.ts";
 export { escapeLiteral, toPosix } from "./paths.ts";
 export type { Redirect, Subcommand } from "./shell.ts";
-export { canonicalCmdlet, isSafeEnv, needsExactRule, splitCommand, strippedArgvs, XARGS_VALUED } from "./shell.ts";
+export {
+  allowRuleArgv,
+  canonicalCmdlet,
+  commandName,
+  isSafeEnv,
+  needsExactRule,
+  shellScriptAt,
+  splitCommand,
+  strippedArgvs,
+  unwrapCommand,
+  xargsCommandStarts,
+} from "./shell.ts";
