@@ -479,8 +479,8 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
     expect(strippedArgvs(["env", "-S", "X=1 git push", "origin"]).map((v) => v.join(" "))).toContain("git push origin");
     expect(strippedArgvs(["env", "-iS", "git push"]).map((v) => v.join(" "))).toContain("git push");
     expect(strippedArgvs(["env", "-uS", "git", "push"]).map((v) => v.join(" "))).toContain("git push");
-    expect(inner("find . -exec true ; -execdir git push + -ok rm x")).toEqual(
-      expect.arrayContaining(["true", "git push", "rm x"]),
+    expect(inner("find . -exec true ; -execdir git push {} + -ok rm x")).toEqual(
+      expect.arrayContaining(["true", "git push {}", "rm x"]),
     );
   });
 

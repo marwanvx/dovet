@@ -14,9 +14,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
-- **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
-- `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
+### F50 (F40 review): wrappers outside §3.2's list still hide the inner command
+- **Severity:** major · `src/policy/rules/shell.ts` `WRAPPERS`, `src/policy/decide/decide.ts` `PEELED`
+- With a tool-wide `Bash` allow or tainted `bypassPermissions`: `chroot / rm -rf /`, `taskset 1 …`, `nsenter -t 1 …`, `unshare -r …`, `runuser -u me -- …`, `strace -f …`, `su -c '…'`, `script -c '…'`, `pkexec …`, `fakeroot …`, `systemd-run …`, `chrt -f 1 …`, `numactl -C 0 …`, `parallel git push ::: x`, `exec -a x git push`, and `busybox rm x` / `busybox cat .env` for deny rules and reads (busybox is peeled only for the critical check). Windows: `cmd /crd …` (no space after `/c`). Adding them changes §3.2's list.
+
+### F51 (F40 review): an unparseable command is allowed in tainted `bypassPermissions`
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts` (200 ms budget), `src/policy/decide/decide.ts`
+- `env ` + `-S ` ×5000 + `git push` takes ~2 s to analyze (the budget is checked too rarely), comes out unparseable, and is allowed while tainted, so the remote-action check (§4.8) never runs. Also minor: `env -S 'git ${X}'` expands `${X}` from the environment; the parser keeps it literal.
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`

@@ -286,7 +286,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       const head = commandName(v[0]);
       const rest = i === 0 ? args : v.slice(1).map((text) => words.get(text) ?? { text, literal: true, glob: false });
       if (NEVER_UNDERSTOOD.has(head)) ctx.fail(head);
-      if (head === "env" && rest.some((a) => /^(-[^-]*[CS]|--chdir|--split-string)/.test(a.text))) ctx.fail("env -C");
+      if (head === "env" && rest.some((a) => /^-[^-]*[CS]/.test(a.text) || /^--(c|s|ch|sp)/.test(a.text)))
+        ctx.fail("env -C");
       if (SHELLS.has(head)) shellScript(rest, st);
       if (i === 0 && head === name.text) continue;
       const read = classify(head, rest);

@@ -98,11 +98,8 @@ export const XARGS_VALUED = new Set([
   "-s",
   "-a",
   "--max-args",
-  "--replace",
   "--max-procs",
-  "--max-lines",
   "--delimiter",
-  "--eof",
   "--max-chars",
   "--arg-file",
   "--process-slot-var",
@@ -119,7 +116,7 @@ const WRAPPERS = new Map<string, Wrapper>([
   ["builtin", { safe: true, valued: [], positional: 0, noFlags: true }],
   ["noglob", { safe: true, valued: [], positional: 0, noFlags: true }],
   ["xargs", { safe: true, valued: [...XARGS_VALUED], positional: 0 }],
-  ["env", { safe: false, valued: ["-u", "-C", "-S", "--unset", "--chdir"], positional: 0 }],
+  ["env", { safe: false, valued: ["-u", "-C", "-S", "-a", "-P", "--unset", "--chdir", "--argv0"], positional: 0 }],
   [
     "sudo",
     {
@@ -149,12 +146,13 @@ const WRAPPERS = new Map<string, Wrapper>([
         "--close-from",
         "--command-timeout",
         "--other-user",
+        "--chroot",
       ],
       positional: 0,
     },
   ],
   ["doas", { safe: false, valued: ["-a", "-u", "-C"], positional: 0 }],
-  ["watch", { safe: false, valued: ["-n", "--interval"], positional: 0 }],
+  ["watch", { safe: false, valued: ["-n", "-q", "--interval", "--equexit"], positional: 0 }],
   ["ionice", { safe: false, valued: ["-c", "-n", "-p", "-P", "-u", "--class", "--classdata"], positional: 0 }],
   ["setsid", { safe: false, valued: [], positional: 0 }],
   ["flock", { safe: false, valued: ["-w", "-E", "--timeout", "--conflict-exit-code"], positional: 1 }],
@@ -184,23 +182,34 @@ export const commandName = (word: string | undefined): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
-/** Where a shell's `-c` script is among its arguments (`-lc 'x'`, `-c -e 'x'`, `-c -- 'x'`), or -1. */
+/** Where a shell's `-c` script is among its arguments (`-lc 'x'`, `-euo pipefail -c 'x'`, `-c -- 'x'`), or -1. */
 export function shellScriptAt(args: readonly string[]): number {
+  // A word this doesn't understand falls back to the word after the first `-c` cluster.
+  const first = args.findIndex((a) => /^-[A-Za-z]*c[A-Za-z]*$/.test(a));
+  const fallback = first < 0 || first + 1 >= args.length ? -1 : first + 1;
   let c = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
-    if (a === "--" || a === "-") return c && i + 1 < args.length ? i + 1 : -1;
-    if (/^[-+][oO]$/.test(a)) i++;
-    else if (/^[-+][A-Za-z]+$/.test(a)) c ||= a.startsWith("-") && a.includes("c");
-    else if (!a.startsWith("--")) return c ? i : -1;
+    if (a === "--" || a === "-") return c && i + 1 < args.length ? i + 1 : fallback;
+    if (a === "--rcfile" || a === "--init-file") i++;
+    else if (/^[-+][A-Za-z]+$/.test(a)) {
+      c ||= a.startsWith("-") && a.includes("c");
+      i += (a.slice(1).match(/[oO]/g) ?? []).length;
+    } else if (!a.startsWith("--")) return c ? i : fallback;
   }
-  return -1;
+  return fallback;
 }
+
+/** `--sig` for `--signal`: GNU programs take any unambiguous prefix of a long option. */
+const longPrefix = (tok: string, full: string): boolean => {
+  const name = tok.split("=")[0] ?? "";
+  return name.length >= 3 && full.startsWith(name);
+};
 
 /** `-u`, `-iu` and `-uroot` → whether the flag's value is the next word. */
 function takesNext(tok: string, valued: string[]): boolean {
   if (valued.includes(tok)) return true;
-  if (tok.startsWith("--")) return false;
+  if (tok.startsWith("--")) return !tok.includes("=") && valued.some((v) => v.startsWith("--") && longPrefix(tok, v));
   for (let k = 1; k < tok.length; k++) if (valued.includes(`-${tok.charAt(k)}`)) return k === tok.length - 1;
   return false;
 }
@@ -210,9 +219,10 @@ function splitString(argv: string[], j: number): string[] | undefined {
   const tok = argv[j] ?? "";
   let value: string | undefined;
   let next = j + 1;
-  if (tok.startsWith("--split-string")) {
-    if (tok.startsWith("--split-string=")) value = tok.slice(15);
-    else if (tok === "--split-string") [value, next] = [argv[j + 1], j + 2];
+  if (tok.startsWith("--") && longPrefix(tok, "--split-string")) {
+    const eq = tok.indexOf("=");
+    if (eq >= 0) value = tok.slice(eq + 1);
+    else [value, next] = [argv[j + 1], j + 2];
   } else if (!tok.startsWith("--")) {
     const at = [...tok.slice(1)].findIndex((c) => c === "S" || c === "u" || c === "C") + 1;
     if (tok.charAt(at) === "S")
@@ -248,7 +258,8 @@ function findCommands(argv: string[]): string[][] {
   for (let i = 1; i < argv.length; i++) {
     if (!FIND_EXEC.test(argv[i] ?? "")) continue;
     let end = i + 1;
-    while (end < argv.length && argv[end] !== ";" && argv[end] !== "+") end++;
+    // `+` ends the command only right after `{}`.
+    while (end < argv.length && argv[end] !== ";" && !(argv[end] === "+" && argv[end - 1] === "{}")) end++;
     if (end > i + 1) out.push(argv.slice(i + 1, end));
     i = end;
   }
