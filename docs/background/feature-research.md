@@ -1342,6 +1342,12 @@ How the CI timings were found: the first benchmark printed only totals, hit the 
 - The runners' user is `runneradmin`, an administrator: a standard user is untested.
 
 
+## SPIKE-42 escape suite (M2-16, 2026-10-22)
+
+- `test/platform/mxc/escape-suite.ts` through the `windows-escape` workflow, MXC 1.0.0 under Bun 1.4.3, Windows 11 arm64 (`base-container`) and Server 2025 x64 (`appcontainer-dacl`), as the administrator `runneradmin`: all 14 escape cases held (see QUESTIONS Q87). `deniedPaths` is enforced on both tiers (direct read and through a link in the root). A child PowerShell exits -1073741502 inside the container (it can't initialize), so only `cmd` children were tested.
+- MXC denies reads of files outside the allowed roots (a plain `type` of an unlisted file: "Access is denied"), unlike the §7.2 default of reading most of the machine; Dovet would need `readonlyPaths` for the system directories before tools like Git run through it.
+- Not tested: a standard (non-administrator) user, the srt-windows backend, MXC through Dovet's `SandboxService`.
+
 ## SPIKE-10 case-insensitive volumes (M1-02, 2026-10-13)
 
 - Decision: no probe. `pathKey()` in `src/platform/paths.ts` lower-cases on macOS and Windows (and turns `/` into `\` on Windows); Linux compares exactly. `projectId` hashing (event-log, M1-05) will use the same key.

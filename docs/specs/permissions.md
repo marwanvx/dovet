@@ -365,6 +365,8 @@ Rules can be added/removed live with `/permissions`, **also while a turn runs**;
 
 **Decided while building (QUESTIONS Q68):** while MXC execution is unverified (`mxcExecutable` false), an installed srt-windows is selected, so commands run sandboxed at level 2; once MXC execution is verified it is preferred (ADR-6). The state follows from the backend (`windowsStateFor`). Elsewhere, `dovet sandbox status` probes the library's dependencies and reports `off` when one is missing. An unexpected `getPlatformSupport()` answer counts as unsupported (fail closed).
 
+**Decided while building (QUESTIONS Q87):** the escape suite (`test/platform/mxc/escape-suite.ts`, workflow `windows-escape`) ran against MXC on Windows 11 arm64 and Server 2025 and every escape case held (outside writes by path, `..`, `\\?\`, admin share and planted junction; denied-file reads; egress by name, address and host loopback; host environment secrets). The label stays **experimental**: it moves to `on` only after the same suite runs through `SandboxService` on the backend Dovet executes (MXC once wired, and srt-windows) and on a standard-user account (task M2-17).
+
 ### 7.7 What runs outside the sandbox
 Dovet's own file tools (permission rules apply instead), WebFetch (rules apply; WebFetch requests are routed through the sandbox proxy when the sandbox is on, so local-address refusal and domain logging apply uniformly [SPIKE-18]), hooks and MCP servers (v0.2), and the user's own `!` shell-mode commands (v0.1; they are the user typing, so they run unsandboxed and unprompted).
 

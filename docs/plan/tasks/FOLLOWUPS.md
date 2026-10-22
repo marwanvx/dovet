@@ -14,6 +14,90 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
+- **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
+- `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
+
+### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
+- **Severity:** major · `src/policy/decide/remote.ts:22-30`
+- `test.failing`: allowed in tainted bypass. Same gap (minor): `git send-pack`, `gh release upload`, `wget --method=POST`, `npx npm publish`.
+
+### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
+- **Severity:** major · `src/policy/decide/critical.ts:61-72`
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks).
+
+### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
+- **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
+- `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
+
+### F44 (M2-16 security review): an invisible character inside a secret stops its redaction
+- **Severity:** minor · `src/agent/loop.ts:370-372` (`stripHidden` runs before `redactText`), `src/policy/redaction/redact.ts:29` (folds only U+200B/C/D, U+FEFF)
+- `abcd1234\u2060efgh5678` for `MY_API_KEY=abcd1234efgh5678` reaches the model as two clear halves around the removal marker; same for U+00AD, U+034F, U+180E and tag characters. Redact before stripping, and share one character set with F14.
+
+### F45 (M2-16 security review): the "sandboxed command reached an untrusted host" taint misreads hosts
+- **Severity:** minor · `src/policy/sandbox/network.ts:149`
+- `curl https://registry.npmjs.org@evil.example/x` (user-info read as host), `curl HTTPS://evil.example/x` (case-sensitive scheme), `curl evil.example/x` and `wget -qO- evil.example` (no scheme) return no taint source. In bypass the proxy allows every host, so taint is the only brake.
+
+### F46 (M2-16 security review): the native-PDF branch of Read skips the output guard
+- **Severity:** minor · `src/tools/read-pdf.ts:78-98`, `src/agent/loop.ts:369`
+- A PDF whose text holds a token, read with `media.pdfs: true`, reaches the stored `document` part unredacted and without a taint effect; the text branch is redacted.
+
+### F47 (M2-16 security review): some read-only shell commands read sensitive files without the §4.7 ask
+- **Severity:** minor · `src/policy/shell-parse/read-only.ts:389` (`git show`), `:47`, `:551` (recursive `grep`/`rg`)
+- `git show HEAD:.env`, `git log -p`, `grep -r KEY .` and `rg --no-ignore --hidden KEY` are allowed in default mode; `cat .env` asks. `<rev>:<path>` operands and recursion into folders holding sensitive files aren't checked.
+
+### F48 (M2-16 security review): shell writes to protected paths by `tar`, `unzip`, `rsync`, `patch` and `perl -pi` aren't recognised
+- **Severity:** minor · `src/policy/decide/targets.ts:6-40`
+- With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
+
+### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
+- **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
+- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n` (no repair marker).
+
+### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
+- Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
+
+### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
+- Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
+
+### F39 (M2-16 spec review): the compaction facts' command output tail can start with a lone surrogate
+- **Severity:** minor (pre-existing) · `src/agent/compaction/facts.ts:68`
+- `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
+
+### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
+- **Severity:** minor (same class as the fixed F18, F24) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
+- Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
+
+### F34 (M2-16 spec review): compaction requests never reach the daily ledger
+- **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
+- It calls `meter.record` but no `ledger.reserve/commit`, so the hard daily cap (AC-RCPT-10) undercounts. Reserve and commit like the main request (:1374-1639); also run `meter.check` before `compact()` (F35, minor, :1165). Test: a summary that crosses the day limit is refused.
+
+### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
+- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
+- A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
+
+### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
+- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
+- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
+
+### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
+- **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
+- 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
+
+### F31 (M2-16 kill -9 probe): a file change made in the last two seconds before `kill -9` has no event in the log
+- **Severity:** minor (design choice in event-log "Writer rules" 3) · `src/store/event-log/writer.ts` (`FLUSH_NOW`)
+- The probe (`test/adversarial/kill9.test.ts`) kills a session that writes a file per request: at 1.8 s the files are on disk and the log holds only `user.message`, because `tool.call`/`file.change` wait for the next 2 s flush. After resume nothing says those files changed (and `/rewind` can't undo them). "The agent can't hide what it did": flush `tool.call` of a mutating tool before it runs (no fsync needed).
+
+### F32 (M2-16 adversarial fixtures): the critical-path check doesn't see `xargs` stdin or `find -delete` under a broad allow rule
+- **Severity:** minor · `src/policy/decide/critical.ts`, `src/policy/decide/decide.ts` (`TOOL_WIDE`)
+- With only `Bash(xargs *)` allowed, `xargs rm -rf <<< /` and `echo / | xargs rm -rf` are allowed; with a tool-wide `Bash` allow rule, `find ~ -delete` and `find / -delete` are allowed too (a prefix `Bash(find *)` correctly asks, AC-PERM-04). Permissions §4.4 says no allow rule approves a removal of a critical path and lists "a recursive rm whose target is only a command substitution" as critical; a target that arrives on stdin is the same case. Treat `xargs` with `rm`/`rmdir` and `find -delete` on a critical start path as unresolvable targets.
+
+### F33 (M2-16 adversarial fixtures): two credential and startup files are missing from the §4.3/§4.7 lists
+- **Severity:** minor · `src/policy/decide/paths.ts` (protected files, home credential list), permissions §4.3, §7.2
+- With a blanket `Read`/`Edit` allow rule, `~/.config/gh/hosts.yml` (the GitHub CLI token) is read and `~/.config/fish/config.fish` (fish's startup file) is written without a prompt; both are outside the working directory only, so only the "outside" ask protects them and a user allow rule lifts it. Add them (and `~/.config/gh` to the §7.2 sandbox deny list) in the spec and the data files.
+
 ### F28 (F24): a windows-latest runner stalled for about 20 s in the middle of a test file
 - **Severity:** minor · `.github/workflows/ci.yml` (windows job), seen once in CI run 39714803004 attempt 1
 - Details in F24's cause. If a Windows test exceeds the new 30 s default (look for "timed out after 30000ms"), find what ran just before it (leftover processes, Defender scanning the temp tree, a disk wait) instead of raising the limit again.
