@@ -614,7 +614,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       planDirectory === undefined || planDirectory === "" ? undefined : projectPlanDir(loc, planDirectory);
     if (projectPlans === undefined && planDirectory !== undefined && planDirectory !== "")
       warnings.push(
-        `plan.directory "${planDirectory}" is not inside the project (or is in .git): plans go in the session's own folder`,
+        `plan.directory "${planDirectory}" is not inside the project (or a part of it starts with a dot): plans go in the session's own folder`,
       );
     let planFile: string | undefined = resumed.lines > 0 ? (resumed.state.planFile ?? undefined) : undefined;
     if (planFile !== undefined && !planFileAllowed(loc, planFile, projectPlans)) {

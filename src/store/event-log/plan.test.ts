@@ -1,6 +1,6 @@
 // The plan file across forks and resume (tools §11.1; QUESTIONS Q85).
 import { afterEach, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fakeClock, sequentialIds, type TempProject, tempProject } from "../../../test/helpers/index.ts";
 import type { Os } from "../../platform/index.ts";
@@ -148,6 +148,24 @@ for (const [name, where] of NOT_PLANS) {
     expect(files.filter((f) => /-000\w\b/.test(f))).toEqual([]);
   });
 }
+
+// spec: tools §11.1
+test.skipIf(process.platform === "win32")(
+  "a fork copies nothing through a link that has a plan file's name",
+  async () => {
+    const loc = await location();
+    const key = join(loc.projectRoot, "certs", "server.pem");
+    await mkdir(dirname(key), { recursive: true });
+    await writeFile(key, "PRIVATEKEY");
+    const link = join(loc.projectRoot, "plans", "key-bbbb.md");
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(key, link);
+    await parent(loc, link);
+    await forkAtTurn(loc, FORK, 2, { ...deps(), projectPlans: join(loc.projectRoot, "plans") });
+    expect(await planOf({ ...loc, session: FORK })).toBeNull();
+    expect(await readdir(join(loc.projectRoot, "plans"))).toEqual(["key-bbbb.md"]);
+  },
+);
 
 // spec: tools §11.1
 test("a plan that was never written is still re-pointed, and nothing is copied or fails", async () => {

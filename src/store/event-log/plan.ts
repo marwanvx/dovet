@@ -1,4 +1,5 @@
 // A fork's own copy of the session's plan file (tools §11.1 "A fork gets its own copy"; QUESTIONS Q85).
+import { lstatSync } from "node:fs";
 import { constants, copyFile, mkdir } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { canonicalizePath, isErrno, isWithin, lexicalPath, PathRefused, pathKey } from "../../platform/index.ts";
@@ -53,6 +54,7 @@ export function projectPlanDir(loc: SessionLocation, planDirectory: string): str
 export function planFileAllowed(loc: SessionLocation, file: string, projectPlans?: string): boolean {
   try {
     const lexical = lexicalPath(file, loc.projectRoot, loc.os);
+    if (isLink(lexical)) return false;
     if (isWithin(lexical, planDir(loc), loc.os)) return true;
     return (
       projectPlans !== undefined &&
@@ -62,6 +64,16 @@ export function planFileAllowed(loc: SessionLocation, file: string, projectPlans
     );
   } catch (err) {
     if (err instanceof PathRefused) return false;
+    throw err;
+  }
+}
+
+/** A link with a plan file's name would send a read or copy to whatever it points at (a key, a settings file). */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch (err) {
+    if (isErrno(err, "ENOENT", "ENOTDIR")) return false;
     throw err;
   }
 }
