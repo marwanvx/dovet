@@ -256,12 +256,87 @@ function optionValues(argv: string[], j: number, letter: string, long: string): 
   return at < tok.length - 1 ? [[tok.slice(at + 1), j + 1], ...following] : following;
 }
 
+/** What the words of a wrapper's readings may add up to: far more than any real command's; past it the command asks (decide). */
+type Budget = { words: number; complete: boolean };
+const MAX_WORDS = 2_000_000;
+
+/** The reading, or nothing once the budget is spent. */
+function take(budget: Budget, argv: string[]): string[][] {
+  budget.words -= argv.length;
+  if (budget.words >= 0) return [argv];
+  budget.complete = false;
+  return [];
+}
+
+const ENV_ESCAPES: Record<string, string> = {
+  t: "\t",
+  n: "\n",
+  v: "\v",
+  f: "\f",
+  r: "\r",
+  "#": "#",
+  $: "$",
+  "\\": "\\",
+};
+
+/** `env -S`'s own splitting (GNU coreutils): whitespace, quotes, `\_` and the other escapes, `#` comments; undefined for a `${VAR}` or an escape it rejects. */
+function envSplit(s: string): string[] | undefined {
+  const words: string[] = [];
+  let word: string | undefined;
+  const end = (): void => {
+    if (word !== undefined) words.push(word);
+    word = undefined;
+  };
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (/[ \t\n\v\f\r]/.test(c)) end();
+    else if (c === "#" && word === undefined) break;
+    else if (c === "$") return undefined;
+    else if (c === "'") {
+      const close = s.indexOf("'", i + 1);
+      if (close < 0) return undefined;
+      word = (word ?? "") + s.slice(i + 1, close);
+      i = close;
+    } else if (c === '"') {
+      let text = "";
+      for (i++; i < s.length && s.charAt(i) !== '"'; i++) {
+        const d = s.charAt(i);
+        if (d === "$") return undefined;
+        if (d !== "\\") text += d;
+        else {
+          const e = s.charAt(++i);
+          if (e === "c") return undefined;
+          const out = e === "_" ? " " : e === '"' ? '"' : ENV_ESCAPES[e];
+          if (out === undefined) return undefined;
+          text += out;
+        }
+      }
+      if (i >= s.length) return undefined;
+      word = (word ?? "") + text;
+    } else if (c === "\\") {
+      const e = s.charAt(++i);
+      if (e === "c") break;
+      if (e === "_") end();
+      else {
+        const out = e === "'" || e === '"' ? e : ENV_ESCAPES[e];
+        if (out === undefined) return undefined;
+        word = (word ?? "") + out;
+      }
+    } else word = (word ?? "") + c;
+  }
+  end();
+  return words;
+}
+
 /** `env -S 'a b' c` → `env a b c`: env splits the string and goes on reading its own options from it. */
-function splitStrings(argv: string[], j: number): string[][] {
-  return optionValues(argv, j, "S", "--split-string").map(([raw, after]) => {
-    const value = raw.replace(/\\_/g, " ");
-    const words = splitCommand(value)?.flatMap((s) => s.argv) ?? value.split(/\s+/).filter(Boolean);
-    return [argv[0] ?? "env", ...words, ...argv.slice(after)];
+function splitStrings(argv: string[], j: number, budget: Budget): string[][] {
+  return optionValues(argv, j, "S", "--split-string").flatMap(([raw, after]) => {
+    const words = envSplit(raw);
+    if (words === undefined) {
+      budget.complete = false;
+      return [];
+    }
+    return take(budget, [argv[0] ?? "env", ...words, ...argv.slice(after)]);
   });
 }
 
@@ -282,21 +357,21 @@ function findCommands(argv: string[]): string[][] {
 }
 
 /** What an exec wrapper may run, read every way its options allow (deny side). */
-function wrapperReadings(argv: string[], name: string, operands: number): string[][] {
+function wrapperReadings(argv: string[], name: string, operands: number, budget: Budget): string[][] {
   // `command -v x` only prints where x is.
   if (name === "command" && argv.some((a) => /^-[a-zA-Z]*[vV]/.test(a))) return [];
-  const out = commandStarts(argv, operands, name === "env").starts.map((s) => argv.slice(s));
-  for (let j = 1; j < argv.length; j++) {
+  const out = commandStarts(argv, operands, name === "env").starts.flatMap((s) => take(budget, argv.slice(s)));
+  for (let j = 1; j < argv.length && budget.complete; j++) {
     const tok = argv[j] ?? "";
     if (!tok.startsWith("-")) continue;
-    if (name === "env") out.push(...splitStrings(argv, j));
+    if (name === "env") out.push(...splitStrings(argv, j, budget));
     // `flock FILE -c 'cmd'` and `--command`: the shell runs the string.
     if (name === "flock")
       for (const [script] of optionValues(argv, j, "c", "--command")) out.push(["sh", "-c", script]);
   }
-  // watch hands its words, joined, to `sh -c`.
+  // watch hands its words, joined, to `sh -c`: anything but plain characters (quotes, escapes, `;`) is shell syntax.
   if (name === "watch")
-    for (const rest of [...out]) if (rest.some((a) => /[\s;&|<>()$`]/.test(a))) out.push(["sh", "-c", rest.join(" ")]);
+    for (const rest of [...out]) if (rest.some((a) => /[^\w./:=@%+,-]/.test(a))) out.push(["sh", "-c", rest.join(" ")]);
   return out;
 }
 
@@ -306,7 +381,7 @@ function wrapperReadings(argv: string[], name: string, operands: number): string
  * option every way it could be read and looks into `find -exec`; an allow rule only sees through a safe wrapper called
  * by its bare name whose every option it knows.
  */
-function inner(argv: string[], deep: boolean): string[][] {
+function inner(argv: string[], deep: boolean, budget: Budget): string[][] {
   let i = 0;
   while (i < argv.length) {
     const name = ASSIGNMENT.exec(argv[i] ?? "")?.[1];
@@ -322,29 +397,23 @@ function inner(argv: string[], deep: boolean): string[][] {
   const name = commandName(argv[0]);
   if (name === "find") return findCommands(argv);
   const operands = DEEP_WRAPPERS.get(name);
-  return operands === undefined ? [] : wrapperReadings(argv, name, operands);
+  return operands === undefined ? [] : wrapperReadings(argv, name, operands, budget);
 }
-
-/** Far more words than any real command's readings hold; past it the command is not checked further and asks (decide). */
-const MAX_WORDS = 2_000_000;
 
 /** The command and every command it may run, and whether all of them were looked at. */
 export function unwrapCommand(argv: string[], deep = true): { argvs: string[][]; complete: boolean } {
   const out: string[][] = [];
   const seen = new Set<string>();
   const queue = [argv];
-  let words = 0;
-  for (let a = queue.shift(); a !== undefined; a = queue.shift()) {
+  const budget: Budget = { words: MAX_WORDS, complete: true };
+  for (let a = queue.shift(); a !== undefined && budget.complete; a = queue.shift()) {
     const key = a.join("\0");
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(a);
-    const more = inner(a, deep);
-    for (const m of more) words += m.length;
-    if (words > MAX_WORDS) return { argvs: out, complete: false };
-    queue.push(...more);
+    queue.push(...inner(a, deep, budget));
   }
-  return { argvs: out, complete: true };
+  return { argvs: out, complete: budget.complete };
 }
 
 /** The command and every command it wraps (`sudo env X=1 git push` → `git push`; `find . -exec rm {} ;` → `rm {}`). */

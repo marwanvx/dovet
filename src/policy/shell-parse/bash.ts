@@ -262,7 +262,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       words.set(w.text, seen === undefined || (seen.literal && !w.literal) || w.glob ? w : seen);
     }
     const { argvs, complete } = unwrapCommand([name.text, ...args.map((a) => a.text)]);
-    if (!complete) ctx.fail("too many ways to read the wrapper's options");
+    if (!complete) ctx.fail("a wrapper's options can't all be checked");
     for (const [i, v] of argvs.entries()) {
       const head = commandName(v[0]);
       const rest = i === 0 ? args : v.slice(1).map((text) => words.get(text) ?? { text, literal: true, glob: false });

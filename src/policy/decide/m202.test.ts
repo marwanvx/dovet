@@ -117,6 +117,7 @@ describe("AC-PERM-23 lower analysis bar under sandbox auto-allow", () => {
     expect(sh('env sh -c "$script"', st, true).behavior).toBe("ask");
     expect(sh("cat list.txt | xargs", st, true).behavior).toBe("ask");
     expect(sh("xargs -0", st, true).behavior).toBe("ask");
+    expect(sh("xargs --", st, true).behavior).toBe("ask");
     expect(sh("echo git push | xargs", st, true).behavior).toBe("ask");
     expect(sh("echo git push | xargs --max-args 1", st, true).behavior).toBe("ask");
     expect(sh("echo git push | xargs --max-args=1", st, true).behavior).toBe("ask");

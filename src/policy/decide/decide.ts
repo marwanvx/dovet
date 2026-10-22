@@ -221,7 +221,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const unwrapped = unwrapCmd(sub0);
     const viaCmd = unwrapped !== sub0;
     const { all, complete } = variants(unwrapped.argv);
-    if (!complete) out.push(finding("unchecked", "a wrapper's options can be read too many ways to check", "ask"));
+    if (!complete) out.push(finding("unchecked", "a wrapper's options can't all be checked", "ask"));
     for (const v of all) {
       const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
       const system = systemRemoval(env, sub, viaCmd);

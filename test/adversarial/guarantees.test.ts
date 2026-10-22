@@ -432,6 +432,10 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "stdbuf --made-up x git push",
     "time --made-up x git push",
     "command -p git push",
+    "flock -- /tmp/l git push",
+    "watch \"'git'\" push origin main",
+    "env -S \"'git' push origin main (\"",
+    "env -S 'git\u{0B}push'",
   ])("%s is a remote action while tainted, whatever the unknown option takes", (command) => {
     const d = shell(command, state("bypassPermissions", { tainted: true }));
     expect(d.behavior).toBe("deny");
@@ -439,15 +443,18 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
   });
 
   // spec: permissions §0 guarantee 4
-  test.each(["timeout --made-up x 5 rm -rf /", "sudo -Q x rm -rf ~", "env --made-up x cat .env"])(
-    "%s keeps the built-in checks under a tool-wide allow",
-    (command) => {
-      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
-    },
-  );
+  test.each([
+    "timeout --made-up x 5 rm -rf /",
+    "sudo -Q x rm -rf ~",
+    "env --made-up x cat .env",
+    "watch \"'rm'\" -rf /",
+    "watch \"'cat'\" .env",
+  ])("%s keeps the built-in checks under a tool-wide allow", (command) => {
+    for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+  });
 
   // spec: AC-PERM-03
-  test.each(["sudo --made-up x rm y", "env -Q x rm y", "doas -X x rm y"])(
+  test.each(["sudo --made-up x rm y", "env -Q x rm y", "doas -X x rm y", "watch '\"rm\"' y", "env -S \"'rm' x {\""])(
     "%s is caught by a deny rule for rm",
     (command) => {
       const rules = loadRules(
@@ -455,6 +462,34 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
         { os, home: "/home/u", canonicalize: (p) => p },
       ).rules;
       expect(shell(command, { mode: "default", rules, env: env() }).behavior).toBe("deny");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test("a wrapper with more readings than the checker's budget asks, even in bypassPermissions", () => {
+    const command = `sudo ${"-u x ".repeat(1800)}git push`;
+    const started = performance.now();
+    for (const st of [state("bypassPermissions"), state("bypassPermissions", { tainted: true })]) {
+      const d = shell(command, st);
+      expect(d.behavior).toBe("ask");
+      expect(d.findings.map((f) => f.kind)).toContain("unchecked");
+    }
+    const analysis = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: HOME(),
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(analysis.understood).toBe(false);
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["env -S $'git\\vpush'", "env -S 'git push ${X}'"])(
+    "%s, an env -S string Dovet can't split exactly, asks even in bypassPermissions",
+    (command) => {
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("ask");
     },
   );
 
@@ -467,6 +502,7 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
       "stdbuf -Z git status",
       "time --made-up git status",
       "timeout --help 5 git status",
+      "timeout --foreground=x 5 git status",
     ])
       notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
     for (const command of [
