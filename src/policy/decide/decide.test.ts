@@ -596,6 +596,12 @@ describe("modes", () => {
         "ask",
       );
     }
+    const docs = join(root, "docs", "plans", "p-ab12.md");
+    for (const mode of ["plan", "default", "acceptEdits"] as const)
+      expect(
+        file("edit", docs, state(mode, { ask: ["Edit(docs/plans/**)"] }, { env: env({ planFile: docs }) })).behavior,
+        mode,
+      ).toBe(mode === "plan" ? "deny" : "ask");
     const env_ = join(root, ".env");
     expect(file("read", env_, state("plan", {}, { env: env({ planFile: env_ }) })).behavior).toBe("ask");
   });

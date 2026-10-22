@@ -411,6 +411,7 @@ export function decide(req: Request, st: State): Decision {
   if (
     a.kind === "edit" &&
     asks.length === 0 &&
+    match?.behavior !== "ask" &&
     st.env.planFile !== undefined &&
     a.paths.length > 0 &&
     a.paths.every((p) => p === st.env.planFile)

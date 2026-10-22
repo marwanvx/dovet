@@ -14,10 +14,9 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
-- **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)
-- `t.path === env.planFile` returns before the protected-path, sensitive-file, outside-project and link checks, so M2-15 confines the plan file where it is chosen (`plan.directory`, a logged path on resume, a fork's copy). Three review rounds each found another way past that: `..` and `.git`, then `.dovet`/`.env` inside the project, then a link with a plan file's name pointing at a key (a link is now refused, with a test). The same class is still open: the session-plan-folder branch checks the path lexically only; the plan text is read for the re-attach and the facts with no sensitive-file check; Windows short names and alternate streams were read but not run.
-- Fix at the layer that owns the rule: make the policy's plan-file exception only skip the "plan mode allows no edits" default, keep the protected/sensitive/link checks (the session's own plan folder under the data dir is already in `ownFiles`), and read plan text through the same checks as Read. Then drop most of `planFileAllowed`.
+### F27 (M2-15 security review): `permissions.sensitiveFiles` never reaches the policy
+- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts` (`policyEnv` has no `sensitiveFiles`); nothing in `src/` sets `Env.sensitiveFiles`, which only ripgrep's globs use (`src/tools/sensitive-files.ts`, `src/tools/rg.ts`)
+- A user who adds `**/*.secret` to `permissions.sensitiveFiles` still gets Read of such a file allowed without the sensitive-file ask, and a plan file matching it is still re-attached. Pass the setting into every `Env` the policy gets.
 
 ### F25 (M2-15): headless `ExitPlanMode` is denied, so a headless plan is never presented
 - **Severity:** minor · `src/cli/headless-run.ts` (`decideFn`), `src/tools/plan-mode.ts:99`
@@ -76,6 +75,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
+- **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)
+- `t.path === env.planFile` returns before the protected-path, sensitive-file, outside-project and link checks, so M2-15 confines the plan file where it is chosen (`plan.directory`, a logged path on resume, a fork's copy). Three review rounds each found another way past that: `..` and `.git`, then `.dovet`/`.env` inside the project, then a link with a plan file's name pointing at a key (a link is now refused, with a test). The same class is still open: the session-plan-folder branch checks the path lexically only; the plan text is read for the re-attach and the facts with no sensitive-file check; Windows short names and alternate streams were read but not run.
+- **Fixed (PR 183):** the policy's plan-file exception now skips only the plan-mode default and the working-directory check; protected, sensitive and deny-rule checks run on the plan file, the session's plan folder is in `ownFiles`, and the plan text for a re-attach or the compaction facts is read only where Read is allowed (`readPlanText`). Tests: `decide.test.ts` "the plan file skips only…", `headless-plan.test.ts` "a plan file a Read rule denies…". `planFileAllowed` stays as the location rule for a logged path (a link check is still needed there: the fork's `copyFile` follows links).
 
 ### F16 (M2-08, M2-09, M2-09c, M2-14 CI): the 500 MB resume test flaked four times
 - **Severity:** major (memory on Ubuntu and on macOS twice, the 2 s limit on Windows) · `src/store/event-log/resume.test.ts` (AC-LOG-13)
