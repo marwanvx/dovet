@@ -54,22 +54,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/tools/web-search-services.ts` (`withoutTags`)
 - Fullwidth `＜`/`＞`, small-form `﹤`/`﹥` and `〈`/`〉` are not removed, so `＜system＞` reaches the model as text. Same family as F14: fix both with one shared normalisation (NFKC before cleaning, or add the look-alikes to the removed set) in the same task.
 
-### F16 (M2-09 CI): the 500 MB resume test's memory limit is flaky
-- **Severity:** minor · `src/store/event-log/resume.test.ts:390`
-- `rssPeak - rssBefore` measured 406 MB against the 300 MB limit on one Ubuntu run (green on the rerun, no change to that code). The delta depends on how much garbage the earlier tests in the same process left uncollected; measure after `Bun.gc(true)` or run the test in its own process.
-
-### F16 (M2-08 CI): the 500 MB resume test's memory limit failed once on macOS
-- **Severity:** minor · `src/store/event-log/resume.test.ts:390`
-- `rssPeak - rssBefore` was 330,744,128 bytes against the 300 MiB (314,572,800) limit on `macos-latest` in the CI run for #168 (the scan code, `resume.ts`, was untouched by that PR; the rerun passed). The test measures sampled RSS of a process that has just written 500 MB, so garbage collection and the page cache move the number. Fix: measure `heapUsed`/external memory, or sample from a fresh subprocess, so the limit tests the scan and not the runner.
-
-### F16 (M2-09c CI): the same 500 MB resume test missed its 2 s time limit on Windows
-- **Severity:** minor · `src/store/event-log/resume.test.ts` ("resumes with the sidecar in under 2 s")
-- `windows-latest` in the CI run for #172 (docs-only) measured 2,487 ms against the 2 s limit (the rerun is below). Third flake of this one test (memory on Ubuntu and macOS, now time on Windows). Fix it with F16 above: the test measures the runner's disk and memory state as much as the sidecar resume, so time the resume in a fresh subprocess after the file is flushed, and take the best of three like the 10,000-file checkpoint test does.
-
-### F16 (M2-14 CI): the 500 MB resume test failed a fourth time (macOS, the memory limit)
-- **Severity:** major · `src/store/event-log/resume.test.ts:443` (`rssPeak - rssBefore` against 300 MiB)
-- `macos-latest` in the CI run for #181, which does not touch `resume.ts`; the rerun decides the PR. Four flakes in one test (Ubuntu, macOS twice, Windows), logged as minor three times: now `major`, so step 2.4 fixes it at the cause (measure the scan's own memory in a fresh subprocess, or `heapUsed` after `Bun.gc(true)`), not with a rerun.
-
 ### F17 (M2-09b recheck): CI runs per task rose from 5.0 to 7.3, all of it on deep-tier tasks
 - **Severity:** minor · `docs/background/workflow-audit-2026-10-19.md` "Recheck"
 - M2-06 took 21 CI runs (13 red, including Bun segfaults and hangs on Windows with real local sockets, found only by a temporary CI job), M2-05b 9, M2-09 9; the other four tasks 3 each. For a task that adds sockets, child processes or timing limits, run its new tests on all three OSes in one temporary CI job (repeated) before the first review round, instead of finding each failure through a review-fix-push cycle. Look at the next recheck's CI-run mean before adding a rule.
@@ -79,6 +63,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F16 (M2-08, M2-09, M2-09c, M2-14 CI): the 500 MB resume test flaked four times
+- **Severity:** major (memory on Ubuntu and on macOS twice, the 2 s limit on Windows) · `src/store/event-log/resume.test.ts` (AC-LOG-13)
+- **Cause:** the test measured RSS and time inside the process that had just written 500 MB, so garbage from the writes, earlier tests in the file and the runner's disk state decided the number, not the scan.
+- **Fixed (PR PRNUM):** the scan runs in a fresh `bun` child (`test/fixtures/resume/scan-child.ts`) that collects garbage, samples its own RSS and reports; the sidecar resume is timed three times and the best counts. Measured on Linux: 34 MB growth against the 300 MiB limit (a whole-file read gives over 500 MB). The limits are unchanged.
 
 ### F18 (M2-09c CI): the first headless image test hit the 5 s timeout on macOS
 - **Severity:** major (logged twice: #172 and #177, run 39671350287) · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
