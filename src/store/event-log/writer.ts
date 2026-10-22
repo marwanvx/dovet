@@ -204,7 +204,8 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
       if (FLUSH_NOW.has(type)) {
         write({ fsync: FSYNC.has(type), ...(type === "turn.end" ? { sidecar: meta } : {}) }).catch(record);
       }
-      return envelope;
+      // Callers keep the event in memory and parse it like a reader would: inline strings, not blob references.
+      return { ...envelope, data: clean };
     },
 
     async flush() {

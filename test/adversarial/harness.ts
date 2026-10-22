@@ -15,7 +15,7 @@ export const fileTools: ToolDefinition<unknown>[] = builtinTools.filter((t) =>
 export type Call = { name: string; input: unknown };
 
 /** One reply per request: the calls to make, or the closing text when the list is empty. */
-export function scripted(script: Call[][], onRequest?: (n: number) => void, delayMs = 0) {
+export function scripted(script: Call[][], onRequest?: (n: number) => void, delayMs = 0, closing = "done") {
   let next = 0;
   return {
     render: () => ({ provider: "nvidia", package: "x", modelId: "m", messages: [], tools: [], providerOptions: {} }),
@@ -39,7 +39,7 @@ export function scripted(script: Call[][], onRequest?: (n: number) => void, dela
               name: c.name,
               inputJson: JSON.stringify(c.input),
             })),
-            ...(calls.length === 0 ? [{ kind: "text" as const, text: "done" }] : []),
+            ...(calls.length === 0 ? [{ kind: "text" as const, text: closing }] : []),
           ],
           usage: { promptTokens: 100, completionTokens: 10 },
           finishReason: "stop",
@@ -61,6 +61,7 @@ export type RunOver = {
   /** The writer lock names this process; a test that kills a child needs the real one. */
   pid?: number;
   host?: string;
+  contextWindow?: number;
 };
 
 export function runIn(root: string, over: RunOver) {
@@ -108,7 +109,7 @@ export function runIn(root: string, over: RunOver) {
     pid: over.pid ?? 1,
     host: over.host ?? "h",
     platform: fakePlatform({ os: testOs() }),
-    contextWindow: 10_000,
+    contextWindow: over.contextWindow ?? 10_000,
     toolDefs: fileTools,
     adapter: over.adapter,
   } as never);

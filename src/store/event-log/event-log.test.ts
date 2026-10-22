@@ -307,7 +307,8 @@ describe("writer", () => {
     const w = await open(loc);
     const content = "const x = 1;\n".repeat(Math.ceil((3 * 1024 * 1024) / 13));
     const input = { file_path: "/p/big.ts", content };
-    w.append({ type: "tool.call", epoch: 0, turn: 1, data: { id: "c1", name: "Write", input } });
+    const appended = w.append({ type: "tool.call", epoch: 0, turn: 1, data: { id: "c1", name: "Write", input } });
+    expect(appended.data).toEqual({ id: "c1", name: "Write", input });
     await w.close();
     const line = (await readFile(sessionPaths(loc).log, "utf8")).split("\n")[0] ?? "";
     expect(line.length).toBeLessThan(1024 * 1024);
