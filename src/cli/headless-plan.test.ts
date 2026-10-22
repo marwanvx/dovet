@@ -176,10 +176,23 @@ describe("plan mode in a headless run", () => {
         dir,
       );
       const last = results(again.log).at(-1);
-      expect({ status: last?.status, output: last?.output, warnings: again.out.warnings }).toEqual({
+      const called = again.log.find((e) => e.type === "tool.call")?.data;
+      expect({
+        status: last?.status,
+        output: last?.output,
+        warnings: again.out.warnings,
+        plan,
+        resumed: planFileIn(again.log),
+        called,
+        settings: again.log.filter((e) => e.type === "settings.change").map((e) => e.data),
+      }).toEqual({
         status: "ok",
         output: expect.any(String),
         warnings: [],
+        plan,
+        resumed: plan,
+        called: expect.anything(),
+        settings: expect.anything(),
       });
       expect(await readFile(plan, "utf8")).toBe("1. read\n2. change\n");
     } finally {
