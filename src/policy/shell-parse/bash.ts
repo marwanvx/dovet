@@ -3,9 +3,9 @@ import type { Node } from "web-tree-sitter";
 import {
   commandName,
   isSafeEnv,
-  isShellScriptFlag,
   type Redirect,
   type Subcommand,
+  shellScriptAt,
   strippedArgvs,
   XARGS_VALUED,
 } from "../rules/index.ts";
@@ -296,8 +296,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
 
   function shellScript(args: Word[], st: State): void {
     ctx.fail("sh -c runs a nested script");
-    const at = args.findIndex((a) => isShellScriptFlag(a.text));
-    const script = at < 0 ? undefined : args[at + 1];
+    const at = shellScriptAt(args.map((a) => a.text));
+    const script = at < 0 ? undefined : args[at];
     if (script === undefined) return;
     if (!script.literal) {
       ctx.state.literalNames = false;

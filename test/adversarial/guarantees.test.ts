@@ -361,10 +361,34 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "watch -n1 'git push origin main'",
     "flock /tmp/l --command 'git push'",
     "env -S 'git\\_push'",
+    "bash -c -e 'git push'",
+    "sh -c -- 'git push'",
+    "cmd /d /q /c git push",
+    "sudo -a type git push",
+    "sudo -c class git push",
+    "sudo --role r git push",
+    "sudo --type t git push",
+    "sudo --login-class c git push",
+    "sudo --close-from 3 git push",
+    "sudo --command-timeout 5 git push",
+    "sudo --other-user u git push",
   ])("%s is a remote action while tainted, even in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions", { tainted: true }));
     expect(d.behavior).toBe("deny");
     expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each(["sudo eval 'rm -rf /'", "/usr/bin/env source ./x", '/usr/bin/xargs sh -c "$X"'])(
+    "%s behind a wrapper fails closed under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test('a shell script after other flags (`bash -c -e "$CMD"`) is still a computed command in the sandbox', () => {
+    notAllowed(shell('bash -c -e "$CMD"', state("default", { sandboxAutoAllow: true }), true));
   });
 
   // spec: AC-PERM-03

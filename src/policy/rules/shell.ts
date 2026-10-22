@@ -184,8 +184,18 @@ export const commandName = (word: string | undefined): string =>
     .replace(/\.exe$/i, "")
     .toLowerCase();
 
-/** `-c`, `-lc`, `-ec`: the shell flag whose next word is a script. */
-export const isShellScriptFlag = (tok: string): boolean => /^-[A-Za-z]*c[A-Za-z]*$/.test(tok);
+/** Where a shell's `-c` script is among its arguments (`-lc 'x'`, `-c -e 'x'`, `-c -- 'x'`), or -1. */
+export function shellScriptAt(args: readonly string[]): number {
+  let c = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] ?? "";
+    if (a === "--" || a === "-") return c && i + 1 < args.length ? i + 1 : -1;
+    if (/^[-+][oO]$/.test(a)) i++;
+    else if (/^[-+][A-Za-z]+$/.test(a)) c ||= a.startsWith("-") && a.includes("c");
+    else if (!a.startsWith("--")) return c ? i : -1;
+  }
+  return -1;
+}
 
 /** `-u`, `-iu` and `-uroot` → whether the flag's value is the next word. */
 function takesNext(tok: string, valued: string[]): boolean {

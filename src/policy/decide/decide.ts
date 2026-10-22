@@ -4,11 +4,11 @@ import type { PermissionMode } from "../../schema/index.ts";
 import {
   type Behavior,
   evaluateRules,
-  isShellScriptFlag,
   type RuleCall,
   type RuleMatch,
   type RuleSet,
   type Subcommand,
+  shellScriptAt,
   strippedArgvs,
   XARGS_VALUED,
 } from "../rules/index.ts";
@@ -343,7 +343,7 @@ function isDynamicVariant(v: string[]): boolean {
     if (cmd === undefined || DYNAMIC_WORD.test(cmd)) return true;
   }
   if (SHELL_COMMANDS.has(name)) {
-    const at = v.findIndex(isShellScriptFlag);
+    const at = shellScriptAt(v.slice(1));
     const script = at < 0 ? undefined : v[at + 1];
     if (script === undefined || DYNAMIC_WORD.test(script)) return true;
   }
