@@ -760,3 +760,9 @@ Review: deep, 3 rounds. R1: 3 minor test gaps, 2 nits, and security: 1 major (`p
 Learned: the approach keeps failing because `decide.ts:123` lets the plan file skip every path check, so each place that picks one must re-validate and each round found another gap: fix it in the policy (F26), not with more path rules. `bun check -b` is the whole `check` script: type-check with `bunx tsc --noEmit -p .`. `fakePlatform()` says `os: "linux"`, so on Windows every Write/Edit path was refused: tests running path tools through `runHeadless` pass `fakePlatform({ os })`. The plan file is named by its real path (the policy gets the written and the real path and needs both to be the plan file).
 Next: rethink the approach to M2-15 (F26: move the plan-file exception in the policy so protected/sensitive/link checks still run, then simplify `planFileAllowed`), re-review the PR #183 diff, merge it, then M2-16.
 
+
+## 2026-10-22 — M2-15 Partial compaction and plan-mode persistence (rethink)
+Done: F26 fixed at the policy: the plan file now skips only the plan-mode default and the working-directory check, so protected, sensitive, deny- and ask-rule checks run on it; plan text for a fork's re-attach and the compaction facts is read only where Read is allowed. PR: #183 (merged).
+Review: deep, 2 rounds (reviewer + security-reviewer, then security on the fix). 1 fixed (minor: an ask rule matching the plan file was ignored), 1 dropped (plan file's real path: it is always stored canonical), 1 logged (F27: `permissions.sensitiveFiles` never reaches the policy).
+Learned: a policy shortcut must sit after the findings and the ask-rule match, never before them. `planFileAllowed` stays as the location rule for a logged path; its link check is still needed because the fork's `copyFile` follows links.
+Next: M2-16 (exit check).
