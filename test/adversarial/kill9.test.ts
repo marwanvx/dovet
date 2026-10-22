@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { DailyLedger } from "../../src/agent/budgets/ledger.ts";
 import { ToolResultData } from "../../src/schema/index.ts";
-import { readSession } from "../../src/store/index.ts";
+import { readSession, type SessionLocation } from "../../src/store/index.ts";
 import { fileContent, settingsText } from "../fixtures/kill9/content.ts";
 import { tempProject } from "../helpers/index.ts";
 import { runIn, scripted, testOs } from "./harness.ts";
@@ -37,14 +37,28 @@ async function walk(dir: string): Promise<string[]> {
   return out;
 }
 
-async function firstLine(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const seen = await Promise.race([
-    reader.read().then((r) => new TextDecoder().decode(r.value)),
-    Bun.sleep(60_000).then(() => "timeout"),
-  ]);
+/** The child's first line; a child that prints nothing for a minute is killed and "timeout" returned. */
+async function firstLine(child: {
+  stdout: ReadableStream<Uint8Array>;
+  kill(signal: "SIGKILL"): void;
+}): Promise<string> {
+  const reader = child.stdout.getReader();
+  let text = "";
+  const deadline = Date.now() + 60_000;
+  while (!text.includes("\n") && Date.now() < deadline) {
+    const chunk = await Promise.race([
+      reader.read(),
+      Bun.sleep(Math.max(1, deadline - Date.now())).then(() => undefined),
+    ]);
+    if (chunk === undefined || chunk.done) break;
+    text += new TextDecoder().decode(chunk.value);
+  }
   reader.releaseLock();
-  return seen.trim();
+  if (!text.includes("\n")) {
+    child.kill("SIGKILL");
+    return "timeout";
+  }
+  return text.split("\n")[0]?.trim() ?? "";
 }
 
 // spec: roadmap M2 exit evidence
@@ -55,7 +69,7 @@ test(`kill -9 at ${ROUNDS} random points leaves every store readable and the ses
     const dir = await tempProject();
     try {
       const child = Bun.spawn([process.execPath, CHILD, dir.root], { stdout: "pipe", stderr: "pipe" });
-      expect(await firstLine(child.stdout)).toBe("READY");
+      expect(await firstLine(child)).toBe("READY");
       await Bun.sleep(delay);
       child.kill("SIGKILL");
       await child.exited;
@@ -87,8 +101,13 @@ test(`kill -9 at ${ROUNDS} random points leaves every store readable and the ses
           .split(/[\\/]/)
           .at(-1)
           ?.replace(/\.jsonl$/, "") ?? "";
-      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: id };
-      const before = await readSession(loc as never);
+      const loc = {
+        data: join(dir.root, "data"),
+        projectRoot: dir.root,
+        os: testOs(),
+        session: id,
+      } satisfies SessionLocation;
+      const before = await readSession(loc);
       expect(before.events.length, where).toBeGreaterThan(0);
 
       // The dead writer's lock is taken over once its heartbeat is 2 minutes old (event-log "Writer rules" 1).
@@ -106,7 +125,7 @@ test(`kill -9 at ${ROUNDS} random points leaves every store readable and the ses
         ids: "R",
       });
       expect(resumed.exit, where).toEqual({ kind: "ok" });
-      const after = (await readSession(loc as never)).events;
+      const after = (await readSession(loc)).events;
       const calls = after.filter((e) => e.type === "tool.call").map((e) => (e.data as { callId: string }).callId);
       const results = after.filter((e) => e.type === "tool.result").map((e) => ToolResultData.parse(e.data).callId);
       expect(new Set(results), `${where}: every call has a result`).toEqual(new Set(calls));
@@ -124,7 +143,7 @@ test("kill -9 while the settings, blob and ledger writers loop leaves each file 
     const dir = await tempProject();
     try {
       const child = Bun.spawn([process.execPath, WRITERS, dir.root], { stdout: "pipe", stderr: "pipe" });
-      expect(await firstLine(child.stdout)).toBe("READY");
+      expect(await firstLine(child)).toBe("READY");
       await Bun.sleep(delay);
       child.kill("SIGKILL");
       await child.exited;

