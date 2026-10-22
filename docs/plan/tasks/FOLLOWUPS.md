@@ -14,6 +14,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
+- **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)
+- `t.path === env.planFile` returns before the protected-path, sensitive-file, outside-project and link checks, so M2-15 confines the plan file where it is chosen (`plan.directory`, a logged path on resume, a fork's copy). Three review rounds each found another way past that: `..` and `.git`, then `.dovet`/`.env` inside the project, then a link with a plan file's name pointing at a key (a link is now refused, with a test). The same class is still open: the session-plan-folder branch checks the path lexically only; the plan text is read for the re-attach and the facts with no sensitive-file check; Windows short names and alternate streams were read but not run.
+- Fix at the layer that owns the rule: make the policy's plan-file exception only skip the "plan mode allows no edits" default, keep the protected/sensitive/link checks (the session's own plan folder under the data dir is already in `ownFiles`), and read plan text through the same checks as Read. Then drop most of `planFileAllowed`.
+
 ### F25 (M2-15): headless `ExitPlanMode` is denied, so a headless plan is never presented
 - **Severity:** minor · `src/cli/headless-run.ts` (`decideFn`), `src/tools/plan-mode.ts:99`
 - A scripted model that writes its plan and calls `ExitPlanMode` in `--permission-mode plan` gets `Permission denied: needs the user's answer` (interaction actions ask, headless denies). Tools §11.3 says headless returns the plan as the turn's result with a `plan` event, mode staying `plan`. Allow the call when the mode is `plan`, log `plan.presented`, and make the result the turn's text; the `plan` stream event waits for `--output stream-json`. `ExitPlanMode` is the only tool that reads `ctx.session.mode`, so the rebuild of the tool context after EnterPlanMode (`applyResultMode`) has no observable effect until then: add a test that ExitPlanMode called after EnterPlanMode in the same round is not told "Not in plan mode".
