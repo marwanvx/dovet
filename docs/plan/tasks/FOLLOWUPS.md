@@ -82,10 +82,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
 - A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
 
-### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
-- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
-- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
-
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
 - **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
 - 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
@@ -163,6 +159,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
+- **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
+- `writer.append` returns the blobbed envelope and the run keeps it, so a 300 KB prompt or Write content throws `ZodError … expected string, received object`. Return inflated data; test a 300 KB message, tool input and output (`runIn` in `test/adversarial/harness.ts`).
+- **Fixed (PR 187):** `append` returns the scrubbed data with large strings inline (what a reader gets); the line on disk keeps the blob references. `test/adversarial/large-strings.test.ts` runs a 300 KB prompt, Write content and model text through a headless run and resumes it.
 
 ### F40 (M2-16 security review): a wrapper written as a path hides the inner command from every check
 - **Severity:** blocker · `src/policy/rules/shell.ts:179,188-191,122`, `decide.ts:193-204`, `targets.ts:39`
