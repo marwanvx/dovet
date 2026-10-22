@@ -17,7 +17,7 @@ export async function forkAtTurn(
   loc: SessionLocation,
   session: string,
   turn: number,
-  deps: { ids: { ulid(): string }; clock: { now(): number } },
+  deps: { ids: { ulid(): string }; clock: { now(): number }; projectPlans?: string },
 ): Promise<{ loc: SessionLocation; copied: number; parentEvent: string; message: UserMessageData }> {
   const next: SessionLocation = { ...loc, session };
   const paths = sessionPaths(next);
@@ -44,7 +44,7 @@ export async function forkAtTurn(
     }
     if (message !== undefined) {
       await out.appendFile(sessionForkLine({ session, epoch, parent: loc.session, parentEvent }, deps));
-      if (plan !== null) await out.appendFile(await forkPlanLine(loc, next, plan, epoch, deps));
+      if (plan !== null) await out.appendFile(await forkPlanLine(loc, next, plan, epoch, deps, deps.projectPlans));
       await out.sync();
     }
   } finally {

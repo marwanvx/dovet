@@ -116,7 +116,6 @@ import {
   openCheckpoints,
   openSession,
   PLAN_FILE_KEY,
-  planDir,
   planFileAllowed,
   pollSettings,
   projectId,
@@ -618,7 +617,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         `plan.directory "${planDirectory}" is not inside the project (or is in .git): plans go in the session's own folder`,
       );
     let planFile: string | undefined = resumed.lines > 0 ? (resumed.state.planFile ?? undefined) : undefined;
-    if (planFile !== undefined && !planFileAllowed(loc, planFile, projectPlans ?? planDir(loc))) {
+    if (planFile !== undefined && !planFileAllowed(loc, planFile, projectPlans)) {
       warnings.push(
         `ignored the logged plan file ${planFile}: it is not in this session's plan folder or plan.directory`,
       );

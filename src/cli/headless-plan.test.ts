@@ -446,6 +446,29 @@ describe("the plan file stays where plan mode may write", () => {
     }
   });
 
+  for (const directory of [".", ".dovet", ".claude"]) {
+    // spec: tools §11.1
+    test(`plan.directory ${directory} cannot make settings or instruction files writable as the plan`, async () => {
+      const dir = await projectWith({ directory });
+      try {
+        const a = await run({ adapter: scripted([{ text: "x" }]).adapter, mode: "plan" }, dir);
+        const settings = join(dir.root, ".dovet", "settings.json");
+        const before = await readFile(settings, "utf8");
+        if (directory === ".") {
+          expect(planFileIn(a.log)).toStartWith(join(dir.root, "plan-the-parser-rewrite-please-"));
+        } else expect(planFileIn(a.log)).toStartWith(planDir(a.loc));
+        const logPath = sessionPaths(a.loc).log;
+        const text = await readFile(logPath, "utf8");
+        await writeFile(logPath, text.split(JSON.stringify(planFileIn(a.log))).join(JSON.stringify(settings)));
+        const b = await writePlan(dir, settings);
+        expect(results(b.log).at(-1)?.status).not.toBe("ok");
+        expect(await readFile(settings, "utf8")).toBe(before);
+      } finally {
+        await dir.dispose();
+      }
+    });
+  }
+
   // spec: tools §11.1
   test("plan.directory inside the project is still used", async () => {
     const dir = await projectWith({ directory: "docs/plans" });

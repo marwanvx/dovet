@@ -116,13 +116,38 @@ test("a plan under the project (plan.directory) is copied beside the original un
   await mkdir(dirname(parentPlan), { recursive: true });
   await writeFile(parentPlan, "project plan");
 
-  await forkAtTurn(loc, FORK, 2, deps());
+  await forkAtTurn(loc, FORK, 2, { ...deps(), projectPlans: join(loc.projectRoot, "plans") });
 
   const copy = await planOf({ ...loc, session: FORK });
   expect(copy).toBe(join(loc.projectRoot, "plans", "fix-bug-aaaa-000b.md"));
   expect(await readFile(copy ?? "", "utf8")).toBe("project plan");
   expect((await readdir(join(loc.projectRoot, "plans"))).sort()).toEqual(["fix-bug-aaaa-000b.md", "fix-bug-aaaa.md"]);
 });
+
+const NOT_PLANS: readonly [string, "none" | "plans" | "root"][] = [
+  [".env", "none"],
+  [".env", "root"],
+  ["AGENTS.md", "root"],
+  [".dovet/settings.json", "root"],
+  ["plans/../.env", "plans"],
+  ["plans/notes.md", "plans"],
+];
+for (const [name, where] of NOT_PLANS) {
+  // spec: tools §11.1
+  test(`a fork copies no project file the log names (${name}, plan.directory ${where})`, async () => {
+    const loc = await location();
+    const victim = join(loc.projectRoot, name);
+    await mkdir(dirname(victim), { recursive: true });
+    await writeFile(victim, "SECRETKEY");
+    await parent(loc, victim);
+    const projectPlans =
+      where === "none" ? {} : { projectPlans: join(loc.projectRoot, where === "root" ? "" : "plans") };
+    await forkAtTurn(loc, FORK, 2, { ...deps(), ...projectPlans });
+    expect(await planOf({ ...loc, session: FORK })).toBeNull();
+    const files = await readdir(loc.projectRoot, { recursive: true });
+    expect(files.filter((f) => /-000\w\b/.test(f))).toEqual([]);
+  });
+}
 
 // spec: tools §11.1
 test("a plan that was never written is still re-pointed, and nothing is copied or fails", async () => {

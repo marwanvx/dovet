@@ -1,7 +1,7 @@
 // A fork's own copy of the session's plan file (tools §11.1 "A fork gets its own copy"; QUESTIONS Q85).
 import { constants, copyFile, mkdir } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
-import { canonicalizePath, isErrno, isWithin, lexicalPath, PathRefused } from "../../platform/index.ts";
+import { canonicalizePath, isErrno, isWithin, lexicalPath, PathRefused, pathKey } from "../../platform/index.ts";
 import type { EventEnvelope } from "../../schema/index.ts";
 import { eventLine } from "./lines.ts";
 import { planDir, type SessionLocation } from "./paths.ts";
@@ -16,6 +16,9 @@ export function planFileOf(e: Pick<EventEnvelope, "type" | "data">): string | nu
   return typeof d.new === "string" ? d.new : null;
 }
 
+/** Plan files are `<slug>-<4 characters>.md` (tools §11.1), which no instruction, settings or environment file is. */
+const PLAN_FILE_NAME = /-[0-9a-z]{4}\.md$/i;
+
 function inProject(loc: SessionLocation, path: string): boolean {
   const canonical = canonicalizePath(path, loc.projectRoot, loc.os);
   const root = canonicalizePath(loc.projectRoot, loc.projectRoot, loc.os);
@@ -24,13 +27,14 @@ function inProject(loc: SessionLocation, path: string): boolean {
     isWithin(canonical, root, loc.os) &&
     !relative(root, canonical)
       .split(sep)
-      .some((part) => part.toLowerCase() === ".git")
+      .some((part) => part.startsWith("."))
   );
 }
 
 /**
- * The directory `plan.directory` names, when it is inside the project (links followed) and not in `.git`; anything else
- * would let a plan file, which plan mode may write without asking, land where no other write is allowed (tools §11.1).
+ * The directory `plan.directory` names, when it is inside the project (links followed) and no part of it starts with a
+ * dot: plan mode may write the plan file without asking and no path check runs on it, so it must not be able to reach
+ * `.git`, `.dovet`, `.claude`, `.env*` or any other place the policy protects (tools §11.1).
  */
 export function projectPlanDir(loc: SessionLocation, planDirectory: string): string | undefined {
   const dir = join(loc.projectRoot, planDirectory);
@@ -44,13 +48,18 @@ export function projectPlanDir(loc: SessionLocation, planDirectory: string): str
 
 /**
  * Whether a plan file named by the log (resume, fork) is one this session could have made: in its own plan folder, or
- * in `within` (default: anywhere in the project) under the same rules as `projectPlanDir`. The log is untrusted input.
+ * directly in `projectPlans` (what `projectPlanDir` gave) under a plan file's name. The log is untrusted input.
  */
-export function planFileAllowed(loc: SessionLocation, file: string, within?: string): boolean {
+export function planFileAllowed(loc: SessionLocation, file: string, projectPlans?: string): boolean {
   try {
-    if (isWithin(lexicalPath(file, loc.projectRoot, loc.os), planDir(loc), loc.os)) return true;
-    const root = within ?? loc.projectRoot;
-    return isWithin(lexicalPath(file, loc.projectRoot, loc.os), root, loc.os) && inProject(loc, file);
+    const lexical = lexicalPath(file, loc.projectRoot, loc.os);
+    if (isWithin(lexical, planDir(loc), loc.os)) return true;
+    return (
+      projectPlans !== undefined &&
+      PLAN_FILE_NAME.test(lexical) &&
+      pathKey(dirname(lexical), loc.os) === pathKey(lexicalPath(projectPlans, loc.projectRoot, loc.os), loc.os) &&
+      inProject(loc, file)
+    );
   } catch (err) {
     if (err instanceof PathRefused) return false;
     throw err;
@@ -68,8 +77,9 @@ export async function forkPlanLine(
   parentPlan: string,
   epoch: number,
   deps: { ids: { ulid(): string }; clock: { now(): number } },
+  projectPlans?: string,
 ): Promise<string> {
-  if (!planFileAllowed(parent, parentPlan))
+  if (!planFileAllowed(parent, parentPlan, projectPlans))
     return eventLine(
       "settings.change",
       { session: child.session, epoch },
