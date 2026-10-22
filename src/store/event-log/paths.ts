@@ -19,3 +19,8 @@ export function sessionPaths(loc: SessionLocation): { dir: string; log: string; 
   const base = join(dir, loc.session);
   return { dir, log: `${base}.jsonl`, lock: `${base}.lock`, meta: `${base}.meta.json` };
 }
+
+/** Where a session's own plan files live: `<data>/projects/<project>/plans/<session>` (tools §11.1; QUESTIONS Q85). */
+export function planDir(loc: SessionLocation): string {
+  return join(loc.data, "projects", projectId(loc.projectRoot, loc.os), "plans", loc.session);
+}

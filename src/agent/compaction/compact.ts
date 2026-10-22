@@ -1,5 +1,5 @@
 // A compaction as events to append, and its undo (context §6 "Shape", "Procedure", "Undo").
-import type { EpochHeader, RenderInput } from "../../ai/index.ts";
+import type { EpochHeader, RenderInput, TranscriptItem } from "../../ai/index.ts";
 import {
   CompactionData,
   EpochStartData,
@@ -8,8 +8,9 @@ import {
   UserMessageData,
 } from "../../schema/index.ts";
 import { CHARS_PER_TOKEN } from "../budgets/estimate.ts";
-import { buildRequest, epochLineage, startEpoch } from "../transcript/index.ts";
+import { buildRequest, epochLineage, inLineage, startEpoch } from "../transcript/index.ts";
 import { prompt } from "../transcript/prompts.ts";
+import { transcriptChars } from "./estimate.ts";
 import { collectFacts, type FactsState, renderFacts } from "./facts.ts";
 import { renderFirstMessage, retainBudget, retainUserMessages } from "./first-message.ts";
 import { type SendSummary, summarize } from "./summarize.ts";
@@ -22,6 +23,8 @@ export type CompactInput = {
   trigger: CompactionData["trigger"];
   /** Extra instructions after `/compact`. */
   focus?: string;
+  /** "Summarize up to here": only turns before this one are summarized; it and the later turns are kept (trigger `partial`). */
+  upToTurn?: number;
   window: number;
   imageTokens: number;
   tokensBefore: number;
@@ -49,6 +52,7 @@ const maxEpoch = (events: readonly EventEnvelope[]): number =>
 function userWords(
   events: readonly EventEnvelope[],
   epoch: number,
+  upToTurn: number | undefined,
 ): { words: string[]; pending: CompactResult["pending"] } {
   const lineage = epochLineage(events, epoch);
   const cancelled = new Set(
@@ -58,8 +62,14 @@ function userWords(
   );
   const words = [...(lineage.base?.retained ?? [])];
   let pendingIndex = -1;
-  const mine = events.filter((e) => lineage.epochs.has(e.epoch) && (e.turn === null || !cancelled.has(e.turn)));
+  const mine = events.filter(
+    (e) =>
+      inLineage(lineage, e) &&
+      (e.turn === null || !cancelled.has(e.turn)) &&
+      (upToTurn === undefined || e.turn === null || e.turn < upToTurn),
+  );
   for (const e of mine) if (e.type === "user.message") words.push(UserMessageData.parse(e.data).text);
+  if (upToTurn !== undefined) return { words, pending: null };
   for (const e of mine.toReversed()) {
     if (e.type === "model.response" || e.type === "tool.result") break;
     if (e.type === "user.message") {
@@ -73,8 +83,32 @@ function userWords(
   return { words, pending: null };
 }
 
+/** What the new epoch of a partial compaction sends besides its system prompt and tools, built the way a request builds it. */
+function carriedTranscript(
+  a: CompactInput,
+  started: ReturnType<typeof startEpoch>,
+  compaction: CompactionData,
+): TranscriptItem[] {
+  const last = a.events.at(-1);
+  if (last === undefined) return [];
+  const probe = (type: "epoch.start" | "compaction", data: unknown): EventEnvelope => ({
+    ...last,
+    type,
+    epoch: compaction.to,
+    turn: null,
+    data,
+  });
+  const events = [...a.events, probe("epoch.start", started.event), probe("compaction", compaction)];
+  return buildRequest(events, { header: started.header, params: a.params, cache: a.cache }).transcript;
+}
+
 export async function compact(a: CompactInput): Promise<CompactResult | { aborted: true }> {
-  const transcript = buildRequest(a.events, { header: a.header, params: a.params, cache: a.cache }).transcript;
+  const { upToTurn } = a;
+  const summarized = upToTurn === undefined ? a.events : a.events.filter((e) => e.turn === null || e.turn < upToTurn);
+  const { words, pending } = userWords(a.events, a.header.epoch, upToTurn);
+  if (upToTurn !== undefined && words.length === 0)
+    throw new RangeError(`nothing to summarize before turn ${upToTurn}`);
+  const transcript = buildRequest(summarized, { header: a.header, params: a.params, cache: a.cache }).transcript;
   const promptText =
     a.focus === undefined || a.focus.trim() === ""
       ? prompt("compact.md")
@@ -89,13 +123,12 @@ export async function compact(a: CompactInput): Promise<CompactResult | { aborte
     ...(a.failover === undefined ? {} : { failover: a.failover }),
   });
   if (summary.kind === "aborted") return { aborted: true };
-  const { words, pending } = userWords(a.events, a.header.epoch);
   const { kept, omitted } = retainUserMessages(words, retainBudget(a.window));
   const firstMessage = renderFirstMessage({
     kept,
     omitted,
     summary: summary.kind === "summary" ? summary.text : null,
-    facts: renderFacts(collectFacts(a.events, a.facts)),
+    facts: renderFacts(collectFacts(summarized, a.facts)),
   });
   const epoch = maxEpoch(a.events) + 1;
   const systemText = await a.renderSystem();
@@ -108,22 +141,30 @@ export async function compact(a: CompactInput): Promise<CompactResult | { aborte
     toolsJson: a.header.toolsJson,
     thinking: a.header.thinking,
   });
-  const chars = systemText.length + a.header.toolsJson.length + firstMessage.length + (pending?.text.length ?? 0);
+  const keepsTurns = upToTurn !== undefined;
+  const compaction = CompactionData.parse({
+    from: a.header.epoch,
+    to: epoch,
+    trigger: a.trigger,
+    kind: summary.kind === "summary" ? "summary" : "mechanical-fallback",
+    ...(keepsTurns ? { keepFromTurn: upToTurn } : {}),
+    firstMessage,
+    retained: kept,
+    reduced: summary.reduced,
+    tokensBefore: Math.round(a.tokensBefore),
+    tokensAfter: 0,
+    ...(summary.kind === "summary" ? { usage: summary.usage } : {}),
+    costUsd: summary.costUsd,
+  });
+  const chars =
+    systemText.length +
+    a.header.toolsJson.length +
+    (keepsTurns
+      ? transcriptChars(carriedTranscript(a, started, compaction))
+      : firstMessage.length + (pending?.text.length ?? 0));
   return {
     epochStart: started.event,
-    compaction: CompactionData.parse({
-      from: a.header.epoch,
-      to: epoch,
-      trigger: a.trigger,
-      kind: summary.kind === "summary" ? "summary" : "mechanical-fallback",
-      firstMessage,
-      retained: kept,
-      reduced: summary.reduced,
-      tokensBefore: Math.round(a.tokensBefore),
-      tokensAfter: Math.ceil(chars / CHARS_PER_TOKEN),
-      ...(summary.kind === "summary" ? { usage: summary.usage } : {}),
-      costUsd: summary.costUsd,
-    }),
+    compaction: { ...compaction, tokensAfter: Math.ceil(chars / CHARS_PER_TOKEN) },
     pending,
     notice:
       summary.kind === "summary"

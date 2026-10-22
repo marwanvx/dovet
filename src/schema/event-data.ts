@@ -117,6 +117,8 @@ export const CompactionData = z.object({
   trigger: z.enum(["auto", "manual", "context-exceeded", "partial"]),
   kind: z.enum(["summary", "mechanical-fallback", "undo"]),
   restores: z.number().int().nonnegative().optional(),
+  /** "Summarize up to here": the turns from this one on stay as they were and follow the first message. */
+  keepFromTurn: z.number().int().positive().optional(),
   /** The exact bytes of the new epoch's first user message (empty for `undo`). */
   firstMessage: z.string(),
   /** The user messages kept in it, so the next compaction carries them on. */

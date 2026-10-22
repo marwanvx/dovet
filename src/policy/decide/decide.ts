@@ -120,7 +120,6 @@ function pathLifted(st: State, access: "read" | "edit", path: string, exact = fa
 
 function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false): Finding[] {
   const { env } = st;
-  if (t.access === "edit" && env.planFile !== undefined && t.path === env.planFile) return [];
   const forms = resolveForms(env, expandHome(env, t.path), t.cwd);
   if (forms === undefined)
     return [finding("network-path", `${t.path} is a network or device path`, file ? "deny" : "ask")];
@@ -144,7 +143,9 @@ function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false
       }),
     );
   }
-  if (!insideWorkingDirs(env, forms) && !(sandboxedRead && t.access === "read")) {
+  // The plan file may live in the session's folder under the data dir; every other check still runs on it.
+  const planFile = file && env.planFile !== undefined && t.path === env.planFile;
+  if (!insideWorkingDirs(env, forms) && !(sandboxedRead && t.access === "read") && !planFile) {
     if (file && t.access === "read" && st.blockReadsOutsideWorkingDirectories === true)
       out.push(
         finding("outside", `outside working directory: ${t.path} (reads there are blocked)`, "deny", { path: abs }),
@@ -406,8 +407,11 @@ export function decide(req: Request, st: State): Decision {
   if (match?.behavior === "deny") return out("deny", `denied by ${match.rule}`, `rule ${match.rule}`, { rule: match });
   const hard = findings.find((f) => f.outcome === "deny" && !f.lifted);
   if (hard !== undefined) return out("deny", hard.detail, hard.by);
+  const asks = findings.filter((f) => f.outcome === "ask" && !f.lifted && !(bypass && BYPASS_SKIPS.has(f.kind)));
   if (
     a.kind === "edit" &&
+    asks.length === 0 &&
+    match?.behavior !== "ask" &&
     st.env.planFile !== undefined &&
     a.paths.length > 0 &&
     a.paths.every((p) => p === st.env.planFile)
@@ -416,7 +420,6 @@ export function decide(req: Request, st: State): Decision {
   if (a.kind === "edit" && st.mode === "plan")
     return out("deny", "plan mode: nothing changes until the plan is approved", "the plan mode default");
 
-  const asks = findings.filter((f) => f.outcome === "ask" && !f.lifted && !(bypass && BYPASS_SKIPS.has(f.kind)));
   const first = asks[0];
   if (first !== undefined) {
     const countdown = asks.some((f) => f.countdown === true);

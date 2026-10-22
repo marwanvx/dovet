@@ -585,6 +585,28 @@ describe("modes", () => {
   });
 
   // spec: AC-PERM-17
+  test("the plan file skips only the plan-mode default and the working-directory check, never a protected or sensitive one", () => {
+    const outside = join(root, "..", "data", "plans", "s", "p-ab12.md");
+    expect(file("edit", outside, state("plan", {}, { env: env({ planFile: outside }) })).behavior).toBe("allow");
+    expect(file("read", outside, state("plan", {}, { env: env({ planFile: outside }) })).behavior).toBe("allow");
+    for (const planFile of [join(root, ".env"), join(root, ".dovet", "settings.json"), join(root, ".git", "config")]) {
+      const inPlan = state("plan", {}, { env: env({ planFile }) });
+      expect(file("edit", planFile, inPlan).behavior, planFile).toBe("deny");
+      expect(file("edit", planFile, state("acceptEdits", {}, { env: env({ planFile }) })).behavior, planFile).toBe(
+        "ask",
+      );
+    }
+    const docs = join(root, "docs", "plans", "p-ab12.md");
+    for (const mode of ["plan", "default", "acceptEdits"] as const)
+      expect(
+        file("edit", docs, state(mode, { ask: ["Edit(docs/plans/**)"] }, { env: env({ planFile: docs }) })).behavior,
+        mode,
+      ).toBe(mode === "plan" ? "deny" : "ask");
+    const env_ = join(root, ".env");
+    expect(file("read", env_, state("plan", {}, { env: env({ planFile: env_ }) })).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-17
   test("a write to .git/config prompts in bypassPermissions; bypass otherwise allows, dontAsk never prompts", () => {
     expect(file("edit", join(root, ".git", "config"), state("bypassPermissions")).behavior).toBe("ask");
     expect(sh("npm install", state("bypassPermissions")).behavior).toBe("allow");

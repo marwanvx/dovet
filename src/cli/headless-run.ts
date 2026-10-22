@@ -1,5 +1,5 @@
 // Headless agent turn (tui "Headless mode", agent-loop "Turn state machine", event-log "Resume", providers §1).
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import pkg from "../../package.json";
 import {
@@ -20,6 +20,7 @@ import {
   estimateContext,
   estimateRequest,
   executeTools,
+  forkedPlanUnannounced,
   GuardTracker,
   hasOpenRound,
   headerOf,
@@ -32,11 +33,14 @@ import {
   type Limits,
   type LoadedInstruction,
   MAX_REQUESTS_PER_TURN,
+  modeChangeInstructions,
   modelRequestBody,
   modelRequestData,
+  newPlanFile,
   type ParsedCall,
   PLACEHOLDER_RATES,
   parseToolCalls,
+  planReattach,
   prefixFingerprint,
   prompt,
   REFUSAL_NOT_RUN,
@@ -111,8 +115,12 @@ import {
   type LoadInput,
   openCheckpoints,
   openSession,
+  PLAN_FILE_KEY,
+  planDir,
+  planFileAllowed,
   pollSettings,
   projectId,
+  projectPlanDir,
   REPAIR_HINT,
   readSession,
   repairEpochEvent,
@@ -601,7 +609,36 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       });
     const parsers = await loadShellParsers().catch(() => undefined);
     const home = input.env.HOME ?? input.env.USERPROFILE ?? "/tmp";
+    const resumedFrom = resumed.lines > 0 && resumed.state.mode !== "" ? resumed.state.mode : undefined;
+    const planDirectory = snapshot.loaded.settings.plan?.directory;
+    const projectPlans =
+      planDirectory === undefined || planDirectory === "" ? undefined : projectPlanDir(loc, planDirectory);
+    if (projectPlans === undefined && planDirectory !== undefined && planDirectory !== "")
+      warnings.push(
+        `plan.directory "${planDirectory}" is not inside the project (or a part of it starts with a dot): plans go in the session's own folder`,
+      );
+    let planFile: string | undefined = resumed.lines > 0 ? (resumed.state.planFile ?? undefined) : undefined;
+    if (planFile !== undefined && !planFileAllowed(loc, planFile, projectPlans)) {
+      warnings.push(
+        `ignored the logged plan file ${planFile}: it is not in this session's plan folder or plan.directory`,
+      );
+      planFile = undefined;
+    }
+    let planAnnounced = planFile !== undefined;
+    const ensurePlanFile = (): string => {
+      planFile ??= newPlanFile(loc, planDirectory, input.prompt);
+      return planFile;
+    };
+    const announcePlanFile = (epoch: number, turnNo: number | null): void => {
+      if (planAnnounced || planFile === undefined) return;
+      planAnnounced = true;
+      push("settings.change", epoch, turnNo, { key: PLAN_FILE_KEY, old: null, new: planFile, source: "plan" });
+    };
+    if (mode === "plan") ensurePlanFile();
     const policyEnv = {
+      get planFile(): string | undefined {
+        return planFile;
+      },
       os: input.os,
       home,
       cwd: input.cwd,
@@ -610,6 +647,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       pid: input.pid,
       ppid: input.pid,
       selfNames: ["dovet", "bun"] as readonly string[],
+      ownFiles: [planDir(loc)] as readonly string[],
     };
     if (defs.some((d) => SHELL_TOOLS.includes(d.name)) && input.settings.settings.sandbox?.enabled !== false) {
       const rg = input.platform.libexec("rg");
@@ -646,6 +684,22 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         throw err;
       }
     })();
+    const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
+    // The plan text goes to the model, so it is read only where Read would be allowed (tools §11.1).
+    const readPlanText = async (path: string): Promise<string | null> => {
+      const decision =
+        instructionRules === undefined
+          ? undefined
+          : decide(
+              { tool: "Read", action: { kind: "read", paths: [path, policyEnv.canonicalize(path)] } },
+              { mode, rules: instructionRules, env: policyEnv, tainted: sessionTaint.length > 0 },
+            );
+      if (decision?.behavior !== "allow") {
+        warnings.push(`did not read the plan file ${path}: ${decision?.reason ?? "the settings did not load"}`);
+        return null;
+      }
+      return readFile(path, "utf8").catch((err: unknown) => (isErrno(err, "ENOENT") ? null : Promise.reject(err)));
+    };
     const instructionContext: InstructionContext = {
       os: input.os,
       home: home as AbsPath,
@@ -694,6 +748,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       return renderSystemPrompt(
         {
           mode,
+          ...(planFile === undefined ? {} : { planFile }),
           sandbox: input.settings.settings.sandbox?.enabled !== false,
           headless: true,
           webSearch: defs.some((d) => d.name === "WebSearch"),
@@ -728,6 +783,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       params = { maxTokens: 4096, ...(effort === undefined ? {} : { effort }) };
       push("session.start", 0, null, { mode });
       push("epoch.start", 0, null, started.event);
+      announcePlanFile(0, null);
       if (instructions.launchEvent.files.length > 0 || instructions.launchEvent.warnings.length > 0)
         push("instructions.loaded", 0, null, instructions.launchEvent);
       push("user.message", 0, 1, { text: input.prompt });
@@ -796,6 +852,16 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       for (const part of instructions.resumeUpdates)
         push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
       if (instructions.resumeUpdates.length > 0) push("instructions.loaded", epochNum, null, instructions.launchEvent);
+      announcePlanFile(epochNum, turn);
+      if (planFile !== undefined && forkedPlanUnannounced(events)) {
+        const part = planReattach(planFile, await readPlanText(planFile));
+        push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+      }
+      if (flagMode !== undefined && resumedFrom !== undefined && resumedFrom !== mode) {
+        push("settings.change", epochNum, turn, { key: "mode", old: resumedFrom, new: mode, source: "flag" });
+        for (const part of modeChangeInstructions(resumedFrom as PermissionMode, mode, planFile))
+          push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+      }
       push("user.message", epochNum, turn, { text: input.prompt });
     }
 
@@ -821,7 +887,6 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let effectiveSettings = snapshot.loaded.settings;
     const readState = createReadState(input.os);
     const baseSignal = input.signal ?? new AbortController().signal;
-    const sessionTaint: string[] = resumed.lines > 0 ? [...resumed.state.taint] : [];
     const taintFrom = (sources: readonly string[]): void => {
       for (const source of sources) {
         if (sessionTaint.includes(source)) continue;
@@ -946,6 +1011,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
 
     const buildCtx = (): ToolContext => ({
       ...baseCtx,
+      session: { ...baseCtx.session, mode },
       ...(checkpoints.shell === undefined ? {} : { snapshots: checkpoints.shell }),
       settings: effectiveSettings,
       readResults: buildReadResultsIndex(events, epochNum),
@@ -957,6 +1023,23 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       },
     });
     let ctx = buildCtx();
+    const modeChangedBy = new Set<string>();
+    /** A tool asked for a mode (EnterPlanMode): logged, told to the model, and in force for the calls after it. */
+    const applyResultMode = (r: ExecutedResult): void => {
+      for (const eff of r.output.meta?.effects ?? []) {
+        if (eff.kind !== "set-mode" || modeChangedBy.has(r.callId) || eff.mode === mode) continue;
+        modeChangedBy.add(r.callId);
+        const from = mode;
+        const next = eff.mode === "auto" ? "default" : eff.mode;
+        mode = next;
+        if (next === "plan") ensurePlanFile();
+        announcePlanFile(epochNum, turn);
+        push("settings.change", epochNum, turn, { key: "mode", old: from, new: next, source: "tool" });
+        for (const part of modeChangeInstructions(from, next, planFile))
+          push("system.injected", epochNum, turn, { text: part.text, reason: part.reason, delivery: "reminder-block" });
+        ctx = buildCtx();
+      }
+    };
     const decideFn = (name: string, value: unknown): { behavior: "allow" | "ask" | "deny"; reason: string } => {
       if (input.args.offline && (name === "WebFetch" || name === "WebSearch"))
         return { behavior: "deny", reason: offlineRefusal(name as "WebFetch" | "WebSearch") };
@@ -1089,7 +1172,19 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         window: contextWindow,
         imageTokens: DEFAULT_IMAGE_TOKENS,
         tokensBefore,
-        facts: { mode, tainted: sessionTaint, grants: [], workingDirs: [input.projectRoot], plan: null },
+        facts: {
+          mode,
+          tainted: sessionTaint,
+          grants: [],
+          workingDirs: [input.projectRoot],
+          plan:
+            planFile === undefined
+              ? null
+              : {
+                  path: planFile,
+                  text: await readPlanText(planFile),
+                },
+        },
         renderSystem: renderSystemNow,
         send: sendSummary,
       });
@@ -1795,6 +1890,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           });
           for (const f of r.output.meta?.fileChanges ?? []) push("file.change", epochNum, turn, f);
           applyResultTaint(r);
+          applyResultMode(r);
         }
         mediaBudget.settle();
       };
@@ -1809,7 +1905,10 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
           await pollAndApply();
           ctx = buildCtx();
         },
-        onResult: applyResultTaint,
+        onResult: (r) => {
+          applyResultTaint(r);
+          applyResultMode(r);
+        },
         offloadDir: join(sessionPaths(loc).dir, sessionId, "outputs"),
         headless: true,
         capBytes: requestCapFor(provider),

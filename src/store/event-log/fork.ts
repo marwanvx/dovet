@@ -3,6 +3,7 @@ import { mkdir, open, rm } from "node:fs/promises";
 import { UserMessageData } from "../../schema/index.ts";
 import { createBlobStore } from "../blobs/index.ts";
 import { type SessionLocation, sessionPaths } from "./paths.ts";
+import { forkPlanLine, planFileOf } from "./plan.ts";
 import { resolveBlobs } from "./reader.ts";
 import { eventLines, sessionForkLine } from "./resume.ts";
 
@@ -16,7 +17,7 @@ export async function forkAtTurn(
   loc: SessionLocation,
   session: string,
   turn: number,
-  deps: { ids: { ulid(): string }; clock: { now(): number } },
+  deps: { ids: { ulid(): string }; clock: { now(): number }; projectPlans?: string },
 ): Promise<{ loc: SessionLocation; copied: number; parentEvent: string; message: UserMessageData }> {
   const next: SessionLocation = { ...loc, session };
   const paths = sessionPaths(next);
@@ -25,6 +26,7 @@ export async function forkAtTurn(
   let copied = 0;
   let parentEvent = "";
   let epoch = 0;
+  let plan: string | null = null;
   let message: UserMessageData | undefined;
   const events = eventLines(sessionPaths(loc).log);
   try {
@@ -37,9 +39,12 @@ export async function forkAtTurn(
       copied++;
       parentEvent = e.id;
       epoch = Math.max(epoch, e.epoch);
+      const named = planFileOf(e);
+      if (named !== undefined) plan = named;
     }
     if (message !== undefined) {
       await out.appendFile(sessionForkLine({ session, epoch, parent: loc.session, parentEvent }, deps));
+      if (plan !== null) await out.appendFile(await forkPlanLine(loc, next, plan, epoch, deps, deps.projectPlans));
       await out.sync();
     }
   } finally {

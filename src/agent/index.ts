@@ -5,5 +5,6 @@ export * from "./budgets/index.ts";
 export * from "./compaction/index.ts";
 export * from "./interrupts.ts";
 export * from "./loop.ts";
+export * from "./plan.ts";
 export * from "./session-api.ts";
 export * from "./transcript/index.ts";

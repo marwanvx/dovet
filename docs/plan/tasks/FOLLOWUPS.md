@@ -14,8 +14,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F27 (M2-15 security review): `permissions.sensitiveFiles` never reaches the policy
+- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts` (`policyEnv` has no `sensitiveFiles`); nothing in `src/` sets `Env.sensitiveFiles`, which only ripgrep's globs use (`src/tools/sensitive-files.ts`, `src/tools/rg.ts`)
+- A user who adds `**/*.secret` to `permissions.sensitiveFiles` still gets Read of such a file allowed without the sensitive-file ask, and a plan file matching it is still re-attached. Pass the setting into every `Env` the policy gets.
+
+### F25 (M2-15): headless `ExitPlanMode` is denied, so a headless plan is never presented
+- **Severity:** minor · `src/cli/headless-run.ts` (`decideFn`), `src/tools/plan-mode.ts:99`
+- A scripted model that writes its plan and calls `ExitPlanMode` in `--permission-mode plan` gets `Permission denied: needs the user's answer` (interaction actions ask, headless denies). Tools §11.3 says headless returns the plan as the turn's result with a `plan` event, mode staying `plan`. Allow the call when the mode is `plan`, log `plan.presented`, and make the result the turn's text; the `plan` stream event waits for `--output stream-json`. `ExitPlanMode` is the only tool that reads `ctx.session.mode`, so the rebuild of the tool context after EnterPlanMode (`applyResultMode`) has no observable effect until then: add a test that ExitPlanMode called after EnterPlanMode in the same round is not told "Not in plan mode".
+
 ### F24 (F16 CI): two more Windows tests timed out on a slow runner
-- **Severity:** minor (first sighting) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
+- **Severity:** major (second sighting, M2-15 CI run 39714803004: `headless-budget.test.ts` ×3 at 5,001 ms and `snapshots.test.ts` "a blob that is gone…" / "plan lists the paths…" at 5,004–5,218 ms with `git fast-import` failing and EBUSY on cleanup; all passed on a rerun of the same commit) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
 - `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.
 
 ### F23 (M2-14 review): a forced compaction skips the compaction-thrash guard
@@ -67,6 +75,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F26 (M2-15): the policy's plan-file shortcut skips every path check, so each place that picks a plan file has to re-validate
+- **Severity:** major · `src/policy/decide/decide.ts:123` and `:409-414`, `src/store/event-log/plan.ts` (`projectPlanDir`, `planFileAllowed`), `src/cli/headless-run.ts` (plan re-attach read, Dovet facts read)
+- `t.path === env.planFile` returns before the protected-path, sensitive-file, outside-project and link checks, so M2-15 confines the plan file where it is chosen (`plan.directory`, a logged path on resume, a fork's copy). Three review rounds each found another way past that: `..` and `.git`, then `.dovet`/`.env` inside the project, then a link with a plan file's name pointing at a key (a link is now refused, with a test). The same class is still open: the session-plan-folder branch checks the path lexically only; the plan text is read for the re-attach and the facts with no sensitive-file check; Windows short names and alternate streams were read but not run.
+- **Fixed (PR 183):** the policy's plan-file exception now skips only the plan-mode default and the working-directory check; protected, sensitive and deny-rule checks run on the plan file, the session's plan folder is in `ownFiles`, and the plan text for a re-attach or the compaction facts is read only where Read is allowed (`readPlanText`). Tests: `decide.test.ts` "the plan file skips only…", `headless-plan.test.ts` "a plan file a Read rule denies…". `planFileAllowed` stays as the location rule for a logged path (a link check is still needed there: the fork's `copyFile` follows links).
 
 ### F16 (M2-08, M2-09, M2-09c, M2-14 CI): the 500 MB resume test flaked four times
 - **Severity:** major (memory on Ubuntu and on macOS twice, the 2 s limit on Windows) · `src/store/event-log/resume.test.ts` (AC-LOG-13)

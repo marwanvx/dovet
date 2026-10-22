@@ -417,6 +417,15 @@ Further behavior:
 - Headless: ExitPlanMode returns the plan text with the file path, no dialog, and the mode stays `plan`.
 - Results: edited `The user edited the plan; the approved version is in <file>`; approved `Plan approved. Continuing in <mode>.`; Esc `The user hasn't approved the plan yet`; mode change `The user left plan mode without approving the plan`; keep planning returns the feedback verbatim; outside plan mode `Not in plan mode. The plan was already approved; continue with the implementation.`
 
+**Decided while building (QUESTIONS Q86):**
+- Headless plan file: `<data>/projects/<project>/plans/<session>/<slug>.md` (or under `plan.directory`), made when plan mode starts without one (launch, a resume asking for plan, EnterPlanMode).
+- The log records it as `settings.change` `planFile`; a mode set by a tool or flag is `settings.change` `mode` plus a `mode-change` instruction. Leaving plan mode with a plan file adds `plan-approved`.
+- A fork copies the plan file and ends its copied events with a `planFile` change (source `fork`); its first run adds `plan-reattach` (new path and plan text), since the system prompt names the parent's.
+- After a compaction the plan file's path and text come back in the Dovet facts ([context §6](context.md)).
+- The plan file is named by its real path: Edit and Write offer the policy the written and the real path, and plan mode allows the edit only when both are the plan file.
+- `plan.directory` is used only inside the project (links followed) with no dot-prefixed part (never `.git`, `.dovet`, `.claude`), else the session's own folder with a warning. For the plan file the policy skips only the plan-mode default and the working-directory check (ask rules still ask); its text is re-attached only where Read is allowed. A logged plan file (resume, fork) is accepted only from the session's plan folder, or directly in `plan.directory` named `<slug>-<4 characters>.md`, and never as a link; else it is ignored with a warning and a fork records none. A resume without `--permission-mode` records no mode change.
+- Headless ExitPlanMode is not wired yet: it is denied as an interaction (FOLLOWUPS F25).
+
 ## 12. TodoWrite
 
 The task list the model keeps for multi-step work. The user sees it live (TUI panel above the input, [tui](tui.md); headless `dovet.stream/1` events), and in headless runs it drives the open-items continuation ([agent-loop](agent-loop.md)). 

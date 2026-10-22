@@ -23,7 +23,12 @@ function normalized(response: StoredResponse): StoredResponse | null {
   return parts.length === 0 ? null : { ...response, parts };
 }
 
-export type Lineage = { base: CompactionData | null; epochs: Set<number> };
+/** `carry`: after "Summarize up to here", the earlier epochs whose turns from `fromTurn` on continue into this epoch. */
+export type Lineage = {
+  base: CompactionData | null;
+  epochs: Set<number>;
+  carry: { epochs: Set<number>; fromTurn: number } | null;
+};
 
 /**
  * The epochs whose events make up epoch `epoch`'s transcript, and the compaction whose first message starts it. An undo
@@ -31,11 +36,23 @@ export type Lineage = { base: CompactionData | null; epochs: Set<number> };
  */
 export function epochLineage(events: readonly EventEnvelope[], epoch: number): Lineage {
   const made = events.findLast((e) => e.type === "compaction" && CompactionData.parse(e.data).to === epoch);
-  if (made === undefined) return { base: null, epochs: new Set([epoch]) };
+  if (made === undefined) return { base: null, epochs: new Set([epoch]), carry: null };
   const c = CompactionData.parse(made.data);
-  if (c.kind !== "undo" || c.restores === undefined) return { base: c, epochs: new Set([epoch]) };
+  if (c.kind !== "undo" || c.restores === undefined) {
+    if (c.keepFromTurn === undefined) return { base: c, epochs: new Set([epoch]), carry: null };
+    const earlier = epochLineage(events, c.from);
+    const epochs = new Set([...earlier.epochs, ...(earlier.carry?.epochs ?? [])]);
+    return { base: c, epochs: new Set([epoch]), carry: { epochs, fromTurn: c.keepFromTurn } };
+  }
   const before = epochLineage(events, c.restores);
-  return { base: before.base, epochs: new Set([...before.epochs, epoch]) };
+  return { base: before.base, epochs: new Set([...before.epochs, epoch]), carry: before.carry };
+}
+
+/** Whether `e` belongs to the lineage's transcript: its own epochs, or a carried turn of an earlier one. */
+export function inLineage(lineage: Lineage, e: EventEnvelope): boolean {
+  if (lineage.epochs.has(e.epoch)) return true;
+  const { carry } = lineage;
+  return carry !== null && carry.epochs.has(e.epoch) && e.turn !== null && e.turn >= carry.fromTurn;
 }
 
 /** A repair epoch after a compaction continues from that compaction's lineage plus every epoch since. */
@@ -45,11 +62,11 @@ function repairLineage(events: readonly EventEnvelope[], epoch: number): Lineage
     const to = CompactionData.parse(e.data).to;
     return to <= epoch ? [to] : [];
   });
-  if (roots.length === 0) return { base: null, epochs: new Set() };
+  if (roots.length === 0) return { base: null, epochs: new Set(), carry: null };
   const root = epochLineage(events, Math.max(...roots));
   const epochs = new Set(root.epochs);
   for (let n = Math.max(...root.epochs) + 1; n <= epoch; n++) epochs.add(n);
-  return { base: root.base, epochs };
+  return { base: root.base, epochs, carry: root.carry };
 }
 
 export function cancelledTurns(events: readonly EventEnvelope[]): Set<number> {
@@ -85,12 +102,12 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
   const lineage = isRepair ? repairLineage(events, epoch.header.epoch) : epochLineage(events, epoch.header.epoch);
   // Before any compaction a repair epoch sees every earlier epoch; afterwards only its lineage.
   const inScope = (e: EventEnvelope): boolean =>
-    isRepair && lineage.epochs.size === 0 ? e.epoch <= epoch.header.epoch : lineage.epochs.has(e.epoch);
+    isRepair && lineage.epochs.size === 0 ? e.epoch <= epoch.header.epoch : inLineage(lineage, e);
   const pairedCallIds = new Set<string>();
   const latestEpochPerTurn = new Map<number, number>();
-  if (isRepair) {
+  if (isRepair || lineage.carry !== null) {
     for (const e of events) {
-      if (e.turn !== null && inScope(e)) {
+      if (isRepair && e.turn !== null && inScope(e)) {
         const cur = latestEpochPerTurn.get(e.turn);
         if (cur === undefined || e.epoch > cur) latestEpochPerTurn.set(e.turn, e.epoch);
       }
@@ -119,7 +136,8 @@ export function buildRequest(events: readonly EventEnvelope[], epoch: BuildEpoch
       open = null;
     } else if (e.type === "model.response") {
       const parsed = StoredResponse.parse(e.data);
-      const response = isRepair ? normalizeForRepair(parsed, pairedCallIds) : normalized(parsed);
+      const carriedTurn = lineage.carry?.epochs.has(e.epoch) === true && !lineage.epochs.has(e.epoch);
+      const response = isRepair || carriedTurn ? normalizeForRepair(parsed, pairedCallIds) : normalized(parsed);
       if (response !== null) {
         const ids = response.parts.flatMap((p) => (p.kind === "tool_call" ? [p.id] : []));
         lastCalls = new Map(ids.map((id, i) => [id, i]));

@@ -19,7 +19,7 @@ export type Env = {
   /** Names `pkill`/`killall` patterns are tried against (the executable's name). */
   selfNames: readonly string[];
   /** The session's plan file, the one write plan mode allows. */
-  planFile?: string;
+  planFile?: string | undefined;
   /** Directories under `.dovet`/`.claude` that hold Dovet's own plan and scratch files. */
   ownFiles?: readonly string[];
   /** `permissions.sensitiveFiles`. */
