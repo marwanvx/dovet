@@ -14,7 +14,9 @@ import {
   type RuleSource,
   ruleTexts,
   splitCommand,
+  strippedArgvs,
 } from "./index.ts";
+import { shellVariants } from "./shell.ts";
 
 const texts = (xs: string[] = []) => xs.map((text) => ({ text }));
 
@@ -462,5 +464,45 @@ describe("edge cases", () => {
       ctx(),
     );
     expect(r.issues).toEqual([]);
+  });
+});
+
+describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F40)", () => {
+  const inner = (command: string) => strippedArgvs(command.split(" ")).map((v) => v.join(" "));
+  // spec: AC-PERM-03
+  test("path-named wrappers, flag clusters, env -S and find -exec reach the inner command", () => {
+    expect(inner("/usr/bin/env rm -rf /")).toContain("rm -rf /");
+    expect(inner("C:\\Windows\\System32\\Sudo.EXE git push")).toContain("git push");
+    expect(inner("sudo -iu me git push")).toContain("git push");
+    expect(inner("sudo -uroot git push")).toContain("git push");
+    expect(inner("timeout -k5 10 git push")).toContain("git push");
+    expect(strippedArgvs(["env", "-S", "X=1 git push", "origin"]).map((v) => v.join(" "))).toContain("git push origin");
+    expect(strippedArgvs(["env", "-iS", "git push"]).map((v) => v.join(" "))).toContain("git push");
+    expect(strippedArgvs(["env", "-uS", "git", "push"]).map((v) => v.join(" "))).toContain("git push");
+    expect(inner("find . -exec true ; -execdir git push + -ok rm x")).toEqual(
+      expect.arrayContaining(["true", "git push", "rm x"]),
+    );
+  });
+
+  // spec: AC-PERM-03
+  test("odd inputs end without a command or a crash", () => {
+    expect(strippedArgvs([])).toEqual([[]]);
+    expect(strippedArgvs([""])).toEqual([[""]]);
+    expect(strippedArgvs(["env", "-S", ""])).toEqual([["env", "-S", ""], ["env"]]);
+    expect(strippedArgvs(["env", "-S"])).toEqual([["env", "-S"]]);
+    expect(strippedArgvs(["find", ".", "-exec", ";"])).toEqual([["find", ".", "-exec", ";"]]);
+    expect(strippedArgvs(["find", "-exec"])).toEqual([["find", "-exec"]]);
+    expect(strippedArgvs(["sudo", "--"])).toEqual([["sudo", "--"]]);
+    expect(inner("/usr/bin/env \u{1F600} x")).toContain("\u{1F600} x");
+    const deep = Array.from({ length: 200 }, () => "env -S").join(" ");
+    expect(strippedArgvs([...deep.split(" "), "git", "push"]).length).toBeGreaterThan(1);
+  });
+
+  // spec: AC-PERM-03
+  test("allow rules strip only safe wrappers called by their bare name", () => {
+    expect(shellVariants(["./timeout", "5", "git", "status"], false)).toEqual(["./timeout 5 git status"]);
+    expect(shellVariants(["timeout", "5", "git", "status"], false)).toContain("git status");
+    expect(shellVariants(["/bin/rm", "x"], true)).toContain("rm x");
+    expect(shellVariants(["/bin/rm", "x"], false)).toEqual(["/bin/rm x"]);
   });
 });

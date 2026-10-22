@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { strippedArgvs } from "../rules/index.ts";
+import { commandName, strippedArgvs } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 
 export const REMOTE_VERSION = 1;
@@ -28,12 +28,7 @@ function gitArgs(args: string[]): string[] {
   return [];
 }
 
-/** `/usr/bin/Git.exe` → `git`. */
-export const program = (name: string | undefined): string =>
-  (name ?? "")
-    .replace(/^.*[\\/]/, "")
-    .replace(/\.exe$/i, "")
-    .toLowerCase();
+export const program = commandName;
 
 const positional = (args: string[]): string[] => args.filter((a) => !a.startsWith("-"));
 const curlUpload = (args: string[]): boolean =>

@@ -302,14 +302,70 @@ describe("guarantee 4: critical-path removals can never be approved by rules", (
   );
 });
 
-// Found by the M2 exit check and logged in FOLLOWUPS (F40-F42); `test.failing` passes while the bug is there and
-// fails the day it is fixed, which is the cue to turn it into a plain test.
-describe("known gaps (FOLLOWUPS F40-F42)", () => {
+describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)", () => {
   // spec: permissions §0 guarantee 4
-  test.failing("F40: a wrapper written as a path still gets the critical-path check", () => {
-    notAllowed(shell("/usr/bin/env rm -rf /", state("default", { allow: ["Bash"] })));
+  test.each([
+    "/usr/bin/env rm -rf /",
+    "/usr/bin/sudo rm -rf /",
+    "/usr/bin/sudo -iu me rm -rf /",
+    "/bin/sh -c 'rm -rf /'",
+    "/usr/bin/env -S 'rm -rf /'",
+    "/usr/bin/nice -n5 /bin/rm -rf ~",
+    "find . -exec rm -rf / \\;",
+    "sudo sh -c 'rm -rf ~'",
+    "find . -exec sh -c 'rm -rf /' \\;",
+  ])("%s still gets the critical-path check under a tool-wide allow", (command) => {
+    for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
   });
 
+  // spec: permissions §0 guarantee 2
+  test.each(["env cat .env", "/usr/bin/env cat .env", "/usr/bin/cat .env", "timeout 5 cat ~/.ssh/id_rsa"])(
+    "%s still reads a sensitive file under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: AC-PERM-03
+  test.each(["/bin/rm x", "/usr/bin/env /bin/rm x", "sudo -iu me rm x", "sudo -uroot rm x", "find . -exec rm {} +"])(
+    "%s is caught by a deny rule for rm",
+    (command) => {
+      const rules = loadRules(
+        [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(rm *)" }] }],
+        { os, home: "/home/u", canonicalize: (p) => p },
+      ).rules;
+      const d = shell(command, { mode: "default", rules, env: env() });
+      expect(d.behavior).toBe("deny");
+      expect(d.reason).toBe("denied by Bash(rm *)");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "/usr/bin/env git push origin main",
+    "sudo -iu me git push origin main",
+    "env -S 'git push origin main'",
+    "env --split-string='git push' origin main",
+    "find . -maxdepth 0 -exec git push origin main \\;",
+    "find . -execdir npm publish +",
+    "C:/Windows/System32/cmd.exe /c git push",
+  ])("%s is a remote action while tainted, even in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: AC-PERM-03
+  test("a program written as a path is not stripped like the wrapper of the same name for an allow rule", () => {
+    for (const command of ["./timeout 5 git status", "/tmp/x/env git status"])
+      notAllowed(shell(command, state("default", { allow: ["Bash(git status)"] })));
+    expect(shell("timeout 5 git status", state("default", { allow: ["Bash(git status)"] })).behavior).toBe("allow");
+  });
+});
+
+// Found by the M2 exit check and logged in FOLLOWUPS (F41-F42); `test.failing` passes while the bug is there and
+// fails the day it is fixed, which is the cue to turn it into a plain test.
+describe("known gaps (FOLLOWUPS F41-F42)", () => {
   // spec: permissions §0 guarantee 3
   test.failing("F41: a git alias for push is still a remote action while tainted", () => {
     notAllowed(shell("git -c alias.p=push p origin main", state("bypassPermissions", { tainted: true })));

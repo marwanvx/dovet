@@ -1,6 +1,6 @@
 // Walks a bash syntax tree: finds every simple command and fails closed on anything off the allowlist (permissions §4.0).
 import type { Node } from "web-tree-sitter";
-import { isSafeEnv, type Redirect, type Subcommand, XARGS_VALUED } from "../rules/index.ts";
+import { commandName, isSafeEnv, type Redirect, type Subcommand, strippedArgvs, XARGS_VALUED } from "../rules/index.ts";
 import type { Context } from "./context.ts";
 import { classify, type Word } from "./read-only.ts";
 
@@ -227,7 +227,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     }
     sub.argv.push(name.text, ...args.map((a) => a.text));
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
-    if (name.text === "xargs") {
+    if (commandName(name.text) === "xargs") {
       const cmd = xargsCommandWord(args);
       if (
         cmd === undefined ||
@@ -239,8 +239,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         ctx.fail("xargs runs a computed command");
       }
     }
-    if (name.text === "env" && args.some((a) => /^(-C|--chdir|-S|--split-string)/.test(a.text))) ctx.fail("env -C");
-    if (SHELLS.has(name.text)) shellScript(args, st);
+    wrapped(name, args, st);
     if (name.text === "cd" || name.text === "pushd" || name.text === "popd") {
       const stayed = changeDirectory(name.text, args, st, cond);
       sub.readOnly = stayed && name.text === "cd" && redirectsOk && !prefixed;
@@ -266,6 +265,25 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       result.paths.push({ text: ".", literal: true, glob: false });
     const awayGit = name.text === "git" && st.cwd !== ctx.opts.cwd && !ctx.opts.workingDirs.some((d) => d === st.cwd);
     sub.readOnly = ctx.checkPaths(result.paths, st.cwd, "read") && redirectsOk && !awayGit;
+  }
+
+  /** What a wrapper runs (`sudo sh -c …`, `/usr/bin/env cat .env`, `find -exec`) gets the same checks as a bare command. */
+  function wrapped(name: Word, args: Word[], st: State): void {
+    const words = new Map<string, Word>();
+    for (const w of [name, ...args]) {
+      const seen = words.get(w.text);
+      words.set(w.text, seen === undefined || (seen.literal && !w.literal) || w.glob ? w : seen);
+    }
+    for (const [i, v] of strippedArgvs([name.text, ...args.map((a) => a.text)]).entries()) {
+      const head = commandName(v[0]);
+      const rest = i === 0 ? args : v.slice(1).map((text) => words.get(text) ?? { text, literal: true, glob: false });
+      if (NEVER_UNDERSTOOD.has(head)) ctx.fail(head);
+      if (head === "env" && rest.some((a) => /^(-[^-]*[CS]|--chdir|--split-string)/.test(a.text))) ctx.fail("env -C");
+      if (SHELLS.has(head)) shellScript(rest, st);
+      if (i === 0 && head === name.text) continue;
+      const read = classify(head, rest);
+      if (read.ok) ctx.checkPaths(read.paths, st.cwd, "read");
+    }
   }
 
   function shellScript(args: Word[], st: State): void {

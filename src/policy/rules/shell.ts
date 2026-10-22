@@ -167,17 +167,71 @@ export const SAFE_ENV = new Set([
 export const isSafeEnv = (name: string): boolean => SAFE_ENV.has(name) || name.startsWith("LC_");
 const ASSIGNMENT = /^([A-Za-z_][A-Za-z0-9_]*)=/;
 
-/** The command with one wrapper or leading assignment removed. `deep` (deny and ask rules) also strips exec wrappers and any assignment. */
-function stripOne(argv: string[], deep: boolean): string[] | undefined {
+/** `/usr/bin/Git.exe` → `git`: the name a program written as a path runs as. */
+export const commandName = (word: string | undefined): string =>
+  (word ?? "")
+    .replace(/^.*[\\/]/, "")
+    .replace(/\.exe$/i, "")
+    .toLowerCase();
+
+/** `-u`, `-iu` and `-uroot` → whether the flag's value is the next word. */
+function takesNext(tok: string, valued: string[]): boolean {
+  if (valued.includes(tok)) return true;
+  if (tok.startsWith("--")) return false;
+  for (let k = 1; k < tok.length; k++) if (valued.includes(`-${tok.charAt(k)}`)) return k === tok.length - 1;
+  return false;
+}
+
+/** `env -S 'a b' c` → `env a b c`: env splits the string and goes on reading its own options from it. */
+function splitString(argv: string[], j: number): string[] | undefined {
+  const tok = argv[j] ?? "";
+  let value: string | undefined;
+  let next = j + 1;
+  if (tok.startsWith("--split-string")) {
+    if (tok.startsWith("--split-string=")) value = tok.slice(15);
+    else if (tok === "--split-string") [value, next] = [argv[j + 1], j + 2];
+  } else if (!tok.startsWith("--")) {
+    const at = [...tok.slice(1)].findIndex((c) => c === "S" || c === "u" || c === "C") + 1;
+    if (tok.charAt(at) === "S")
+      [value, next] = at === tok.length - 1 ? [argv[j + 1], j + 2] : [tok.slice(at + 1), j + 1];
+  }
+  if (value === undefined) return undefined;
+  const words = splitCommand(value)?.flatMap((s) => s.argv) ?? value.split(/\s+/).filter(Boolean);
+  return [argv[0] ?? "env", ...words, ...argv.slice(next)];
+}
+
+const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
+
+/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
+function findCommands(argv: string[]): string[][] {
+  const out: string[][] = [];
+  for (let i = 1; i < argv.length; i++) {
+    if (!FIND_EXEC.test(argv[i] ?? "")) continue;
+    let end = i + 1;
+    while (end < argv.length && argv[end] !== ";" && argv[end] !== "+") end++;
+    if (end > i + 1) out.push(argv.slice(i + 1, end));
+    i = end;
+  }
+  return out;
+}
+
+/**
+ * The commands inside this one, one wrapper or leading assignment removed. `deep` (deny and ask rules, and every
+ * built-in check) also strips exec wrappers and any assignment, knows a wrapper written as a path and looks into
+ * `find -exec`; an allow rule only sees through a safe wrapper called by its bare name.
+ */
+function inner(argv: string[], deep: boolean): string[][] {
   let i = 0;
   while (i < argv.length) {
     const name = ASSIGNMENT.exec(argv[i] ?? "")?.[1];
     if (name === undefined || !(deep || isSafeEnv(name))) break;
     i++;
   }
-  if (i > 0) return i < argv.length ? argv.slice(i) : undefined;
-  const w = WRAPPERS.get(argv[0] ?? "");
-  if (w === undefined || !(w.safe || deep)) return undefined;
+  if (i > 0) return i < argv.length ? [argv.slice(i)] : [];
+  const name = deep ? commandName(argv[0]) : (argv[0] ?? "");
+  if (deep && name === "find") return findCommands(argv);
+  const w = WRAPPERS.get(name);
+  if (w === undefined || !(w.safe || deep)) return [];
   let j = 1;
   for (; j < argv.length; j++) {
     const tok = argv[j] ?? "";
@@ -186,26 +240,39 @@ function stripOne(argv: string[], deep: boolean): string[] | undefined {
       break;
     }
     if (tok.startsWith("-") && tok.length > 1) {
-      if (w.noFlags || (argv[0] === "xargs" && !deep)) return undefined;
-      if (w.valued.includes(tok)) j++;
-    } else if (!(argv[0] === "env" && ASSIGNMENT.test(tok))) break;
+      if (w.noFlags || (name === "xargs" && !deep)) return [];
+      const split = name === "env" ? splitString(argv, j) : undefined;
+      if (split !== undefined) return [split];
+      if (takesNext(tok, w.valued)) j++;
+    } else if (!(name === "env" && ASSIGNMENT.test(tok))) break;
   }
   j += w.positional;
-  return j < argv.length ? argv.slice(j) : undefined;
+  return j < argv.length ? [argv.slice(j)] : [];
 }
 
-/** The command and then itself with each wrapper stripped off the front (`sudo env X=1 git push` → `git push`). */
+function unwrapAll(argv: string[], deep: boolean): string[][] {
+  const out: string[][] = [];
+  const queue = [argv];
+  for (let a = queue.shift(); a !== undefined; a = queue.shift()) {
+    out.push(a);
+    queue.push(...inner(a, deep));
+  }
+  return out;
+}
+
+/** The command and every command it wraps (`sudo env X=1 git push` → `git push`; `find . -exec rm {} ;` → `rm {}`). */
 export function strippedArgvs(argv: string[]): string[][] {
-  const out = [argv];
-  for (let cur = stripOne(argv, true); cur !== undefined; cur = stripOne(cur, true)) out.push(cur);
-  return out;
+  return unwrapAll(argv, true);
 }
 
-/** The text a rule is tried against: the argv re-joined with single spaces, then once per wrapper stripped off the front. */
+/** The text a rule is tried against: the argv re-joined with single spaces, then once per wrapper stripped off the front; deny and ask rules also see a path-named program by its name (`/bin/rm` → `rm`). */
 export function shellVariants(argv: string[], deep: boolean): string[] {
-  const out = [argv.join(" ")];
-  for (let cur = stripOne(argv, deep); cur !== undefined; cur = stripOne(cur, deep)) out.push(cur.join(" "));
-  return out;
+  const out = new Set<string>();
+  for (const v of unwrapAll(argv, deep)) {
+    out.add(v.join(" "));
+    if (deep) out.add([commandName(v[0]), ...v.slice(1)].join(" "));
+  }
+  return [...out];
 }
 
 const escapeRegExp = (s: string): string => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
