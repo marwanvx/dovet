@@ -175,7 +175,12 @@ describe("plan mode in a headless run", () => {
         { adapter: model.adapter, continued: true, prompt: "write it", ids: sequentialIds("D") },
         dir,
       );
-      expect(results(again.log).at(-1)?.status).toBe("ok");
+      const last = results(again.log).at(-1);
+      expect({ status: last?.status, output: last?.output, warnings: again.out.warnings }).toEqual({
+        status: "ok",
+        output: expect.any(String),
+        warnings: [],
+      });
       expect(await readFile(plan, "utf8")).toBe("1. read\n2. change\n");
     } finally {
       await dir.dispose();
@@ -414,7 +419,12 @@ describe("the plan file stays where plan mode may write", () => {
       expect(plan).toStartWith(planDir(a.loc));
       expect(a.out.warnings.join("\n")).toContain("plan.directory");
       const b = await writePlan(dir, plan);
-      expect(results(b.log).at(-1)?.status).toBe("ok");
+      const last = results(b.log).at(-1);
+      expect({ status: last?.status, output: last?.output, warnings: b.out.warnings }).toEqual({
+        status: "ok",
+        output: expect.any(String),
+        warnings: expect.any(Array),
+      });
       await expect(readFile(join(dir.root, "..", "escaped"), "utf8")).rejects.toThrow();
     } finally {
       await dir.dispose();
