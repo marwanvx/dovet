@@ -239,9 +239,10 @@ function flockScript(argv: string[], valued: string[]): string[] | undefined {
   let file = false;
   for (let k = 1; k < argv.length; k++) {
     const tok = argv[k] ?? "";
-    if (tok.startsWith("--command=")) return ["sh", "-c", tok.slice(10)];
-    if (tok === "--command" || /^-[A-Za-z]*c$/.test(tok))
-      return k + 1 < argv.length ? ["sh", "-c", argv[k + 1] ?? ""] : [];
+    // `--com`: any prefix longer than `--co` (`--conflict-exit-code`, `--close`) is `--command`.
+    const long = tok.startsWith("--com") && longPrefix(tok, "--command");
+    if (long && tok.includes("=")) return ["sh", "-c", tok.slice(tok.indexOf("=") + 1)];
+    if (long || /^-[A-Za-z]*c$/.test(tok)) return k + 1 < argv.length ? ["sh", "-c", argv[k + 1] ?? ""] : [];
     if (tok.startsWith("-") && tok.length > 1) {
       if (takesNext(tok, valued)) k++;
     } else if (file) return undefined;

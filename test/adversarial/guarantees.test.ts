@@ -387,6 +387,8 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
     "sudo --chroot /x git push",
     "xargs --replace git push",
     "xargs --eof git push",
+    "flock /tmp/l --com 'git push'",
+    "flock /tmp/l --comm='git push'",
   ])("%s is a remote action while tainted, even in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions", { tainted: true }));
     expect(d.behavior).toBe("deny");
