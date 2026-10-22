@@ -67,7 +67,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F16 (M2-08, M2-09, M2-09c, M2-14 CI): the 500 MB resume test flaked four times
 - **Severity:** major (memory on Ubuntu and on macOS twice, the 2 s limit on Windows) · `src/store/event-log/resume.test.ts` (AC-LOG-13)
 - **Cause:** the test measured RSS and time inside the process that had just written 500 MB, so garbage from the writes, earlier tests in the file and the runner's disk state decided the number, not the scan.
-- **Fixed (PR PRNUM):** the scan runs in a fresh `bun` child (`test/fixtures/resume/scan-child.ts`) that collects garbage, samples its own RSS and reports; the sidecar resume is timed three times and the best counts. Measured on Linux: 34 MB growth against the 300 MiB limit (a whole-file read gives over 500 MB). The limits are unchanged.
+- **Fixed (PR 182):** the scan runs in a fresh `bun` child (`test/fixtures/resume/scan-child.ts`) that collects garbage, samples its own RSS and reports; the sidecar resume is timed three times and the best counts. Measured on Linux: 34 MB growth against the 300 MiB limit (a whole-file read gives over 500 MB). The limits are unchanged.
 
 ### F18 (M2-09c CI): the first headless image test hit the 5 s timeout on macOS
 - **Severity:** major (logged twice: #172 and #177, run 39671350287) · `src/cli/headless-image.test.ts:85` (AC-TOOLS-20)
