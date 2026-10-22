@@ -153,7 +153,7 @@ export function report(want?: string): string {
   const followupsPath = join(TASKS, "FOLLOWUPS.md");
   const followups = existsSync(followupsPath) ? urgentFollowups(read(followupsPath)) : "";
   print(`## Follow-ups to fix first (build loop step 2.4)\n${followups || "(none)"}\n`);
-  print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 3).trim()}\n`);
+  print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 2).trim()}\n`);
 
   for (const [name, text] of ms) {
     const tasks = parseTasks(text);

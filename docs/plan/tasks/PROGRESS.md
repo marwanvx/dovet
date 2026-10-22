@@ -785,3 +785,9 @@ Review: deep, 3 rounds (reviewer; security-reviewer, the first pass interrupted 
 Learned: round 3 still found a major of the same class (`flock --com`, fixed), so per step 7.4 the PR stays open. Hand-kept per-wrapper option tables keep missing grammar (prefixes, optional args, BSD-only flags). CI was not waited on.
 Next: rethink the approach to F40: give each wrapper its full option grammar (short, long with prefixes, value kind) and treat an unknown option on a wrapper as not understood (fail closed), then rerun the review and CI on #186 and merge.
 
+
+## 2026-10-23 — F40 Wrappers hide the inner command (rethought)
+Done: the deny side reads every wrapper option with and without a value; allow rules keep an exact GNU grammar; `env -S` splits like env; over-budget readings ask in every mode (Q89). PR: #186.
+Review: deep, 2 rounds. 3 majors + 3 test gaps fixed, 0 dropped, 1 logged (into F32).
+Learned: trying every reading ends a parser-gap class that tables don't. Keep entries short: `next M1-23c` has a token ceiling.
+Next: F29.
