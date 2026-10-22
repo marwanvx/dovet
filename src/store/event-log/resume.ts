@@ -4,7 +4,9 @@ import { mkdir, open, readFile, stat } from "node:fs/promises";
 import { isErrno } from "../../platform/index.ts";
 import { EVENT_TYPES, EventEnvelope, type EventType, type StoredResponse } from "../../schema/index.ts";
 import { writePrivateAtomic } from "./files.ts";
+import { eventLine } from "./lines.ts";
 import { type SessionLocation, sessionPaths } from "./paths.ts";
+import { forkPlanLine, PLAN_FILE_KEY, planFileOf } from "./plan.ts";
 
 export const CRASH_TOOL_TEXT =
   "Not run or not finished: Dovet exited before this tool completed. Check the current state before retrying.";
@@ -19,6 +21,8 @@ export type ResumeSnapshot = {
   model: string;
 };
 export type ResumeState = ResumeSnapshot & {
+  /** The session's current plan file (`settings.change` key `planFile`), or null. */
+  planFile: string | null;
   epoch: number;
   toolsJson: string;
   systemText: string;
@@ -44,6 +48,7 @@ const emptyState = (): ResumeState => ({
   costUsd: 0,
   provider: "",
   model: "",
+  planFile: null,
   epoch: 0,
   toolsJson: "[]",
   systemText: "",
@@ -139,6 +144,7 @@ function foldEvent(f: Fold, e: EventEnvelope): void {
   if (e.type === "session.start" && typeof d.mode === "string") s.mode = d.mode;
   if (e.type === "session.start" && typeof d.permissionMode === "string") s.mode = d.permissionMode;
   if (e.type === "settings.change" && d.key === "mode" && typeof d.new === "string") s.mode = d.new;
+  if (e.type === "settings.change" && d.key === PLAN_FILE_KEY) s.planFile = typeof d.new === "string" ? d.new : null;
   if (e.type === "taint.change" && typeof d.source === "string") {
     if (d.tainted === false) s.taint = s.taint.filter((t) => t !== (d.source as string));
     else if (!s.taint.includes(d.source as string)) s.taint.push(d.source as string);
@@ -540,6 +546,7 @@ export async function forkSession(
   let copied = 0;
   let parentEvent = "";
   let uptoEpoch = 0;
+  let plan: string | null = null;
   const events = eventLines(log);
   try {
     for await (const { line, event: e } of events) {
@@ -551,9 +558,12 @@ export async function forkSession(
       await out.appendFile(`${line}\n`);
       copied += 1;
       parentEvent = e.id;
+      const named = planFileOf(e);
+      if (named !== undefined) plan = named;
       if (e.type === "turn.end" && e.turn === uptoTurn) uptoEpoch = e.epoch;
     }
     await out.appendFile(sessionForkLine({ session, epoch: uptoEpoch, parent: loc.session, parentEvent }, deps));
+    if (plan !== null) await out.appendFile(await forkPlanLine(loc, next, plan, uptoEpoch, deps));
     await out.sync();
   } finally {
     await events.return?.(undefined);
@@ -567,15 +577,5 @@ export function sessionForkLine(
   f: { session: string; epoch: number; parent: string; parentEvent: string },
   deps: { ids: { ulid(): string }; clock: { now(): number } },
 ): string {
-  return `${JSON.stringify({
-    v: 1,
-    id: deps.ids.ulid(),
-    ts: new Date(deps.clock.now()).toISOString(),
-    session: f.session,
-    epoch: f.epoch,
-    turn: null,
-    type: "session.fork",
-    core: true,
-    data: { parent: f.parent, parentEvent: f.parentEvent },
-  })}\n`;
+  return eventLine("session.fork", f, { parent: f.parent, parentEvent: f.parentEvent }, deps);
 }

@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F25 (M2-15): headless `ExitPlanMode` is denied, so a headless plan is never presented
+- **Severity:** minor · `src/cli/headless-run.ts` (`decideFn`), `src/tools/plan-mode.ts:99`
+- A scripted model that writes its plan and calls `ExitPlanMode` in `--permission-mode plan` gets `Permission denied: needs the user's answer` (interaction actions ask, headless denies). Tools §11.3 says headless returns the plan as the turn's result with a `plan` event, mode staying `plan`. Allow the call when the mode is `plan`, log `plan.presented`, and make the result the turn's text; the `plan` stream event waits for `--output stream-json`.
+
 ### F24 (F16 CI): two more Windows tests timed out on a slow runner
 - **Severity:** minor (first sighting) · `test/platform/...` "Bash on every OS > Git Bash: 2>nul creates no nul file; Python prints non-ASCII" (5,002 ms, "killed 1 dangling process", then EBUSY removing its temp dir) and `src/checkpoints` "snapshot > works from a linked worktree, where .git is a file" (5,848 ms, `git init --bare` exited 143)
 - `windows-latest`, CI run 39698593461 for #182 (a test-only change that touches neither). Both spawn real processes (Python, git) and hit Bun's 5 s default on a cold runner, the same class as F18. If either repeats, give it a longer limit with the measured time or remove the real process from it.

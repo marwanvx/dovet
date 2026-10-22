@@ -417,6 +417,13 @@ Further behavior:
 - Headless: ExitPlanMode returns the plan text with the file path, no dialog, and the mode stays `plan`.
 - Results: edited `The user edited the plan; the approved version is in <file>`; approved `Plan approved. Continuing in <mode>.`; Esc `The user hasn't approved the plan yet`; mode change `The user left plan mode without approving the plan`; keep planning returns the feedback verbatim; outside plan mode `Not in plan mode. The plan was already approved; continue with the implementation.`
 
+**Decided while building (QUESTIONS Q86):**
+- Headless plan file: `<data>/projects/<project>/plans/<session>/<slug>.md` (or under `plan.directory`), made when plan mode starts without one: at launch, on a resume that asks for plan, or when EnterPlanMode runs. `--permission-mode plan` used to fail for want of it.
+- The log records it as `settings.change` key `planFile`; a mode set by a tool or a flag is `settings.change` key `mode` plus a `mode-change` instruction (plan mode's text names the plan file). Leaving plan mode with a plan file adds `plan-approved`.
+- A fork copies the plan file and ends its copied events with a `planFile` change (source `fork`); its first run then tells the model the new path and plan text (`plan-reattach`), because the system prompt and earlier instructions name the parent's.
+- After a compaction the plan file's path and text come back in the Dovet facts whenever the session has a plan file ([context §6](context.md)).
+- Headless ExitPlanMode is not wired yet: it is denied as an interaction (FOLLOWUPS F25).
+
 ## 12. TodoWrite
 
 The task list the model keeps for multi-step work. The user sees it live (TUI panel above the input, [tui](tui.md); headless `dovet.stream/1` events), and in headless runs it drives the open-items continuation ([agent-loop](agent-loop.md)). 
