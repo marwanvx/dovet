@@ -46,6 +46,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
 - `pwsh -c remove-item -recurse C:\Windows` is allowed even in `default` with a tool-wide `Bash` allow (Q91's unwrapping peels `cmd /c` only); `echo C:\ | xargs pwsh -c remove-item -recurse` inherits it. Read what `pwsh -c` runs like a script, or treat a remover inside it as typed.
 
+### F56 (F32 round-2 tests review): no test pins the section labels of the other finding kinds
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `SECTION`, `test/adversarial/guarantees.test.ts`
+- Every `by` string a prompt shows ("critical-path removal (§4.4)", "remote-action check (§4.8)", …) is asserted nowhere (the F32 round pinned only the new `computed` one), so a wrong section reference reaches users silently — the traps table's "pin the literal text". One `expect(...by)` per kind where a test already produces that finding.
+
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
 - `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.

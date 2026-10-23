@@ -635,6 +635,12 @@ describe("what xargs reads from its input and what find reaches get the checks (
     expect(d.behavior).toBe("allow");
   });
 
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q90)"
+  test("the ask names the xargs input check and the section that states it", () => {
+    const d = shell("echo .env | xargs cat", state("default"));
+    expect(d.findings.find((f) => f.kind === "computed")?.by).toBe("xargs input check (§4.4)");
+  });
+
   // spec: permissions §0 guarantee 3
   test.each([
     "echo push | xargs git",
