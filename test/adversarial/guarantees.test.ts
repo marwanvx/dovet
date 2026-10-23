@@ -532,6 +532,11 @@ describe("known gaps (FOLLOWUPS F41-F42)", () => {
   test.failing("F42: other spellings of the working directory are critical in bypassPermissions", () => {
     for (const command of ['rm -rf "$PWD"', "rm -rf ~+"]) notAllowed(shell(command, state("bypassPermissions")));
   });
+
+  // spec: permissions §0 guarantee 4
+  test.failing("F42: a typed remover's flags or target can arrive from xargs input in bypassPermissions", () => {
+    notAllowed(shell("echo '-rf /' | xargs rm", state("bypassPermissions")));
+  });
 });
 
 describe("what xargs reads from its input and what find reaches get the checks (FOLLOWUPS F32)", () => {
@@ -544,6 +549,11 @@ describe("what xargs reads from its input and what find reaches get the checks (
     "echo / | xargs -I % rm -rf /%",
     "echo / | xargs sudo rm -rf",
     "echo / | /usr/bin/xargs -n1 env rm -rf",
+    "printf '/ -delete' | xargs find",
+    "printf '/ -exec rm -rf {} +' | xargs find",
+    "echo rm -rf / | xargs xargs",
+    "echo rm -rf / | xargs xargs xargs",
+    "echo rm | xargs -I{} xargs {}",
     "find / -delete",
     "find / -name '*' -delete",
     "find -L / -type f -delete",
@@ -652,12 +662,53 @@ describe("what xargs reads from its input and what find reaches get the checks (
   );
 });
 
+describe("a command xargs runs is unwrapped like a typed one (F32 review)", () => {
+  const state32 = (mode: PermissionMode, over: Partial<State> = {}): State => ({
+    mode,
+    rules: rulesFor(["Bash"]),
+    env: { ...env(), os: "win32", canonicalize: (p: string) => canonicalizePath(p, root, "win32") },
+    ...over,
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each([
+    "xargs cmd /c rd /s C:\\Windows",
+    "echo y | xargs cmd /c rd /s C:\\Windows",
+    "echo y | xargs -I{} cmd /c rd /s C:\\Windows {}",
+    "find 'C:\\' -exec cmd /c rd /s {} ;",
+  ])("%s reaches the removal checks the typed command gets, in every mode", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+      const d = shell(command, state32(mode));
+      notAllowed(d);
+      expect(d.findings.map((f) => f.kind)).toContain("critical");
+    }
+    expect(shell(command, state32("bypassPermissions")).countdown).toBe(true);
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.failing("F42: a system path from xargs input under a typed remover in bypassPermissions", () => {
+    notAllowed(shell("echo C:\\Windows | xargs cmd /c rd /s", state32("bypassPermissions")));
+  });
+});
+
 describe("F32 over unusual inputs", () => {
   // spec: permissions §0 guarantee 4
-  test("an xargs with thousands of option readings asks quickly, even in bypassPermissions", () => {
+  test("a chain of xargs feeding xargs is decided quickly, even in bypassPermissions", () => {
     const started = performance.now();
-    const d = shell(`echo / | xargs ${"-a x ".repeat(1500)}rm -rf`, state("bypassPermissions"));
+    const d = shell(`echo / | xargs ${"xargs ".repeat(100)}rm -rf`, state("bypassPermissions"));
     expect(d.behavior).toBe("ask");
+    expect(d.findings.map((f) => f.kind)).toContain("critical");
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("an xargs with more readings than the budget asks, even in bypassPermissions", () => {
+    const started = performance.now();
+    // 1,200 option pairs: the wrapper-reading budget (§3.2) stays under its limit while the stand-in
+    // readings of what xargs runs cross this one, so the ask comes from the variant budget alone.
+    const d = shell(`echo x | xargs -I{} ${"-a x ".repeat(1200)}true`, state("bypassPermissions"));
+    expect(d.behavior).toBe("ask");
+    expect(d.findings.map((f) => f.kind)).toContain("unchecked");
     expect(performance.now() - started).toBeLessThan(5000);
   });
 

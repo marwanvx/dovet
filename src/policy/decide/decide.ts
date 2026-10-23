@@ -105,7 +105,7 @@ const SECTION: Record<FindingKind, string> = {
   remote: "remote-action check (§4.8)",
   "force-push": "force-push check (§5)",
   unchecked: "wrapper reading (§3.2)",
-  computed: "xargs input check (§4.0)",
+  computed: "xargs input check (§4.4)",
 };
 const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote", "computed"]);
 const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
@@ -227,7 +227,8 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       words += v.length;
       if (words > MAX_VARIANT_WORDS) complete = false;
       if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
-      if (program(v[0]) === "xargs") queue.push(...xargsRuns(v));
+      // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
+      if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
     }
   }
   return { all: out, complete };
@@ -244,8 +245,10 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const { all, complete } = variants(unwrapped.argv);
     if (!complete) out.push(finding("unchecked", "a wrapper's options can't all be checked", "ask"));
     for (const v of all) {
-      const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
-      const system = systemRemoval(env, sub, viaCmd);
+      // What xargs runs and `find -exec` build reaches the checks as typed words would: `cmd /c` peeled off.
+      const via = viaCmd || program(v[0]) === "cmd";
+      const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
+      const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);
       if (critical !== undefined)
@@ -256,7 +259,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         );
       if (program(v[0]) === "find")
         for (const argv of findRemovals(v)) {
-          const why = criticalRemoval(env, { ...sub, argv });
+          const why = criticalRemoval(env, unwrapCmd({ ...sub, argv }));
           if (why !== undefined)
             out.push(
               finding("critical", `critical-path removal: find ${why}`, "ask", {
@@ -264,6 +267,14 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
               }),
             );
         }
+      // The input can name the command itself (a chain of xargs, a wrapper's command) or bring `find` its
+      // `-delete`: what runs can be a recursive removal of any path, so the typed words alone can't clear it.
+      if (v.includes(XARGS_INPUT) && [XARGS_INPUT, "find", "xargs"].includes(program(v[0])))
+        out.push(
+          finding("critical", "critical-path removal: what xargs reads from its input can be one of any path", "ask", {
+            ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
+          }),
+        );
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
       const deletes = program(v[0]) === "find" && v.includes("-delete") ? findStarts(v) : [];

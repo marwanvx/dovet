@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F54 (F32 review): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map in `shellFindings`), permissions §5
+- `echo +main | xargs git push origin` is allowed in `bypassPermissions` while `git push origin +main` denies: the stand-in filling reaches the §4.8 remote check (`remoteWithInput`) but not §5's `forcePushToDefault`, which still reads the literal words. Guarded modes ask via `computed`; tainted bypass denies via remote. Run the force-push check over the stand-in-filled readings too (the stand-in as `--force` and as `+branch`).
+
 ### F52 (F32): a command substitution in a read command's file position reaches no check
 - **Severity:** major · `src/policy/shell-parse/bash.ts` (a `$( )` word is understood), `src/policy/decide/decide.ts` `shellFindings`
 - Under a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks: not understood). The words a substitution makes, like xargs input (Q90), can name any file; treat a substitution in a non-read-only command's arguments like a variable.
@@ -36,7 +40,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
-- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks).
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks). Extended (F32 security review): a remover's target or recursion flag arriving from xargs input is the same class — `echo '-rf /' | xargs rm` and `echo C:\Windows | xargs cmd /c rd /s` (win32) run in `bypassPermissions` (`rm -rf $X` does too: the target is unresolved and no `-r` is typed; rd's `/s` isn't read as recursion). `test.failing` cases in guarantees.test.ts.
+
+### F55 (F32 security review): `pwsh -c` scripts reach no check, with or without xargs
+- **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
+- `pwsh -c remove-item -recurse C:\Windows` is allowed even in `default` with a tool-wide `Bash` allow (Q91's unwrapping peels `cmd /c` only); `echo C:\ | xargs pwsh -c remove-item -recurse` inherits it. Read what `pwsh -c` runs like a script, or treat a remover inside it as typed.
 
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
