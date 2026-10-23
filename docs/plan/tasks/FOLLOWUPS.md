@@ -14,6 +14,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F52 (F32): a command substitution in a read command's file position reaches no check
+- **Severity:** major · `src/policy/shell-parse/bash.ts` (a `$( )` word is understood), `src/policy/decide/decide.ts` `shellFindings`
+- Under a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks: not understood). The words a substitution makes, like xargs input (Q90), can name any file; treat a substitution in a non-read-only command's arguments like a variable.
+
+### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
+- **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
+- `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
+
 ### F50 (F40 review): wrappers outside §3.2's list hide the command
 - **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
 - `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
@@ -90,10 +98,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (design choice in event-log "Writer rules" 3) · `src/store/event-log/writer.ts` (`FLUSH_NOW`)
 - The probe (`test/adversarial/kill9.test.ts`) kills a session that writes a file per request: at 1.8 s the files are on disk and the log holds only `user.message`, because `tool.call`/`file.change` wait for the next 2 s flush. After resume nothing says those files changed (and `/rewind` can't undo them). "The agent can't hide what it did": flush `tool.call` of a mutating tool before it runs (no fsync needed).
 
-### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
-- **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
-- Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
-
 ### F33 (M2-16 adversarial fixtures): two credential and startup files are missing from the §4.3/§4.7 lists
 - **Severity:** minor · `src/policy/decide/paths.ts` (protected files, home credential list), permissions §4.3, §7.2
 - With a blanket `Read`/`Edit` allow rule, `~/.config/gh/hosts.yml` (the GitHub CLI token) is read and `~/.config/fish/config.fish` (fish's startup file) is written without a prompt; both are outside the working directory only, so only the "outside" ask protects them and a user allow rule lifts it. Add them (and `~/.config/gh` to the §7.2 sandbox deny list) in the spec and the data files.
@@ -159,6 +163,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
+- **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
+- Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
+- **Fixed (PR TBD):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90).
 
 ### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
 - **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`

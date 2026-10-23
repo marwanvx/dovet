@@ -8,6 +8,7 @@ export {
   allowRuleArgv,
   canonicalCmdlet,
   commandName,
+  findCommands,
   isSafeEnv,
   needsExactRule,
   shellScriptAt,

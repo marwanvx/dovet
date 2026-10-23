@@ -17,8 +17,19 @@ import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
-import { forcePushToDefault, program, type RemoteKind, remoteAction, selfControl } from "./remote.ts";
-import { FS_COMMANDS, NETWORK_PATH, sedEscapes, shellTargets, type Target, unresolvedTarget } from "./targets.ts";
+import { forcePushToDefault, program, type RemoteKind, remoteWithInput, selfControl } from "./remote.ts";
+import {
+  FS_COMMANDS,
+  findRemovals,
+  findStarts,
+  NETWORK_PATH,
+  sedEscapes,
+  shellTargets,
+  type Target,
+  unresolvedTarget,
+  XARGS_INPUT,
+  xargsRuns,
+} from "./targets.ts";
 
 export type Action =
   | { kind: "read" | "edit"; paths: string[] }
@@ -53,7 +64,8 @@ export type FindingKind =
   | "self"
   | "remote"
   | "force-push"
-  | "unchecked";
+  | "unchecked"
+  | "computed";
 
 /** One thing a built-in check found; M1-23b derives `Effects` from these. */
 export type Finding = {
@@ -93,8 +105,9 @@ const SECTION: Record<FindingKind, string> = {
   remote: "remote-action check (§4.8)",
   "force-push": "force-push check (§5)",
   unchecked: "wrapper reading (§3.2)",
+  computed: "xargs input check (§4.0)",
 };
-const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote"]);
+const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote", "computed"]);
 const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
 
 const finding = (
@@ -191,14 +204,19 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
 }
 
 const PEELED = new Set(["exec", "busybox"]);
+const MAX_VARIANT_WORDS = 2_000_000;
 
-/** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front; `complete` is false when not every reading was looked at. */
+/**
+ * The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front, and what xargs
+ * runs with its input in place; `complete` is false when not every reading was looked at.
+ */
 function variants(argv: string[]): { all: string[][]; complete: boolean } {
   const out: string[][] = [];
   const seen = new Set<string>();
   const queue = [argv];
   let complete = true;
-  for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
+  let words = 0;
+  for (let a = queue.pop(); a !== undefined && complete; a = queue.pop()) {
     const unwrapped = unwrapCommand(a);
     complete &&= unwrapped.complete;
     for (const v of unwrapped.argvs) {
@@ -206,7 +224,10 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(v);
+      words += v.length;
+      if (words > MAX_VARIANT_WORDS) complete = false;
       if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
+      if (program(v[0]) === "xargs") queue.push(...xargsRuns(v));
     }
   }
   return { all: out, complete };
@@ -233,19 +254,36 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
         );
+      if (program(v[0]) === "find")
+        for (const argv of findRemovals(v)) {
+          const why = criticalRemoval(env, { ...sub, argv });
+          if (why !== undefined)
+            out.push(
+              finding("critical", `critical-path removal: find ${why}`, "ask", {
+                ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
+              }),
+            );
+        }
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
-      for (const t of shellTargets(sub, env.cwd)) {
+      const deletes = program(v[0]) === "find" && v.includes("-delete") ? findStarts(v) : [];
+      const cwd = sub.cwd ?? env.cwd;
+      for (const t of [
+        ...shellTargets(sub, env.cwd),
+        ...deletes.map((path): Target => ({ access: "edit", path, cwd })),
+      ]) {
         out.push(...pathFindings(st, t, false, sandboxedRead));
         if (t.access === "edit" && unresolvedTarget(t.path))
           out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
       }
+      if (v.includes(XARGS_INPUT) && !sandboxedRead)
+        out.push(finding("computed", `xargs passes its input to ${sub.argv[0]}, so its files can't be checked`, "ask"));
     }
     const words = [...sub0.argv.slice(1), ...(sub0.redirects ?? []).map((r) => r.target)];
     const net = words.find((w) => NETWORK_PATH.test(w));
     if (net !== undefined) out.push(finding("network-path", `network path: ${net}`, "ask"));
     const sub = { ...unwrapped };
-    const remote = all.map((v) => remoteAction(v)).find((r) => r !== undefined);
+    const remote = all.map((v) => remoteWithInput(v, XARGS_INPUT)).find((r) => r !== undefined);
     if (remote !== undefined)
       out.push(
         finding(

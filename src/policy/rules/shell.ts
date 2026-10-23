@@ -349,7 +349,7 @@ function splitStrings(argv: string[], j: number, budget: Budget): string[][] {
 const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
 
 /** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
-function findCommands(argv: string[]): string[][] {
+export function findCommands(argv: string[]): string[][] {
   const out: string[][] = [];
   for (let i = 1; i < argv.length; i++) {
     if (!FIND_EXEC.test(argv[i] ?? "")) continue;

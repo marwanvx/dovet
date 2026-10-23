@@ -52,6 +52,40 @@ const ghApiWrites = (args: string[]): boolean =>
   );
 const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;
 
+const GH_WRITES: Array<[string, string[]]> = [
+  ["pr", ["create", "merge", "comment", "review"]],
+  ["issue", ["create", "comment"]],
+  ["release", ["create"]],
+  ["repo", ["create", "delete"]],
+  ["gist", ["create"]],
+  ["workflow", ["run"]],
+];
+
+/** Words that make a command of the table below a remote action, tried where a word only known at run time goes. */
+const REMOTE_WORDS: string[][] = [
+  ...["push", "send-email", "request-pull", "publish", "upload", "deploy", "apply", "destroy", "up"].map((w) => [w]),
+  ...["delete", "patch", "install", "upgrade", "uninstall"].map((w) => [w]),
+  ["nuget", "push"],
+  ...GH_WRITES.flatMap(([g, hs]) => hs.flatMap((h) => [[g, h], [h]])),
+  ["api", "-X", "POST"],
+  ["-X", "POST"],
+  ["-d", "x"],
+  ["--post-data=x"],
+  ["host:x"],
+];
+
+/** The remote action a command could be once each `input` word is filled in at run time (xargs input), else undefined. */
+export function remoteWithInput(argv: string[], input: string): Remote | undefined {
+  const at = argv.flatMap((w, i) => (w === input ? [i] : []));
+  if (at.length === 0) return remoteAction(argv);
+  for (const i of at)
+    for (const words of REMOTE_WORDS) {
+      const r = remoteAction([...argv.slice(0, i), ...words, ...argv.slice(i + 1)].filter((w) => w !== input));
+      if (r !== undefined) return { ...r, label: `${r.label} (from xargs input)` };
+    }
+  return remoteAction(argv.filter((w) => w !== input));
+}
+
 /** The remote action one command, already unwrapped by `strippedArgvs`, is. */
 export function remoteAction(argv: string[]): Remote | undefined {
   const name = program(argv[0]);
@@ -87,15 +121,7 @@ export function remoteAction(argv: string[]): Remote | undefined {
     case "podman":
       return w("push") ? is("publish", `${name} push`) : undefined;
     case "gh": {
-      const pairs: Array<[string, string[]]> = [
-        ["pr", ["create", "merge", "comment", "review"]],
-        ["issue", ["create", "comment"]],
-        ["release", ["create"]],
-        ["repo", ["create", "delete"]],
-        ["gist", ["create"]],
-        ["workflow", ["run"]],
-      ];
-      for (const [g, hs] of pairs) {
+      for (const [g, hs] of GH_WRITES) {
         const h = hs.find((x) => w(g, x));
         if (h !== undefined) return is("upload", `gh ${g} ${h}`);
       }

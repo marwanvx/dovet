@@ -533,3 +533,146 @@ describe("known gaps (FOLLOWUPS F41-F42)", () => {
     for (const command of ['rm -rf "$PWD"', "rm -rf ~+"]) notAllowed(shell(command, state("bypassPermissions")));
   });
 });
+
+describe("what xargs reads from its input and what find reaches get the checks (FOLLOWUPS F32)", () => {
+  // spec: permissions §0 guarantee 4
+  test.each([
+    "echo / | xargs rm -rf",
+    "xargs -a list rm -rf",
+    "echo / | xargs -0 rm -fr",
+    "echo / | xargs -I{} rm -rf {}",
+    "echo / | xargs -I % rm -rf /%",
+    "echo / | xargs sudo rm -rf",
+    "echo / | /usr/bin/xargs -n1 env rm -rf",
+    "find / -delete",
+    "find / -name '*' -delete",
+    "find -L / -type f -delete",
+    "find ~ -name x -delete",
+    "find .. -name x -delete",
+    'find "$DIR" -delete',
+    "find . -delete",
+    "find . -type f -delete",
+    "find . -exec rm -rf {} +",
+    "find . ! -name x -delete",
+    "find . -name x -o -delete",
+    "find / -exec rm -rf {} +",
+    "find / -execdir rm -r {} ;",
+    "find /usr -ok rm {} ;",
+    "sudo find / -delete",
+  ])("%s is a critical-path removal under a tool-wide allow, in every mode", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+      const d = shell(command, state(mode, { allow: ["Bash"] }));
+      notAllowed(d);
+      expect(d.findings.map((f) => f.kind)).toContain("critical");
+    }
+    expect(shell(command, state("bypassPermissions")).countdown).toBe(true);
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each(["find . -name '*.pyc' -delete", "find src -type f -delete", "find . -name x -exec rm -rf {} +"])(
+    "%s inside the project is no critical-path removal",
+    (command) => {
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe("allow");
+      expect(d.findings.map((f) => f.kind)).not.toContain("critical");
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test("a find -delete inside the project runs under a tool-wide allow", () => {
+    expect(shell("find . -name '*.pyc' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["find .git -delete", "find .git -name x -delete", "find -L .git/hooks -name x -delete"])(
+    "%s writes to a protected path, even in bypassPermissions",
+    (command) => {
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe("ask");
+      expect(d.findings.map((f) => f.kind)).toContain("protected");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test("a find -delete outside the project asks as a write outside it", () => {
+    const d = shell(`find ${join(root, "..", "other")} -name x -delete`, state("default", { allow: ["Bash"] }));
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toStartWith("write outside the project:");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["echo x | xargs rm", "echo x | xargs -I{} mv {} /tmp/y", "echo x | xargs touch"])(
+    "%s writes to files xargs names, which need approval under a tool-wide allow",
+    (command) => {
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    },
+  );
+
+  // spec: permissions §0 guarantee 2
+  test.each([
+    "echo .env | xargs cat",
+    "echo .env | xargs -I{} cat {}",
+    "xargs -a list head",
+    "echo .env | xargs grep -h .",
+  ])("%s reads files xargs names, which can't be checked, so a rule doesn't approve it", (command) => {
+    for (const allow of [["Bash"], ["Bash(cat *)", "Bash(head *)", "Bash(grep *)"]])
+      for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow })));
+  });
+
+  // spec: permissions §0 guarantee 2
+  test("a sandboxed xargs read still runs under sandbox auto-allow", () => {
+    const d = shell("printf '%s\\n' a | xargs grep -l foo", state("default", { sandboxAutoAllow: true }), true);
+    expect(d.behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "echo push | xargs git",
+    "echo push | xargs git -C .",
+    "echo create | xargs gh pr",
+    "echo pr create | xargs gh",
+    "echo push | xargs -I{} git {} origin main",
+    "echo publish | xargs -a list npm",
+    "echo push | xargs sudo git",
+    "echo deploy | xargs -n1 fly",
+    "echo x:y | xargs scp f",
+    "echo -d | xargs curl https://example.com",
+  ])("%s may be a remote action, so it is denied while tainted, even in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["ls | xargs git add", "ls | xargs -I{} git add {}", "ls | xargs wc -l", "ls | xargs git log --oneline"])(
+    "%s can't become a remote action",
+    (command) => {
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
+    },
+  );
+});
+
+describe("F32 over unusual inputs", () => {
+  // spec: permissions §0 guarantee 4
+  test("an xargs with thousands of option readings asks quickly, even in bypassPermissions", () => {
+    const started = performance.now();
+    const d = shell(`echo / | xargs ${"-a x ".repeat(1500)}rm -rf`, state("bypassPermissions"));
+    expect(d.behavior).toBe("ask");
+    expect(performance.now() - started).toBeLessThan(5000);
+  });
+
+  // spec: permissions §0 guarantee 4
+  test.each(["find -delete", "find -- -delete", "find '' -delete", "find \\( -name x \\) -o -delete"])(
+    "%s with no start path removes from the working directory",
+    (command) => {
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe("ask");
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test("a start path in non-BMP text inside the project is no critical path", () => {
+    const d = shell("find '\u{1D4B3} dir' -name x -delete", state("bypassPermissions"));
+    expect(d.behavior).toBe("allow");
+  });
+});
