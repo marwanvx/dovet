@@ -559,6 +559,12 @@ describe("what xargs reads from its input and what find reaches get the checks (
     "echo rm -rf / | xargs toybox",
     "echo rm -rf / | xargs cmd",
     "echo rd /s C: | xargs cmd /c",
+    "echo / | env xargs rm -rf",
+    "echo / | sudo xargs rm -rf",
+    "echo / | env xargs xargs rm -rf",
+    "echo rm -rf / | xargs cmd /c env",
+    "echo 5 rm -rf / | xargs cmd /c timeout",
+    "printf '/ -o -delete' | xargs cmd /c find",
     "find / -delete",
     "find / -name '*' -delete",
     "find -L / -type f -delete",
@@ -689,6 +695,9 @@ describe("a command xargs runs is unwrapped like a typed one (F32 review)", () =
     "find 'C:\\' -exec cmd /c rd /s {} ;",
     "echo y | xargs cmd /c cmd /c rd /s C:\\Windows",
     "find 'C:\\' -exec cmd /c cmd /c rd /s {} ;",
+    "cmd /C rd /s C:\\Windows",
+    "cmd.exe /K rd /s C:\\Windows",
+    "echo y | xargs cmd /C rd /s C:\\Windows",
   ])("%s reaches the removal checks the typed command gets, in every mode", (command) => {
     for (const mode of [...GUARDED, "bypassPermissions" as const]) {
       const d = shell(command, state32(mode));

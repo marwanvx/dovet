@@ -29,6 +29,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F50 (F40 review): wrappers outside §3.2's list hide the command
 - **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
 - `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
+- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su`, `xargs strace`, `xargs chroot /mnt`, `xargs nsenter -t 1 -F`, `xargs arch`, `xargs parallel`, and an interpreter's `-c` script itself from input (`echo 'rm -rf /' | xargs bash -c`) are allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`

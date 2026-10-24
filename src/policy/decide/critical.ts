@@ -22,9 +22,9 @@ export function unwrapCmd(sub: Subcommand): Subcommand {
   while (commandName(sub.argv[0]) === "cmd") {
     // `cmd /d /q /c …`: other switches may come before /c or /k.
     let i = 1;
-    while (i < sub.argv.length && /^\/[a-z](:\S*)?$/i.test(sub.argv[i] ?? "") && !/^\/[ck]$/.test(sub.argv[i] ?? ""))
+    while (i < sub.argv.length && /^\/[a-z](:\S*)?$/i.test(sub.argv[i] ?? "") && !/^\/[ck]$/i.test(sub.argv[i] ?? ""))
       i++;
-    if (!/^\/[ck]$/.test(sub.argv[i] ?? "")) return sub;
+    if (!/^\/[ck]$/i.test(sub.argv[i] ?? "")) return sub;
     sub = { ...sub, argv: sub.argv.slice(i + 1).flatMap((a) => a.split(/\s+/).filter(Boolean)) };
   }
   return sub;

@@ -207,8 +207,9 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
 const PEELED = new Set(["exec", "busybox", "toybox"]);
 const MAX_VARIANT_WORDS = 2_000_000;
 
-/** A run of bare `xargs` words is one re-invocation: the chain's command and arguments carry the stand-in. */
+/** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
 function collapseXargs(argv: string[]): string[] {
+  if (program(argv[0]) !== "xargs") return argv;
   let j = 1;
   while (j < argv.length && program(argv[j]) === "xargs") j++;
   return j > 1 && j < argv.length ? [argv[0] ?? "", ...argv.slice(j)] : argv;
@@ -278,13 +279,15 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         }
       // The input can name the command itself (a chain of xargs, a wrapper whose operand or `/c` the input
       // completes) or bring `find` its `-delete`: what runs can be a recursive removal of any path, so the
-      // typed words alone can't clear it.
+      // typed words alone can't clear it. `cmd /c` peeling moves the program, so the peeled words are read too.
+      const names = [program(v[0]), program(sub.argv[0])];
       if (
         v.includes(XARGS_INPUT) &&
-        (program(sub.argv[0]) === XARGS_INPUT ||
-          ["find", "xargs"].includes(program(v[0])) ||
+        (names.includes(XARGS_INPUT) ||
+          names.some((n) => n === "find" || n === "xargs") ||
           (program(v[0]) === "cmd" && program(sub.argv[0]) === "cmd") ||
-          commandFromInput(v, XARGS_INPUT))
+          commandFromInput(v, XARGS_INPUT) ||
+          commandFromInput(sub.argv, XARGS_INPUT))
       )
         out.push(
           finding("critical", "critical-path removal: what xargs reads from its input can be one of any path", "ask", {
@@ -304,7 +307,15 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
           out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
       }
       if (v.includes(XARGS_INPUT) && !sandboxedRead)
-        out.push(finding("computed", `xargs passes its input to ${sub.argv[0]}, so its files can't be checked`, "ask"));
+        out.push(
+          finding(
+            "computed",
+            `xargs passes its input to ${
+              sub.argv[0] === XARGS_INPUT ? "a command named by that input" : sub.argv[0]
+            }, so its files can't be checked`,
+            "ask",
+          ),
+        );
     }
     const words = [...sub0.argv.slice(1), ...(sub0.redirects ?? []).map((r) => r.target)];
     const net = words.find((w) => NETWORK_PATH.test(w));
