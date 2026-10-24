@@ -702,6 +702,16 @@ describe("a command xargs runs is unwrapped like a typed one (F32 review)", () =
   test.failing("F42: a system path from xargs input under a typed remover in bypassPermissions", () => {
     notAllowed(shell("echo C:\\Windows | xargs cmd /c rd /s", state32("bypassPermissions")));
   });
+
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q91)"
+  test.each(["echo x | xargs timeout 5 echo", "echo x | xargs env grep foo", "echo hi | xargs sudo echo"])(
+    "%s has its command fully typed, so no worst-case removal asks",
+    (command) => {
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe("allow");
+      expect(d.findings.map((f) => f.kind)).not.toContain("critical");
+    },
+  );
 });
 
 describe("F32 over unusual inputs", () => {
@@ -715,6 +725,7 @@ describe("F32 over unusual inputs", () => {
       const started = performance.now();
       const d = shell(command, state("bypassPermissions"));
       expect(d.behavior).toBe(behavior);
+      if (behavior === "ask") expect(d.findings.map((f) => f.kind)).toContain("critical");
       expect(performance.now() - started).toBeLessThan(2000);
     }
   });
