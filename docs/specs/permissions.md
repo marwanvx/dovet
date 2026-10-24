@@ -216,9 +216,9 @@ A circuit breaker against model error. **No allow rule or hook can approve** a r
 - `find -delete` and `find -exec rm … {}` remove each start path (`.` when none; also `.` for a start path holding a variable) when the expression has no name or place test (`-name`, `-path`, `-regex`, `-empty`, …) or has an `-o`, `!` or `,`, else what's under each start path; the critical-path check runs on that, and the write checks (§4.3, §4.1) on `-delete`'s start paths. `find . -name '*.pyc' -delete` runs; `find . -delete` asks like `rm -rf .`.
 
 **Decided while building (QUESTIONS Q91):** the input can also name the command or its flags.
-- A command xargs runs whose program is `find`, `xargs` or the stand-in itself is a **critical-path removal in every mode**: what xargs reads can carry `find`'s `-delete` or name the whole command (`echo rm -rf / | xargs xargs`), so the typed words alone can't clear it. A benign reading (`ls | xargs find . -name y`) asks too, because the input can widen the expression (`-o -delete`).
-- The commands xargs runs and `find -exec` builds are unwrapped like typed ones (`cmd /c`), so a wrapper written inside them hides nothing.
-- Each `xargs` in a command is expanded once; a chain of xargs feeding xargs is read as one xargs whose command and arguments carry the stand-in.
+- A command xargs runs is a **critical-path removal in every mode** when no typed word pins what runs: its program is `find` (the input can carry `-delete`), `xargs` (the input can name the command), the stand-in itself, or a wrapper a reading of which leaves its command to the input (`xargs timeout`, `xargs cmd`, a multicall `busybox`/`toybox`). A benign reading (`ls | xargs find . -name y`) asks too, because the input can widen the expression (`-o -delete`); one whose command is fully typed (`xargs timeout 5 echo`) does not.
+- The commands xargs runs and `find -exec` builds are unwrapped like typed ones, through every `cmd /c` layer, so a wrapper written inside them hides nothing.
+- A run of `xargs` words is read as one xargs (the chain's command and arguments carry the stand-in), and each is expanded once, so a chain decides in milliseconds whatever its length.
 
 ### 4.4b Self-protection and process control
 - `kill`/`taskkill` targeting Dovet's own PID or its parent → denied. `pkill`/`killall` (and `Stop-Process -Name`) whose pattern could match Dovet's own process name or command line → ask, with that warning.

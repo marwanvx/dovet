@@ -3,6 +3,7 @@ import { lexicalPath } from "../../platform/index.ts";
 import type { PermissionMode } from "../../schema/index.ts";
 import {
   type Behavior,
+  commandFromInput,
   evaluateRules,
   type RuleCall,
   type RuleMatch,
@@ -203,8 +204,15 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
   return m?.behavior === "allow" && namesCommand(m.rule, label) && !(exact && m.rule.includes("*"));
 }
 
-const PEELED = new Set(["exec", "busybox"]);
+const PEELED = new Set(["exec", "busybox", "toybox"]);
 const MAX_VARIANT_WORDS = 2_000_000;
+
+/** A run of bare `xargs` words is one re-invocation: the chain's command and arguments carry the stand-in. */
+function collapseXargs(argv: string[]): string[] {
+  let j = 1;
+  while (j < argv.length && program(argv[j]) === "xargs") j++;
+  return j > 1 && j < argv.length ? [argv[0] ?? "", ...argv.slice(j)] : argv;
+}
 
 /**
  * The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front, and what xargs
@@ -217,6 +225,7 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
   let complete = true;
   let words = 0;
   for (let a = queue.pop(); a !== undefined && complete; a = queue.pop()) {
+    a = collapseXargs(a);
     const unwrapped = unwrapCommand(a);
     complete &&= unwrapped.complete;
     for (const v of unwrapped.argvs) {
@@ -267,9 +276,16 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
               }),
             );
         }
-      // The input can name the command itself (a chain of xargs, a wrapper's command) or bring `find` its
-      // `-delete`: what runs can be a recursive removal of any path, so the typed words alone can't clear it.
-      if (v.includes(XARGS_INPUT) && [XARGS_INPUT, "find", "xargs"].includes(program(v[0])))
+      // The input can name the command itself (a chain of xargs, a wrapper whose operand or `/c` the input
+      // completes) or bring `find` its `-delete`: what runs can be a recursive removal of any path, so the
+      // typed words alone can't clear it.
+      if (
+        v.includes(XARGS_INPUT) &&
+        (program(sub.argv[0]) === XARGS_INPUT ||
+          ["find", "xargs"].includes(program(v[0])) ||
+          (program(v[0]) === "cmd" && program(sub.argv[0]) === "cmd") ||
+          commandFromInput(v, XARGS_INPUT))
+      )
         out.push(
           finding("critical", "critical-path removal: what xargs reads from its input can be one of any path", "ask", {
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),

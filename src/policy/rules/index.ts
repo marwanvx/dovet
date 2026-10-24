@@ -7,6 +7,7 @@ export type { Redirect, Subcommand } from "./shell.ts";
 export {
   allowRuleArgv,
   canonicalCmdlet,
+  commandFromInput,
   commandName,
   findCommands,
   isSafeEnv,

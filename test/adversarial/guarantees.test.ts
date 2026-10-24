@@ -554,6 +554,11 @@ describe("what xargs reads from its input and what find reaches get the checks (
     "echo rm -rf / | xargs xargs",
     "echo rm -rf / | xargs xargs xargs",
     "echo rm | xargs -I{} xargs {}",
+    "echo 10 rm -rf / | xargs timeout",
+    "echo rm -rf / | xargs flock /tmp/l",
+    "echo rm -rf / | xargs toybox",
+    "echo rm -rf / | xargs cmd",
+    "echo rd /s C: | xargs cmd /c",
     "find / -delete",
     "find / -name '*' -delete",
     "find -L / -type f -delete",
@@ -682,6 +687,8 @@ describe("a command xargs runs is unwrapped like a typed one (F32 review)", () =
     "echo y | xargs cmd /c rd /s C:\\Windows",
     "echo y | xargs -I{} cmd /c rd /s C:\\Windows {}",
     "find 'C:\\' -exec cmd /c rd /s {} ;",
+    "echo y | xargs cmd /c cmd /c rd /s C:\\Windows",
+    "find 'C:\\' -exec cmd /c cmd /c rd /s {} ;",
   ])("%s reaches the removal checks the typed command gets, in every mode", (command) => {
     for (const mode of [...GUARDED, "bypassPermissions" as const]) {
       const d = shell(command, state32(mode));
@@ -700,11 +707,16 @@ describe("a command xargs runs is unwrapped like a typed one (F32 review)", () =
 describe("F32 over unusual inputs", () => {
   // spec: permissions §0 guarantee 4
   test("a chain of xargs feeding xargs is decided quickly, even in bypassPermissions", () => {
-    const started = performance.now();
-    const d = shell(`echo / | xargs ${"xargs ".repeat(100)}rm -rf`, state("bypassPermissions"));
-    expect(d.behavior).toBe("ask");
-    expect(d.findings.map((f) => f.kind)).toContain("critical");
-    expect(performance.now() - started).toBeLessThan(5000);
+    for (const [command, behavior] of [
+      [`echo / | xargs ${"xargs ".repeat(100)}rm -rf`, "ask"],
+      [`echo / | xargs ${"xargs ".repeat(1500)}rm -rf`, "ask"],
+      [`echo x | xargs ${"xargs ".repeat(1000)}true`, "allow"],
+    ] as const) {
+      const started = performance.now();
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe(behavior);
+      expect(performance.now() - started).toBeLessThan(2000);
+    }
   });
 
   // spec: permissions §0 guarantee 4

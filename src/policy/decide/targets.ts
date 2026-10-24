@@ -103,8 +103,8 @@ export const unresolvedTarget = (path: string): boolean => /[*?[{$`~]/.test(path
 
 export const NETWORK_PATH = /^(?:\\\\|\/\/)[^\\/]|^\/net\/[^/]/;
 
-/** Stands for the words xargs reads from its input: anything, so every check treats it as unresolved. */
-export const XARGS_INPUT = "$(xargs input)";
+/** Stands for the words xargs reads from its input: anything, so every check treats it as unresolved. No space, so `cmd /c`'s re-split keeps it one word. */
+export const XARGS_INPUT = "$(xargs-input)";
 
 /** The strings `-I R`, `-i[R]` and `--replace[=R]` could set, read every way (an `I` or `i` in any option cluster). */
 function replaceStrings(opts: string[]): string[] {

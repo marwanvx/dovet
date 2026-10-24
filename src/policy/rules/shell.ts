@@ -240,6 +240,16 @@ function commandStarts(argv: string[], operands: number, env: boolean): { starts
 export const xargsCommandStarts = (argv: string[]): { starts: number[]; none: boolean } =>
   commandStarts(argv, 0, false);
 
+/** Whether a reading leaves the command `argv` runs to start at `input` or beyond it, so the input can name it. */
+export function commandFromInput(argv: string[], input: string): boolean {
+  const name = commandName(argv[0]);
+  if (!DEEP_WRAPPERS.has(name) && !["busybox", "toybox"].includes(name)) return false;
+  const x = argv.indexOf(input);
+  if (x < 0) return false;
+  const { starts, none } = commandStarts(argv, DEEP_WRAPPERS.get(name) ?? 0, name === "env");
+  return none || starts.some((s) => s >= x);
+}
+
 /** The values an option word could hand over, each with the index after it: attached after `letter`, after `=`, or the next word. */
 function optionValues(argv: string[], j: number, letter: string, long: string): [string, number][] {
   const tok = argv[j] ?? "";
