@@ -211,6 +211,15 @@ A circuit breaker against model error. **No allow rule or hook can approve** a r
 - **PowerShell `Remove-Item`:** system paths and bare-`*` or `/*`/`\*` wildcard targets are **denied in every mode**; working dir or parents with `-Recurse` → normal approval flow. Same for `cmd /c rd|rmdir|del|erase` on system paths.
 - The prompt explains how to rewrite a flagged command (e.g. `rm -rf "${DIR:?}"/*`).
 
+**Decided while building (QUESTIONS Q90):** what `xargs` reads from its input and what `find` reaches are checked too.
+- A command xargs runs gets a stand-in word for its input, appended and in place of every word holding a string `-I`/`-i`/`--replace` could set. A recursive removal of it is critical; a write to it needs approval; a §4.8 command becomes a remote action when one of its verbs in that place makes it one (`xargs git`, not `xargs git add`). Any other xargs-run command asks, since the files it reads can't be checked: no rule approves it, while `bypassPermissions` and sandbox auto-allow skip this ask.
+- `find -delete` and `find -exec rm … {}` remove each start path (`.` when none; also `.` for a start path holding a variable) when the expression has no name or place test (`-name`, `-path`, `-regex`, `-empty`, …) or has an `-o`, `!` or `,`, else what's under each start path; an action is narrowed only by a test **before** it, because find evaluates in order (`find . -delete -name x` removes everything under `.` and only then tests the name); the critical-path check runs on that, and the write checks (§4.3, §4.1) on `-delete`'s start paths. `find . -name '*.pyc' -delete` runs; `find . -delete` asks like `rm -rf .`.
+
+**Decided while building (QUESTIONS Q91):** the input can also name the command or its flags.
+- A command xargs runs is a **critical-path removal in every mode** when no typed word pins what runs: its program is `find` (the input can carry `-delete`), `xargs` (the input can name the command), the stand-in itself, or a wrapper a reading of which leaves its command to the input (`xargs timeout`, `xargs cmd`, a multicall `busybox`/`toybox`). A benign reading (`ls | xargs find . -name y`) asks too, because the input can widen the expression (`-o -delete`); one whose command is fully typed (`xargs timeout 5 echo`) does not.
+- The commands xargs runs and `find -exec` builds are unwrapped like typed ones, through every `cmd /c` layer, so a wrapper written inside them hides nothing.
+- A run of `xargs` words is read as one xargs (the chain's command and arguments carry the stand-in), and each is expanded once, so a chain decides in milliseconds whatever its length.
+
 ### 4.4b Self-protection and process control
 - `kill`/`taskkill` targeting Dovet's own PID or its parent → denied. `pkill`/`killall` (and `Stop-Process -Name`) whose pattern could match Dovet's own process name or command line → ask, with that warning.
 - Shell commands that write to files Dovet's file tools would refuse (the credentials file, keychain exports, sensitive files of §4.7) → ask, even under a whole-tool `Bash` allow rule.

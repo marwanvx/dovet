@@ -240,6 +240,16 @@ function commandStarts(argv: string[], operands: number, env: boolean): { starts
 export const xargsCommandStarts = (argv: string[]): { starts: number[]; none: boolean } =>
   commandStarts(argv, 0, false);
 
+/** Whether a reading leaves the command `argv` runs to start at `input` or beyond it, so the input can name it. */
+export function commandFromInput(argv: string[], input: string): boolean {
+  const name = commandName(argv[0]);
+  if (!DEEP_WRAPPERS.has(name) && !["busybox", "toybox"].includes(name)) return false;
+  const x = argv.indexOf(input);
+  if (x < 0) return false;
+  const { starts, none } = commandStarts(argv, DEEP_WRAPPERS.get(name) ?? 0, name === "env");
+  return none || starts.some((s) => s >= x);
+}
+
 /** The values an option word could hand over, each with the index after it: attached after `letter`, after `=`, or the next word. */
 function optionValues(argv: string[], j: number, letter: string, long: string): [string, number][] {
   const tok = argv[j] ?? "";
@@ -348,18 +358,23 @@ function splitStrings(argv: string[], j: number, budget: Budget): string[][] {
 
 const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
 
-/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
-function findCommands(argv: string[]): string[][] {
-  const out: string[][] = [];
+/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end), with where each `-exec` sits. */
+export function findCommandsAt(argv: string[]): Array<{ at: number; cmd: string[] }> {
+  const out: Array<{ at: number; cmd: string[] }> = [];
   for (let i = 1; i < argv.length; i++) {
     if (!FIND_EXEC.test(argv[i] ?? "")) continue;
     let end = i + 1;
     // `+` ends the command only right after `{}`.
     while (end < argv.length && argv[end] !== ";" && !(argv[end] === "+" && argv[end - 1] === "{}")) end++;
-    if (end > i + 1) out.push(argv.slice(i + 1, end));
+    if (end > i + 1) out.push({ at: i, cmd: argv.slice(i + 1, end) });
     i = end;
   }
   return out;
+}
+
+/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
+export function findCommands(argv: string[]): string[][] {
+  return findCommandsAt(argv).map(({ cmd }) => cmd);
 }
 
 /** What an exec wrapper may run, read every way its options allow (deny side). */

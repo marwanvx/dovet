@@ -3,6 +3,7 @@ import { lexicalPath } from "../../platform/index.ts";
 import type { PermissionMode } from "../../schema/index.ts";
 import {
   type Behavior,
+  commandFromInput,
   evaluateRules,
   type RuleCall,
   type RuleMatch,
@@ -17,8 +18,19 @@ import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
-import { forcePushToDefault, program, type RemoteKind, remoteAction, selfControl } from "./remote.ts";
-import { FS_COMMANDS, NETWORK_PATH, sedEscapes, shellTargets, type Target, unresolvedTarget } from "./targets.ts";
+import { forcePushToDefault, program, type RemoteKind, remoteWithInput, selfControl } from "./remote.ts";
+import {
+  FS_COMMANDS,
+  findRemovals,
+  findStarts,
+  NETWORK_PATH,
+  sedEscapes,
+  shellTargets,
+  type Target,
+  unresolvedTarget,
+  XARGS_INPUT,
+  xargsRuns,
+} from "./targets.ts";
 
 export type Action =
   | { kind: "read" | "edit"; paths: string[] }
@@ -53,7 +65,8 @@ export type FindingKind =
   | "self"
   | "remote"
   | "force-push"
-  | "unchecked";
+  | "unchecked"
+  | "computed";
 
 /** One thing a built-in check found; M1-23b derives `Effects` from these. */
 export type Finding = {
@@ -93,8 +106,9 @@ const SECTION: Record<FindingKind, string> = {
   remote: "remote-action check (§4.8)",
   "force-push": "force-push check (§5)",
   unchecked: "wrapper reading (§3.2)",
+  computed: "xargs input check (§4.4)",
 };
-const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote"]);
+const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote", "computed"]);
 const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
 
 const finding = (
@@ -190,15 +204,29 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
   return m?.behavior === "allow" && namesCommand(m.rule, label) && !(exact && m.rule.includes("*"));
 }
 
-const PEELED = new Set(["exec", "busybox"]);
+const PEELED = new Set(["exec", "busybox", "toybox"]);
+const MAX_VARIANT_WORDS = 2_000_000;
 
-/** The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front; `complete` is false when not every reading was looked at. */
+/** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
+function collapseXargs(argv: string[]): string[] {
+  if (program(argv[0]) !== "xargs") return argv;
+  let j = 1;
+  while (j < argv.length && program(argv[j]) === "xargs") j++;
+  return j > 1 && j < argv.length ? [argv[0] ?? "", ...argv.slice(j)] : argv;
+}
+
+/**
+ * The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front, and what xargs
+ * runs with its input in place; `complete` is false when not every reading was looked at.
+ */
 function variants(argv: string[]): { all: string[][]; complete: boolean } {
   const out: string[][] = [];
   const seen = new Set<string>();
   const queue = [argv];
   let complete = true;
-  for (let a = queue.pop(); a !== undefined; a = queue.pop()) {
+  let words = 0;
+  for (let a = queue.pop(); a !== undefined && complete; a = queue.pop()) {
+    a = collapseXargs(a);
     const unwrapped = unwrapCommand(a);
     complete &&= unwrapped.complete;
     for (const v of unwrapped.argvs) {
@@ -206,7 +234,11 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       if (seen.has(key)) continue;
       seen.add(key);
       out.push(v);
+      words += v.length;
+      if (words > MAX_VARIANT_WORDS) complete = false;
       if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
+      // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
+      if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
     }
   }
   return { all: out, complete };
@@ -223,8 +255,10 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const { all, complete } = variants(unwrapped.argv);
     if (!complete) out.push(finding("unchecked", "a wrapper's options can't all be checked", "ask"));
     for (const v of all) {
-      const sub = { ...unwrapped, argv: [program(v[0]), ...v.slice(1)] };
-      const system = systemRemoval(env, sub, viaCmd);
+      // What xargs runs and `find -exec` build reaches the checks as typed words would: `cmd /c` peeled off.
+      const via = viaCmd || program(v[0]) === "cmd";
+      const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
+      const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);
       if (critical !== undefined)
@@ -233,19 +267,61 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
         );
+      if (program(v[0]) === "find")
+        for (const argv of findRemovals(v)) {
+          const why = criticalRemoval(env, unwrapCmd({ ...sub, argv }));
+          if (why !== undefined)
+            out.push(
+              finding("critical", `critical-path removal: find ${why}`, "ask", {
+                ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
+              }),
+            );
+        }
+      // The input can name the command itself (a chain of xargs, a wrapper whose operand or `/c` the input
+      // completes) or bring `find` its `-delete`: what runs can be a recursive removal of any path, so the
+      // typed words alone can't clear it. `cmd /c` peeling moves the program, so the peeled words are read too.
+      const names = [program(v[0]), program(sub.argv[0])];
+      if (
+        v.includes(XARGS_INPUT) &&
+        (names.includes(XARGS_INPUT) ||
+          names.some((n) => n === "find" || n === "xargs") ||
+          (program(v[0]) === "cmd" && program(sub.argv[0]) === "cmd") ||
+          commandFromInput(v, XARGS_INPUT) ||
+          commandFromInput(sub.argv, XARGS_INPUT))
+      )
+        out.push(
+          finding("critical", "critical-path removal: what xargs reads from its input can be one of any path", "ask", {
+            ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
+          }),
+        );
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
-      for (const t of shellTargets(sub, env.cwd)) {
+      const deletes = program(v[0]) === "find" && v.includes("-delete") ? findStarts(v) : [];
+      const cwd = sub.cwd ?? env.cwd;
+      for (const t of [
+        ...shellTargets(sub, env.cwd),
+        ...deletes.map((path): Target => ({ access: "edit", path, cwd })),
+      ]) {
         out.push(...pathFindings(st, t, false, sandboxedRead));
         if (t.access === "edit" && unresolvedTarget(t.path))
           out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
       }
+      if (v.includes(XARGS_INPUT) && !sandboxedRead)
+        out.push(
+          finding(
+            "computed",
+            `xargs passes its input to ${
+              sub.argv[0] === XARGS_INPUT ? "a command named by that input" : sub.argv[0]
+            }, so its files can't be checked`,
+            "ask",
+          ),
+        );
     }
     const words = [...sub0.argv.slice(1), ...(sub0.redirects ?? []).map((r) => r.target)];
     const net = words.find((w) => NETWORK_PATH.test(w));
     if (net !== undefined) out.push(finding("network-path", `network path: ${net}`, "ask"));
     const sub = { ...unwrapped };
-    const remote = all.map((v) => remoteAction(v)).find((r) => r !== undefined);
+    const remote = all.map((v) => remoteWithInput(v, XARGS_INPUT)).find((r) => r !== undefined);
     if (remote !== undefined)
       out.push(
         finding(
