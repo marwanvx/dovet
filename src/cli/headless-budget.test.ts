@@ -2,11 +2,14 @@
 import { describe, expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { fakePlatform, sequentialIds, tempProject } from "../../test/helpers/index.ts";
 import { DailyLedger } from "../agent/index.ts";
+import type { RenderInput } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import type { LoadedSettings, LoadInput } from "../store/index.ts";
 import { readSession } from "../store/index.ts";
+import type { ToolDefinition } from "../tools/index.ts";
 import { exitCodeFor } from "./headless-output.ts";
 import { type HeadlessRunInput, runHeadless } from "./headless-run.ts";
 
@@ -59,6 +62,98 @@ const project = (budget?: object) =>
       ...(budget === undefined ? {} : { budget }),
     }),
   });
+
+/** Window 10,000, output reserve 4,096, threshold 0.9: compaction above 5,313 tokens. */
+const COMPACTION_WINDOW = 10_000;
+
+const bigTool = (chars: number): ToolDefinition<unknown> =>
+  ({
+    name: "dump",
+    input: z.strictObject({}),
+    descriptionFile: "tools/Read.md",
+    errorExample: {},
+    parallelSafe: true,
+    mutates: "none",
+    describeAction: () => ({
+      kind: "read",
+      paths: [],
+      effects: { writes: "none", network: "none", sensitiveReads: [], remote: [], sandboxed: false },
+    }),
+    run: () => Promise.resolve({ status: "ok", content: [{ kind: "text", text: "d".repeat(chars) }] }),
+  }) as ToolDefinition<unknown>;
+
+type Step = { stop: "tool_use" | "end_turn"; text?: string; call?: boolean; usage?: object };
+type SummaryStep = { text?: string; error?: string; usage?: object };
+
+/** Replies in order; a request whose last user message holds the compaction prompt is the summary request. */
+function compacting(script: Step[], summary: SummaryStep[] = [{ text: "SUMMARY OF THE WORK" }]) {
+  let next = 0;
+  let summaryNext = 0;
+  const requests: { summary: boolean }[] = [];
+  let current: RenderInput | undefined;
+  const adapter = {
+    render: (input: RenderInput) => {
+      current = input;
+      return { provider: "nvidia", package: "x", modelId: "m", messages: [], tools: [], providerOptions: {} };
+    },
+    stream: async function* () {
+      const transcript = current?.transcript ?? [];
+      const last = transcript.at(-1);
+      const isSummary =
+        last?.kind === "user" &&
+        last.parts.some((p) => p.kind === "text" && p.text.includes("User's requests and constraints"));
+      requests.push({ summary: isSummary });
+      if (isSummary) {
+        const step: SummaryStep = summary[summaryNext++] ?? { text: "SUMMARY OF THE WORK" };
+        if (step.error !== undefined) {
+          yield {
+            type: "error",
+            error: { kind: "invalid_request", retryable: false, message: step.error },
+            completed: null,
+          };
+          return;
+        }
+        yield {
+          type: "done",
+          stopReason: "end_turn",
+          stored: {
+            provider: "nvidia",
+            protocol: "openai-chat",
+            package: "x",
+            packageVersion: "1",
+            modelId: "m",
+            parts: [{ kind: "text", text: step.text ?? "" }],
+            usage: step.usage ?? { promptTokens: 50, completionTokens: 20 },
+            finishReason: "stop",
+          },
+        };
+        return;
+      }
+      const step: Step = script[next++] ?? { stop: "end_turn", text: "extra" };
+      yield {
+        type: "done",
+        stopReason: step.stop,
+        stored: {
+          provider: "nvidia",
+          protocol: "openai-chat",
+          package: "x",
+          packageVersion: "1",
+          modelId: "m",
+          parts:
+            step.call === true
+              ? [{ kind: "tool_call", id: `c${next}`, name: "dump", inputJson: "{}" }]
+              : [{ kind: "text", text: step.text ?? "" }],
+          usage: step.usage ?? USAGE,
+          finishReason: "stop",
+        },
+      };
+    },
+  };
+  return { adapter: adapter as never, requests };
+}
+
+const runCompaction = (dir: { root: string }, adapter: unknown, over: Partial<HeadlessRunInput> = {}) =>
+  run(dir, adapter, { contextWindow: COMPACTION_WINDOW, toolDefs: [bigTool(10)], ...over });
 
 function run(dir: { root: string }, adapter: unknown, over: Partial<HeadlessRunInput> = {}) {
   const env = { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" };
@@ -299,6 +394,99 @@ describe("budgets in a headless run", () => {
       ]);
       expect(a.sent() + b.sent()).toBe(1);
       expect([oa.exit.kind, ob.exit.kind]).toEqual(["budget", "budget"]);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-10
+  test("a summary request that would cross the daily budget is refused before it is sent", async () => {
+    // The first request is estimated at $0.012 and commits $0.058, so the day total ($0.143) is over
+    // the limit when the compaction's summary request comes up: the turn stops with the budget message.
+    const dir = await project({ daily: 0.1 });
+    try {
+      const seed = new DailyLedger({ dir: join(dir.root, "data", "budget"), session: "SEED", now: () => NOW });
+      await seed.reserve("seed", 0.085, null);
+      await seed.commit("seed", 0.085);
+      const model = compacting([{ stop: "tool_use", call: true }]);
+      const out = await runCompaction(dir, model.adapter);
+      expect(model.requests.filter((r) => r.summary)).toHaveLength(0);
+      expect(out.exit).toEqual({ kind: "budget" });
+      expect(exitCodeFor(out.exit)).toBe(4);
+      expect(out.result).toContain("Daily budget $0.10 would be exceeded (spent $0.14");
+      const log = await events(dir, out.sessionId);
+      const limit = log.find((e) => e.type === "budget.event" && (e.data as { kind: string }).kind === "limit-reached");
+      expect(limit?.data).toMatchObject({ kind: "limit-reached", scope: "day", limit: 0.1 });
+      expect(log.findLast((e) => e.type === "turn.end")?.data).toEqual({ reason: "budget" });
+      const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
+      expect(lines.filter((l) => l.includes(out.sessionId)).map((l) => l.split(" ")[0])).toEqual(["reserve", "commit"]);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-10
+  test("a summary request is reserved and committed in the day's ledger like a main request", async () => {
+    const dir = await project();
+    try {
+      const model = compacting([
+        { stop: "tool_use", call: true },
+        { stop: "end_turn", text: "all done", usage: { promptTokens: 100, completionTokens: 10 } },
+      ]);
+      const out = await runCompaction(dir, model.adapter);
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.result).toBe("all done");
+      const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
+      expect(lines.map((l) => l.split(" ")[0])).toEqual([
+        "reserve",
+        "commit",
+        "reserve",
+        "commit",
+        "reserve",
+        "commit",
+      ]);
+      expect(lines[1]).toBe(`commit ${out.sessionId}.1 0.058000`);
+      // The summary request: 50 prompt and 20 completion tokens at the placeholder rates.
+      expect(lines[3]).toBe(`commit ${out.sessionId}.2 0.000220`);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-03
+  test("a session budget stops before the summary request too", async () => {
+    const dir = await project({ session: 0.07 });
+    try {
+      const model = compacting([{ stop: "tool_use", call: true }]);
+      const out = await runCompaction(dir, model.adapter);
+      expect(model.requests.filter((r) => r.summary)).toHaveLength(0);
+      expect(out.exit).toEqual({ kind: "budget" });
+      expect(out.result).toContain("Session budget $0.07 would be exceeded (spent $0.06");
+      expect(out.warnings.some((w) => w.includes("context compacted"))).toBe(false);
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-RCPT-04
+  test("a summary request whose stream fails is released, attempt by attempt", async () => {
+    const dir = await project();
+    try {
+      const model = compacting([{ stop: "tool_use", call: true }], [{ error: "boom" }, { error: "boom" }]);
+      const out = await runCompaction(dir, model.adapter);
+      expect(out.exit).toEqual({ kind: "ok" });
+      expect(out.warnings.some((w) => w.includes("Compaction wrote no summary"))).toBe(true);
+      const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
+      expect(lines.map((l) => l.split(" ")[0])).toEqual([
+        "reserve",
+        "commit",
+        "reserve",
+        "release",
+        "reserve",
+        "release",
+        "reserve",
+        "commit",
+      ]);
     } finally {
       await dir.dispose();
     }
