@@ -1,5 +1,5 @@
 // The files a shell command writes or reads that the analyzer does not already list as operands (permissions §4.0 item 4, §4.5).
-import { commandName, findCommands, type Subcommand, xargsCommandStarts } from "../rules/index.ts";
+import { commandName, findCommandsAt, type Subcommand, xargsCommandStarts } from "../rules/index.ts";
 
 export type Target = { access: "read" | "edit"; path: string; cwd: string };
 
@@ -154,19 +154,29 @@ export function findStarts(argv: string[]): string[] {
   return out.length > 0 ? out : ["."];
 }
 
-// A test that picks files by name or place; without one, or past an `-o`, `!` or `,`, find removes everything under its start paths.
+// A test that picks files by name or place; past an `-o`, `!` or `,`, find removes everything under its start paths.
 const NARROWING = /^-(i?name|i?path|i?wholename|i?regex|i?lname|samefile|inum|empty)$/;
 const WIDENING = /^(-o|-or|!|-not|,)$/;
 
 /** What `find -delete` and `find -exec rm … {}` remove, as removal commands: each start path, or what's under it. */
 export function findRemovals(argv: string[]): string[][] {
-  const all = !argv.some((a) => NARROWING.test(a)) || argv.some((a) => WIDENING.test(a));
+  const widened = argv.some((a) => WIDENING.test(a));
   // An unset `$DIR` start leaves find in the working directory.
   const starts = findStarts(argv).flatMap((s) => (/[$`]/.test(s) ? [s, "."] : [s]));
-  const reach = starts.map((s) => (all || /[$`]/.test(s) ? s : `${s.replace(/[\\/]+$/, "")}/*`));
-  const out = argv.includes("-delete") ? [["rm", "-r", ...reach]] : [];
-  for (const [name = "", ...args] of findCommands(argv))
+  // An action (-delete, -exec) is narrowed only by a name or place test before it: find evaluates in order, so
+  // `find . -delete -name x` removes everything under `.` and only then tests the name.
+  const reach = (at: number) =>
+    starts.map((s) =>
+      widened || !argv.slice(0, at).some((w) => NARROWING.test(w)) || /[$`]/.test(s)
+        ? s
+        : `${s.replace(/[\\/]+$/, "")}/*`,
+    );
+  const out: string[][] = [];
+  for (const [at, a] of argv.entries()) if (a === "-delete") out.push(["rm", "-r", ...reach(at)]);
+  for (const { at, cmd } of findCommandsAt(argv)) {
+    const [name = "", ...args] = cmd;
     if (args.some((a) => a.includes("{}")))
-      out.push(...reach.map((r) => [commandName(name), ...args.map((a) => a.replaceAll("{}", r))]));
+      out.push(...reach(at).map((r) => [commandName(name), ...args.map((a) => a.replaceAll("{}", r))]));
+  }
   return out;
 }

@@ -10,6 +10,7 @@ export {
   commandFromInput,
   commandName,
   findCommands,
+  findCommandsAt,
   isSafeEnv,
   needsExactRule,
   shellScriptAt,

@@ -358,18 +358,23 @@ function splitStrings(argv: string[], j: number, budget: Budget): string[][] {
 
 const FIND_EXEC = /^-(exec|execdir|ok|okdir)$/;
 
-/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
-export function findCommands(argv: string[]): string[][] {
-  const out: string[][] = [];
+/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end), with where each `-exec` sits. */
+export function findCommandsAt(argv: string[]): Array<{ at: number; cmd: string[] }> {
+  const out: Array<{ at: number; cmd: string[] }> = [];
   for (let i = 1; i < argv.length; i++) {
     if (!FIND_EXEC.test(argv[i] ?? "")) continue;
     let end = i + 1;
     // `+` ends the command only right after `{}`.
     while (end < argv.length && argv[end] !== ";" && !(argv[end] === "+" && argv[end - 1] === "{}")) end++;
-    if (end > i + 1) out.push(argv.slice(i + 1, end));
+    if (end > i + 1) out.push({ at: i, cmd: argv.slice(i + 1, end) });
     i = end;
   }
   return out;
+}
+
+/** Every command `find … -exec cmd … ;` runs (to `;`, `+` or the end). */
+export function findCommands(argv: string[]): string[][] {
+  return findCommandsAt(argv).map(({ cmd }) => cmd);
 }
 
 /** What an exec wrapper may run, read every way its options allow (deny side). */
