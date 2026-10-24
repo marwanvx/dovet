@@ -180,7 +180,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
 - **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
 - Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
-- **Fixed (PR TBD):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90).
+- **Fixed (#188, open):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90, Q91). Round 3 of the review was not clean, so per step 7.4 the PR waits for a rethink pass before merging.
 
 ### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
 - **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`

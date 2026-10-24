@@ -797,3 +797,9 @@ Done: `append` returns inline data, not the blob references written to disk; a 3
 Review: standard, 2 rounds (round 2: the F24 re-fix), 0 findings, 0 fixed, 0 dropped, 0 logged to FOLLOWUPS.
 Learned: a preload's `setDefaultTimeout` covers one file only (Bun 1.4.3). `runIn` has a 10,000-token window, so a big prompt compacts first: pass `contextWindow`. Locally AGENTS.md and build-loop.md are skip-worktree owner copies, so `docs:check` reports the instruction budget over its limit; CI checks the committed files.
 Next: F32.
+
+## 2026-10-23 — F32 xargs input and find -delete reach the checks
+Done: what xargs runs is checked with a stand-in for its input (critical, write, remote, `computed`); `find -delete` reaches the critical-path and write checks; the reviews' fixes ride along (Q90, Q91). PR: #188 (open, not merged).
+Review: deep, 3 rounds; 1 blocker + 5 majors + 3 minors fixed (two regressions in my fixes: `cmd /C`, `env xargs`); 1 dropped (bare xargs = echo); logged F42/F50 ext, F54–F56.
+Learned: round 3 not clean → step 7.4: #188 stays open for a rethink; each round found holes in the last fixes.
+Next: rethink F32 (re-review, ship #188), then F54.
