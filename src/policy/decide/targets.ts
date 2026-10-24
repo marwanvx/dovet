@@ -1,5 +1,5 @@
 // The files a shell command writes or reads that the analyzer does not already list as operands (permissions §4.0 item 4, §4.5).
-import type { Subcommand } from "../rules/index.ts";
+import { commandName, findCommands, type Subcommand, xargsCommandStarts } from "../rules/index.ts";
 
 export type Target = { access: "read" | "edit"; path: string; cwd: string };
 
@@ -102,3 +102,71 @@ export function sedEscapes(args: string[]): boolean {
 export const unresolvedTarget = (path: string): boolean => /[*?[{$`~]/.test(path);
 
 export const NETWORK_PATH = /^(?:\\\\|\/\/)[^\\/]|^\/net\/[^/]/;
+
+/** Stands for the words xargs reads from its input: anything, so every check treats it as unresolved. No space, so `cmd /c`'s re-split keeps it one word. */
+export const XARGS_INPUT = "$(xargs-input)";
+
+/** The strings `-I R`, `-i[R]` and `--replace[=R]` could set, read every way (an `I` or `i` in any option cluster). */
+function replaceStrings(opts: string[]): string[] {
+  const out = new Set<string>();
+  for (const [i, o] of opts.entries()) {
+    if (o.startsWith("--r")) {
+      const eq = o.indexOf("=");
+      out.add(eq < 0 ? "{}" : o.slice(eq + 1));
+    } else if (/^-[^-]/.test(o)) {
+      const big = o.indexOf("I");
+      const small = o.indexOf("i");
+      if (big > 0) out.add(big < o.length - 1 ? o.slice(big + 1) : (opts[i + 1] ?? ""));
+      if (small > 0) out.add(small < o.length - 1 ? o.slice(small + 1) : "{}");
+    }
+  }
+  return [...out].filter((r) => r !== "");
+}
+
+/** The commands `xargs` runs with its input in place: appended, and in every word holding a replace string. */
+export function xargsRuns(argv: string[]): string[][] {
+  const out: string[][] = [];
+  for (const s of xargsCommandStarts(argv).starts) {
+    const cmd = argv.slice(s);
+    out.push([...cmd, XARGS_INPUT]);
+    const reps = replaceStrings(argv.slice(1, s));
+    if (reps.length > 0) out.push(cmd.map((w) => (reps.some((r) => w.includes(r)) ? XARGS_INPUT : w)));
+  }
+  return out;
+}
+
+/** The start paths of `find` (`.` when it names none), past its leading options (GNU `-H -L -P -D -O`, BSD `-E -s -x -X -d -f`). */
+export function findStarts(argv: string[]): string[] {
+  const out: string[] = [];
+  let i = 1;
+  for (; i < argv.length; i++) {
+    const a = argv[i] ?? "";
+    if (a === "-D" || a === "-f") {
+      const v = argv[++i];
+      if (a === "-f" && v !== undefined) out.push(v);
+    } else if (a !== "--" && !/^-([HLPEXsxd]+|O\d*)$/.test(a)) break;
+  }
+  for (; i < argv.length; i++) {
+    const a = argv[i] ?? "";
+    if (/^[-(!),]|^\\\(/.test(a)) break;
+    out.push(a);
+  }
+  return out.length > 0 ? out : ["."];
+}
+
+// A test that picks files by name or place; without one, or past an `-o`, `!` or `,`, find removes everything under its start paths.
+const NARROWING = /^-(i?name|i?path|i?wholename|i?regex|i?lname|samefile|inum|empty)$/;
+const WIDENING = /^(-o|-or|!|-not|,)$/;
+
+/** What `find -delete` and `find -exec rm … {}` remove, as removal commands: each start path, or what's under it. */
+export function findRemovals(argv: string[]): string[][] {
+  const all = !argv.some((a) => NARROWING.test(a)) || argv.some((a) => WIDENING.test(a));
+  // An unset `$DIR` start leaves find in the working directory.
+  const starts = findStarts(argv).flatMap((s) => (/[$`]/.test(s) ? [s, "."] : [s]));
+  const reach = starts.map((s) => (all || /[$`]/.test(s) ? s : `${s.replace(/[\\/]+$/, "")}/*`));
+  const out = argv.includes("-delete") ? [["rm", "-r", ...reach]] : [];
+  for (const [name = "", ...args] of findCommands(argv))
+    if (args.some((a) => a.includes("{}")))
+      out.push(...reach.map((r) => [commandName(name), ...args.map((a) => a.replaceAll("{}", r))]));
+  return out;
+}

@@ -14,9 +14,22 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F54 (F32 review): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map in `shellFindings`), permissions §5
+- `echo +main | xargs git push origin` is allowed in `bypassPermissions` while `git push origin +main` denies: the stand-in filling reaches the §4.8 remote check (`remoteWithInput`) but not §5's `forcePushToDefault`, which still reads the literal words. Guarded modes ask via `computed`; tainted bypass denies via remote. Run the force-push check over the stand-in-filled readings too (the stand-in as `--force` and as `+branch`).
+
+### F52 (F32): a command substitution in a read command's file position reaches no check
+- **Severity:** major · `src/policy/shell-parse/bash.ts` (a `$( )` word is understood), `src/policy/decide/decide.ts` `shellFindings`
+- Under a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks: not understood). The words a substitution makes, like xargs input (Q90), can name any file; treat a substitution in a non-read-only command's arguments like a variable.
+
+### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
+- **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
+- `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
+
 ### F50 (F40 review): wrappers outside §3.2's list hide the command
 - **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
 - `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
+- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su`, `xargs strace`, `xargs chroot /mnt`, `xargs nsenter -t 1 -F`, `xargs arch`, `xargs parallel`, and an interpreter's `-c` script itself from input (`echo 'rm -rf /' | xargs bash -c`) are allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
@@ -28,7 +41,15 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
-- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks).
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks). Extended (F32 security review): a remover's target or recursion flag arriving from xargs input is the same class — `echo '-rf /' | xargs rm` and `echo C:\Windows | xargs cmd /c rd /s` (win32) run in `bypassPermissions` (`rm -rf $X` does too: the target is unresolved and no `-r` is typed; rd's `/s` isn't read as recursion). `test.failing` cases in guarantees.test.ts.
+
+### F55 (F32 security review): `pwsh -c` scripts reach no check, with or without xargs
+- **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
+- `pwsh -c remove-item -recurse C:\Windows` is allowed even in `default` with a tool-wide `Bash` allow (Q91's unwrapping peels `cmd /c` only); `echo C:\ | xargs pwsh -c remove-item -recurse` inherits it. Read what `pwsh -c` runs like a script, or treat a remover inside it as typed.
+
+### F56 (F32 round-2 tests review): no test pins the section labels of the other finding kinds
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `SECTION`, `test/adversarial/guarantees.test.ts`
+- Every `by` string a prompt shows ("critical-path removal (§4.4)", "remote-action check (§4.8)", …) is asserted nowhere (the F32 round pinned only the new `computed` one), so a wrong section reference reaches users silently — the traps table's "pin the literal text". One `expect(...by)` per kind where a test already produces that finding.
 
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
@@ -89,10 +110,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F31 (M2-16 kill -9 probe): a file change made in the last two seconds before `kill -9` has no event in the log
 - **Severity:** minor (design choice in event-log "Writer rules" 3) · `src/store/event-log/writer.ts` (`FLUSH_NOW`)
 - The probe (`test/adversarial/kill9.test.ts`) kills a session that writes a file per request: at 1.8 s the files are on disk and the log holds only `user.message`, because `tool.call`/`file.change` wait for the next 2 s flush. After resume nothing says those files changed (and `/rewind` can't undo them). "The agent can't hide what it did": flush `tool.call` of a mutating tool before it runs (no fsync needed).
-
-### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
-- **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
-- Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
 
 ### F33 (M2-16 adversarial fixtures): two credential and startup files are missing from the §4.3/§4.7 lists
 - **Severity:** minor · `src/policy/decide/paths.ts` (protected files, home credential list), permissions §4.3, §7.2
@@ -159,6 +176,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
+- **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
+- Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
+- **Fixed (#188, open):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90, Q91). Round 3 of the review was not clean, so per step 7.4 the PR waits for a rethink pass before merging.
 
 ### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
 - **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
