@@ -804,7 +804,12 @@ Review: deep, 3 rounds; 1 blocker + 5 majors + 3 minors fixed (two regressions i
 Learned: round 3 not clean → step 7.4: #188 stays open for a rethink; each round found holes in the last fixes.
 Next: rethink F32 (re-review, ship #188), then F54.
 ## 2026-10-24 — F32 step 7.4 rethink: the structural rule stands; find's action-before-test escape found and fixed
-Done: 19 new probe shapes through `decide()` held (xargs option exotics, worst-case boundary, multicalls, find exotics; `xargs toybox rm` with a typed applet is F42's class — its FOLLOWUPS entry extended). The rethink found one real escape, fixed in ff6cea0: find narrows an action only by a test **before** it (find evaluates in order; `find . -delete -name '*.pyc'` removes everything under `.`, proved on real find; same for `-exec … {} + -name x` and `\( -delete \) -name x`). `findRemovals` reads the reach per action, `findCommandsAt` exposes each `-exec`'s position; Q90's answer carries the position rule. Three tests failed before the fix, 252 pass after; CI green on all three OSes. PR: #188 (open, not merged).
-Review: deep, round 4 (rethink); tests+spec+scope reviewer: 0 findings above minor (mutations confirmed the new rows real; spec matches code; scope clean). Security lens: 4 launch/resume attempts over ~2 hours all died on a provider outage — not run; re-runs next session on `70cd963..HEAD` before the merge. One dead reviewer left a mutation of `targets.ts` in the tree; restored to HEAD and re-verified.
-Learned: a reviewer killed mid-run can leave its mutation in the tree — check `git status --porcelain` after every reviewer, dead or alive. Subagent provider outages: one resume in three got through; brief the agent to output partial findings before stopping.
-Next: run the round-4 security lens on `70cd963..HEAD`, then merge #188; then F54.
+Done: 19 new probe shapes through `decide()` held. The rethink found one real escape, fixed in ff6cea0: find narrows an action only by a test **before** it (`find . -delete -name x` removes everything under `.`, proved on real find); the reach is read per action, Q90's answer carries the position rule. Three tests failed before the fix, 252 pass after. PR: #188 (open, not merged).
+Review: deep, round 4 (rethink); tests+spec+scope: 0 findings above minor. Security lens: 4 attempts died on a provider outage; ran the next session (next entry). A dead reviewer left a `targets.ts` mutation; restored and re-verified.
+Learned: check `git status --porcelain` after every reviewer, dead or alive. Brief a subagent to output partial findings before stopping.
+Next: the round-4 security lens, then merge #188; then F54.
+## 2026-10-24 — F32: round-4 security lens run; #188 merged
+Done: the round-4 security lens found 0 in the diff, 1 pre-existing major logged (F57); the docs growth that broke the context budget is tightened; #188 merged.
+Review: deep, 4 rounds; round 4: 0 above minor in the diff, 1 pre-existing major logged.
+Learned: the context ratchet punishes verbose follow-up prose; write report-window text terse.
+Next: F54.

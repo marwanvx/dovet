@@ -14,12 +14,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
+- With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs (`*.env` the same): the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
+
 ### F54 (F32): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map), permissions §5
 - `echo +main | xargs git push origin` is allowed in `bypassPermissions` while `git push origin +main` denies: the stand-in filling reaches the §4.8 remote check but not §5's `forcePushToDefault`, which reads literal words. Run the force-push check over the stand-in-filled readings too.
 
 ### F52 (F32): a `$( )` in a read command's file position reaches no check
-- **Severity:** major · `src/policy/shell-parse/bash.ts` (a `$( )` word is understood), `decide.ts` `shellFindings`
+- **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
 - With a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks). A substitution's words, like xargs input (Q90), can name any file; treat one in a non-read-only command's arguments like a variable.
 
 ### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
@@ -180,7 +184,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
 - **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
 - Allowed: `echo / | xargs rm -rf`, `find / -delete`, `echo .env | xargs cat` (tool-wide allow); `echo push | xargs git` (tainted bypass). Treat them as unresolvable targets (§4.4).
-- **Fixed (#188, open):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90, Q91). Round 3 of the review was not clean, so per step 7.4 the PR waits for a rethink pass before merging.
+- **Fixed (#188):** a command xargs runs is checked with a stand-in for its input (critical, write, remote and a new `computed` ask); `find -delete`/`-exec rm {}` removes its start paths, or what's under them with a name test, through the critical-path and write checks (QUESTIONS Q90, Q91).
 
 ### F29 (M2-16 kill -9 probe): a string over 256 KB in an event crashes the headless run
 - **Severity:** major · `src/cli/headless-run.ts:583`, `src/agent/transcript/build.ts:133`
