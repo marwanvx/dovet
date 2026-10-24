@@ -41,7 +41,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
-- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks). Extended (F32 security review): a remover's target or recursion flag arriving from xargs input is the same class — `echo '-rf /' | xargs rm` and `echo C:\Windows | xargs cmd /c rd /s` (win32) run in `bypassPermissions` (`rm -rf $X` does too: the target is unresolved and no `-r` is typed; rd's `/s` isn't read as recursion). `test.failing` cases in guarantees.test.ts.
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown (`rm -rf ~` asks). Extended (F32 security review): a remover's target or recursion flag arriving from xargs input is the same class — `echo '-rf /' | xargs rm` and `echo C:\Windows | xargs cmd /c rd /s` (win32) run in `bypassPermissions` (`rm -rf $X` does too: the target is unresolved and no `-r` is typed; rd's `/s` isn't read as recursion). `test.failing` cases in guarantees.test.ts. Extended (F32 rethink round): the same class through a multicall with the applet typed — `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions` (the typed applet is the remover, every argument from the input); bare `xargs toybox` still asks critical (the peel leaves the stand-in as the program).
 
 ### F55 (F32 security review): `pwsh -c` scripts reach no check, with or without xargs
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
