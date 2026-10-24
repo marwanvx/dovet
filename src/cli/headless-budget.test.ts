@@ -418,6 +418,8 @@ describe("budgets in a headless run", () => {
       const limit = log.find((e) => e.type === "budget.event" && (e.data as { kind: string }).kind === "limit-reached");
       expect(limit?.data).toMatchObject({ kind: "limit-reached", scope: "day", limit: 0.1 });
       expect(log.findLast((e) => e.type === "turn.end")?.data).toEqual({ reason: "budget" });
+      // The refusal happens before compact() runs: no epoch is replaced by a mechanical-fallback compaction.
+      expect(log.some((e) => e.type === "compaction")).toBe(false);
       const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
       expect(lines.filter((l) => l.includes(out.sessionId)).map((l) => l.split(" ")[0])).toEqual(["reserve", "commit"]);
     } finally {
@@ -463,6 +465,8 @@ describe("budgets in a headless run", () => {
       expect(out.exit).toEqual({ kind: "budget" });
       expect(out.result).toContain("Session budget $0.07 would be exceeded (spent $0.06");
       expect(out.warnings.some((w) => w.includes("context compacted"))).toBe(false);
+      // The refusal happens before compact() runs: no epoch is replaced by a mechanical-fallback compaction.
+      expect((await events(dir, out.sessionId)).some((e) => e.type === "compaction")).toBe(false);
     } finally {
       await dir.dispose();
     }

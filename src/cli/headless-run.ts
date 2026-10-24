@@ -1302,6 +1302,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         receipt: {},
         exit: { kind: "budget" },
         warnings,
+        events,
       };
     };
     const stoppedDuringCompaction = async (): Promise<HeadlessRunOutput> => {
