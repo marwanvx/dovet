@@ -616,7 +616,8 @@ describe("what xargs reads from its input and what find reaches get the checks (
 
   // spec: permissions §0 guarantee 3
   test("a find -delete outside the project asks as a write outside it", () => {
-    const d = shell(`find ${join(root, "..", "other")} -name x -delete`, state("default", { allow: ["Bash"] }));
+    // Quoted: Git Bash eats unquoted backslashes, so a native Windows path would never reach the check as written.
+    const d = shell(`find '${join(root, "..", "other")}' -name x -delete`, state("default", { allow: ["Bash"] }));
     expect(d.behavior).toBe("ask");
     expect(d.reason).toStartWith("write outside the project:");
   });
