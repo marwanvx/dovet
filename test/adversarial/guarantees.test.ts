@@ -693,6 +693,13 @@ describe("what xargs reads from its input and what find reaches get the checks (
     "echo +main | xargs --replace git push origin {}",
     "echo push | xargs -I{} git {} origin +main",
     "echo +main | env xargs git push origin",
+    "echo 'push origin +main' | xargs git",
+    "echo 'push --force origin main' | xargs git",
+    "echo 'a=b push origin +main' | xargs git -c",
+    "echo 'push --force origin main' | xargs git -c",
+    "echo 'push origin +main' | xargs env git",
+    "echo +main | xargs git push origin feature",
+    "echo x | xargs -I{} git push origin feature:{}",
   ])("%s may force-push the default branch from its input, so it is denied in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions"));
     notAllowed(d);

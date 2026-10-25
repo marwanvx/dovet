@@ -18,6 +18,22 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
 
+### F59 (F54 security review): `cmd /c` not the outermost word hides a push from the §5 force check and §4.8
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336` (the check reads the raw variant; `forcePushToDefault` needs git at the head), `remote.ts` `remoteAction`
+- `sudo cmd /c git push origin +main`, `find . -exec cmd /c git push origin +main ;` and `echo +main | xargs cmd /c git push origin` allow in `bypassPermissions` (zero findings); typed `cmd /c git push origin +main` denies, so the gap is exactly a `cmd` layer below the head. Run the force and remote checks over the `cmd`-peeled reading (`decide.ts:260`'s `sub.argv`) too.
+
+### F60 (F54 security review): a dynamic destination branch isn't fail-closed in the force-push check
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:167-171` (fail-closed covers only an empty dst and `HEAD`)
+- `git push --force origin $BRANCH` and `git push --force origin "$@"` allow in `bypassPermissions` (the remote ask only), so do `find main -maxdepth 0 -exec git push --force origin {} ;` and a dynamic dst inside a parsed `sh -c` script — the destination is known only at run time. Treat an unresolved dst (`$`, backtick, glob, brace, the xargs stand-in) like `HEAD`.
+
+### F61 (F54 security review): many stand-ins decide in quadratic time
+- **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:78-87` (`remoteWithInput`'s word table × positions), `forcePushWithInput` the same shape
+- 2,000 stand-ins in a 4 KB command decide in ~1.7 s (measured, `bypassPermissions`), ~8–9 s near the parse cap; the cost is the ~34-word `REMOTE_WORDS` substitution loop (F54's 4-word fill adds ~10–20%). Cap total substitution attempts the way `MAX_WORDS` caps readings.
+
+### F62 (F54 tests review): the bypass corpus hasn't been extended with the follow-up series' bypasses
+- **Severity:** minor (pre-existing) · `src/policy/testdata/bypass-corpus.jsonl`
+- testing.md "Permission corpora" says the corpus is extended with each Dovet bug, but no F32/F42/F54 command is in it. Add them as corpus cases.
+
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
 - With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs (`*.env` the same): the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.

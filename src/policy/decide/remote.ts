@@ -172,10 +172,18 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   return hits ? v.join(" ") : undefined;
 }
 
-/** Words one xargs-input line can be that make a force-push reading: a force flag, the push itself, or a default branch, named or forced. Keep in step with `forcePushToDefault`'s spellings. */
+/** Words one xargs-input line can be that make a force-push reading: a force flag, the push itself, a default branch forced. A line is whole words (`push origin +main`), and a leading `.` stands for an option value so the push survives `gitArgs` (`xargs git -c`). Keep in step with `forcePushToDefault`'s spellings. */
 const FORCE_INPUT = (branches: readonly string[]): string[][] => {
   const b = branches[0] ?? "main";
-  return [["--force"], ["push"], [`+${b}`], [b]];
+  return [
+    ["--force"],
+    ["push"],
+    [`+${b}`],
+    ["push", `+${b}`],
+    ["push", "--force"],
+    [".", "push", `+${b}`],
+    [".", "push", "--force"],
+  ];
 };
 
 /** The force-push (§5) this command could be once each `input` word is filled in at run time (xargs input), else the typed one. */
