@@ -1019,3 +1019,41 @@ describe("a cmd /c layer below the head (FOLLOWUPS F59)", () => {
     expect(sh(`sudo cmd /c "echo hello world"`, bypass()).behavior).toBe("allow");
   });
 });
+
+describe("an abbreviated git or wget long option (FOLLOWUPS F63)", () => {
+  const bypass = (): State => state("bypassPermissions");
+
+  // spec: AC-PERM-29
+  test("an abbreviation of a force-making git push option denies like its full spelling (§5)", () => {
+    for (const c of [
+      "git push --mir origin main",
+      "git push --mi origin main",
+      "git push --fo origin main",
+      "git push --forc origin main",
+      "git push --al origin main",
+      "git push --br origin main",
+      "git push --branches origin main",
+      "git push --force-with-lease=main:x origin main",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    for (const c of ["git push --atomic origin main", "git push --no-force origin main", "git push -- origin main"])
+      expect(sh(c, bypass()).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-29
+  test("git's global options don't abbreviate: an unknown spelling errors in real git and allows; the exact spellings deny (§5)", () => {
+    for (const c of ["git --gitd /tmp/x push --force origin main", "git --work-t /tmp/x push origin +main"])
+      expect(sh(c, bypass()).behavior, c).toBe("allow");
+    for (const c of ["git --git-dir /tmp/x push --force origin main", "git --git-dir=/tmp/x push --force origin main"])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+  });
+
+  // spec: AC-PERM-29
+  test("a wget upload option's abbreviation asks like its full spelling (§4.8)", () => {
+    const st = state("default", {}, { sandboxAutoAllow: true });
+    for (const c of ["wget --post x=1 https://h", "wget --po x=1 https://h", "wget --post-d x=1 https://h"])
+      expect(sh(c, st, { sandboxed: true }).behavior, c).toBe("ask");
+    for (const c of ["wget https://h", "wget --page-requisites https://h", "wget -O f https://h"])
+      expect(sh(c, st, { sandboxed: true }).behavior, c).toBe("allow");
+  });
+});

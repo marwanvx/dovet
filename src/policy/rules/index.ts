@@ -11,6 +11,7 @@ export {
   commandName,
   findCommands,
   findCommandsAt,
+  isLongOption,
   isSafeEnv,
   needsExactRule,
   shellScriptAt,

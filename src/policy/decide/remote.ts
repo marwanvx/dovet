@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName } from "../rules/index.ts";
+import { commandName, isLongOption } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 import { unresolvedTarget } from "./targets.ts";
 
@@ -52,6 +52,10 @@ const ghApiWrites = (args: string[]): boolean =>
       (/^--method=/.test(a) && !/^GET$/i.test(a.slice(9))),
   );
 const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;
+
+/** git-push's long options that make a push force-like (`--branches` is git's alias of `--all`); git reads a unique prefix as the option, so the abbreviations deny too. */
+const FORCE_LONGS = ["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--all", "--branches"];
+const WGET_POST_LONGS = ["--post-data", "--post-file"];
 
 const GH_WRITES: Array<[string, string[]]> = [
   ["pr", ["create", "merge", "comment", "review"]],
@@ -146,7 +150,9 @@ export function remoteAction(argv: string[]): Remote | undefined {
     case "curl":
       return curlUpload(rest) ? is("upload", "curl upload") : undefined;
     case "wget":
-      return rest.some((x) => /^--post-/.test(x)) ? is("upload", "wget --post") : undefined;
+      return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x)))
+        ? is("upload", "wget --post")
+        : undefined;
     case "scp":
     case "rsync": {
       const last = positional(rest).at(-1);
@@ -166,7 +172,7 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   const pos = positional(rest);
   // A leading `+` reads as the refspec of a remoteless push; misreading a real remote this way only adds denies.
   const refs = pos[0]?.startsWith("+") ? pos : pos.slice(1);
-  const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
+  const forced = rest.some((a) => /^-[a-zA-Z]*f/.test(a) || FORCE_LONGS.some((n) => isLongOption(n, a)));
   const hits = (refs.length === 0 ? [""] : refs).some((r) => {
     const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
     // No named branch, HEAD, or one known only at run time, may be the default branch: fail closed.

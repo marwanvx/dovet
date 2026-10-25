@@ -122,6 +122,9 @@ describe("compound commands and wrappers", () => {
     expect(decide("find . -name a", { allow: ["Bash(find *)"] })).toBe("allow:Bash(find *)");
     expect(decide("docker -H tcp://x ps", { allow: ["Bash(docker *)"] })).toBeUndefined();
     expect(decide("git push --force origin main", { allow: ["Bash(git push *)"] })).toBeUndefined();
+    expect(decide("git push --fo origin main", { allow: ["Bash(git push *)"] })).toBeUndefined();
+    expect(decide("git commit --amen -m x", { allow: ["Bash(git commit *)"] })).toBeUndefined();
+    expect(decide("git commit --amen -m x", { allow: ["Bash(git commit --amen -m x)"] })).toContain("allow:");
     expect(decide("git push --force origin main", { allow: ["Bash(git push --force origin main)"] })).toContain(
       "allow:",
     );

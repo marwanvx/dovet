@@ -269,7 +269,10 @@ test("find -delete, exec wrappers and where-or-how-safely flags are never approv
     "docker -H tcp://evil.example:2375 run alpine",
     "git commit --no-verify -m x",
     "git commit --amend -m x",
+    "git commit --amen -m x",
     "git push --force-with-lease origin feature",
+    "git push --mir origin main",
+    "git push --fo origin main",
   ]) {
     for (const mode of GUARDED) notAllowed(shell(command, state(mode, { allow })));
   }

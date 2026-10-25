@@ -474,7 +474,14 @@ export function shellPattern(pattern: string, ignoreCase = false): RegExp {
 const EXEC_WRAPPERS = new Set(["watch", "setsid", "ionice", "flock"]);
 const FIND_ACTIONS = /^-(exec|execdir|ok|okdir|delete|fprint\w*|fls|files0-from)$/;
 const DAEMON_FLAGS = /^(-H|-r$|--host|--context|--url|--connection|--identity|--remote)/;
+/** Whether the program reads `word` as the long option `name`: the full spelling, an abbreviation (a prefix past the bare `--`; git's parse-options and GNU wget take unique prefixes, and a spelling neither accepts is a command that doesn't run, so over-matching only adds asks and denies), optionally with `=value`. Git's own global options (`--git-dir`) are matched by git.c exactly and don't abbreviate. */
+export function isLongOption(name: string, word: string): boolean {
+  const head = word.split("=", 1)[0] ?? "";
+  return head.length > 2 && name.startsWith(head);
+}
+
 const FORCE_FLAGS = /^(--force|--no-verify|--amend)/;
+const FORCE_ABBREVIATIONS = ["--force", "--no-verify", "--amend"];
 
 /** Commands only an exact-match rule may approve (permissions §3.2 "Never auto-approvable by prefix rules"). */
 export function needsExactRule(argv: string[]): boolean {
@@ -486,6 +493,7 @@ export function needsExactRule(argv: string[]): boolean {
     return rest.some(
       (a) =>
         FORCE_FLAGS.test(a) ||
+        FORCE_ABBREVIATIONS.some((n) => isLongOption(n, a)) ||
         (/^-[a-zA-Z]*f/.test(a) && rest.includes("push")) ||
         (/^\+/.test(a) && rest.includes("push")),
     );
