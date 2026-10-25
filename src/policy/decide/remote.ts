@@ -172,6 +172,30 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   return hits ? v.join(" ") : undefined;
 }
 
+/** Words one xargs-input line can be that make a force-push reading: a force flag, the push itself, or a default branch, named or forced. Keep in step with `forcePushToDefault`'s spellings. */
+const FORCE_INPUT = (branches: readonly string[]): string[][] => {
+  const b = branches[0] ?? "main";
+  return [["--force"], ["push"], [`+${b}`], [b]];
+};
+
+/** The force-push (§5) this command could be once each `input` word is filled in at run time (xargs input), else the typed one. */
+export function forcePushWithInput(argv: string[], input: string, branches: readonly string[]): string | undefined {
+  const at = argv.flatMap((w, i) => (w === input ? [i] : []));
+  if (at.length === 0) return forcePushToDefault(argv, branches);
+  for (const i of at)
+    for (const words of FORCE_INPUT(branches)) {
+      const f = forcePushToDefault(
+        [...argv.slice(0, i), ...words, ...argv.slice(i + 1)].filter((w) => w !== input),
+        branches,
+      );
+      if (f !== undefined) return `${f} (from xargs input)`;
+    }
+  return forcePushToDefault(
+    argv.filter((w) => w !== input),
+    branches,
+  );
+}
+
 const KILLERS = new Set(["kill", "taskkill", "stop-process", "pkill", "killall"]);
 
 /** Process control aimed at Dovet: `deny` for its own pid or parent, `ask` for a pattern that could match it. */

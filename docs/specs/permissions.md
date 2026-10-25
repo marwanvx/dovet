@@ -276,6 +276,8 @@ Behavior:
 ## 5. Actions no mode auto-approves
 Even in `bypassPermissions`: critical-path removals (prompt with countdown), protected-path writes (§4.3), shell commands with network-path arguments (§4.1), `AskUserQuestion`, `ExitPlanMode`, and (v0.2) MCP tools marked `requiresUserInteraction`. Additionally, `git push --force*` (and `--force-with-lease`, `+refspec`) to the default branch is **denied** in every mode unless an exact-match allow rule (no `*`) names that command.
 
+**Decided while building (QUESTIONS Q92):** the force-push check reads the xargs stand-in's worst case too: at its place it tries a force flag, the push itself, and a default branch named or forced, so `echo +main | xargs git push origin` denies like `git push origin +main`; when no typed reading hits and only the input can supply the force, the finding says `(from xargs input)`.
+
 ## 6. Permission prompt
 
 Shows the tool, a short description, the exact command/diff/URL, and **why** it's asking in plain words, never a parser's internal names (no matching rule / ask rule `X` / protected path / critical path / outside working directory / unsandboxed retry / taint). Options:

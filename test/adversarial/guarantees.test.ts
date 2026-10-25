@@ -683,6 +683,39 @@ describe("what xargs reads from its input and what find reaches get the checks (
       expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
     },
   );
+
+  // spec: permissions §5
+  test.each([
+    "echo +main | xargs git push origin",
+    "echo main | xargs git push --force origin",
+    "echo --force | xargs git push origin main",
+    "echo +main | xargs git push",
+    "echo +main | xargs --replace git push origin {}",
+    "echo push | xargs -I{} git {} origin +main",
+    "echo +main | env xargs git push origin",
+  ])("%s may force-push the default branch from its input, so it is denied in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions"));
+    notAllowed(d);
+    expect(
+      d.findings.map((f) => f.kind),
+      command,
+    ).toContain("force-push");
+  });
+
+  // spec: permissions §5
+  test("a force-push reading only the input can supply says the words came from the input", () => {
+    const d = shell("echo +main | xargs git push origin", state("bypassPermissions"));
+    expect(d.findings.find((f) => f.kind === "force-push")?.detail).toContain("(from xargs input)");
+  });
+
+  // spec: permissions §5
+  test.each(["echo x | xargs git log", "echo x | xargs -I{} git commit -m {}", "echo x | xargs wc -l"])(
+    "%s can't become a force-push of the default branch",
+    (command) => {
+      expect(shell(command, state("bypassPermissions")).behavior, command).toBe("allow");
+      expect(shell(command, state("bypassPermissions")).findings.map((f) => f.kind)).not.toContain("force-push");
+    },
+  );
 });
 
 describe("a command xargs runs is unwrapped like a typed one (F32 review)", () => {

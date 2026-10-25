@@ -18,7 +18,7 @@ import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
-import { forcePushToDefault, program, type RemoteKind, remoteWithInput, selfControl } from "./remote.ts";
+import { forcePushWithInput, program, type RemoteKind, remoteWithInput, selfControl } from "./remote.ts";
 import {
   FS_COMMANDS,
   findRemovals,
@@ -333,7 +333,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             : { remote: remote.kind, liftable: true, lifted: explicitAllow(st, tool, sub, false, remote.label) },
         ),
       );
-    const force = all.map((v) => forcePushToDefault(v, branches)).find((f) => f !== undefined);
+    const force = all.map((v) => forcePushWithInput(v, XARGS_INPUT, branches)).find((f) => f !== undefined);
     if (force !== undefined && !explicitAllow(st, tool, sub, true))
       out.push(finding("force-push", `force-push to the default branch: ${force}`, "deny"));
   }
