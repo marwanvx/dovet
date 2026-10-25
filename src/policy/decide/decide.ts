@@ -332,10 +332,13 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const viaCmd = unwrapped !== sub0;
     const { all, complete } = variants(unwrapped.argv);
     if (!complete) out.push(finding("unchecked", "a wrapper's options can't all be checked", "ask"));
+    const peeled: string[][] = [];
     for (const v of all) {
       // What xargs runs and `find -exec` build reaches the checks as typed words would: `cmd /c` peeled off.
       const via = viaCmd || program(v[0]) === "cmd";
       const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
+      // A `cmd /c` layer below a wrapper moves the program: what it runs is checked as its own reading too (F59).
+      if (program(v[0]) === "cmd") peeled.push(sub.argv);
       const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);
@@ -346,11 +349,11 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
           }),
         );
       const cwd = sub.cwd ?? env.cwd;
-      if (program(v[0]) === "find") {
-        const dels = findDeletions(v);
+      if (program(sub.argv[0]) === "find") {
+        const dels = findDeletions(sub.argv);
         const above =
           dels.length > 0
-            ? findStarts(v)
+            ? findStarts(sub.argv)
                 .map((s) => protectedDirAbove(s, env))
                 .find((d) => d !== undefined)
             : undefined;
@@ -388,7 +391,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         );
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
-      const deletes = program(v[0]) === "find" && v.includes("-delete") ? findStarts(v) : [];
+      const deletes = program(sub.argv[0]) === "find" && sub.argv.includes("-delete") ? findStarts(sub.argv) : [];
       for (const t of [
         ...shellTargets(sub, env.cwd),
         ...deletes.map((path): Target => ({ access: "edit", path, cwd })),
@@ -412,7 +415,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     const net = words.find((w) => NETWORK_PATH.test(w));
     if (net !== undefined) out.push(finding("network-path", `network path: ${net}`, "ask"));
     const sub = { ...unwrapped };
-    const remote = all.map((v) => remoteWithInput(v, XARGS_INPUT)).find((r) => r !== undefined);
+    const readings = [...all, ...peeled];
+    const remote = readings.map((v) => remoteWithInput(v, XARGS_INPUT)).find((r) => r !== undefined);
     if (remote !== undefined)
       out.push(
         finding(
@@ -424,7 +428,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             : { remote: remote.kind, liftable: true, lifted: explicitAllow(st, tool, sub, false, remote.label) },
         ),
       );
-    const force = all.map((v) => forcePushWithInput(v, XARGS_INPUT, branches)).find((f) => f !== undefined);
+    const force = readings.map((v) => forcePushWithInput(v, XARGS_INPUT, branches)).find((f) => f !== undefined);
     if (force !== undefined && !explicitAllow(st, tool, sub, true))
       out.push(finding("force-push", `force-push to the default branch: ${force}`, "deny"));
   }

@@ -947,3 +947,38 @@ describe("what find's narrowing tests could name (FOLLOWUPS F57)", () => {
     expect(findDeletions(["find", ".", "-name", "x", "-o", "-delete"])[0]?.narrowings).toBeUndefined();
   });
 });
+
+describe("a cmd /c layer below the head (FOLLOWUPS F59)", () => {
+  const bypass = (): State => state("bypassPermissions");
+
+  // spec: AC-PERM-29
+  test("a push under a wrapper's cmd /c is still a force-push of the default branch (§5)", () => {
+    for (const c of [
+      "sudo cmd /c git push origin +main",
+      "sudo cmd.exe /c git push --force origin main",
+      "env cmd /c git push --force origin main",
+      "busybox cmd /c git push origin +main",
+      "sudo cmd /c cmd /c git push origin +main",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    expect(sh("sudo cmd /c git push origin +main", bypass()).reason).toContain("git push origin +main");
+  });
+
+  // spec: AC-PERM-27
+  test("a push or publish under a wrapper's cmd /c is a remote action: denied while tainted, not lifted by a rule that doesn't name it (§4.8)", () => {
+    expect(sh("sudo cmd /c git push origin main", state("default", {}, { tainted: true })).behavior).toBe("deny");
+    const st = state("default", { allow: ["Bash(sudo cmd *)"] }, { sandboxAutoAllow: true });
+    expect(sh("sudo cmd /c npm publish", st, { sandboxed: true }).behavior, "sudo cmd /c npm publish").toBe("ask");
+    expect(sh("sudo cmd /c gh release create v1", st, { sandboxed: true }).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("find's deletion checks read the cmd /c reading below a wrapper too (§4.4, §4.7)", () => {
+    for (const c of ["sudo cmd /c find . -delete", "sudo cmd /c find . -exec rm -rf {} +"])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+    expect(
+      sh("sudo cmd /c find . -name .env -delete", state("default", { allow: ["Bash(sudo cmd *)"] })).behavior,
+      "sudo cmd /c find . -name .env -delete",
+    ).toBe("ask");
+  });
+});
