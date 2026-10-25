@@ -818,8 +818,8 @@ Done: every summary request gates like a main request (meter.check, daily-ledger
 Review: standard, 3 rounds (4 reviewer runs; 2 died on provider outages, respawned); 1 blocker + 1 major + 2 minors + 2 nits fixed, 0 dropped, 1 pre-existing minor logged (F58).
 Learned: a refusal a helper's retry loop would swallow rides out as a distinct reply field (`SummaryReply.budget`), never as a message string. The fixture detects the summary request by any user item, not the last (the no-tools retry's last message is the NO_TOOLS text). The committed instruction files sit exactly at the 7,500-token ceiling: any growth breaks CI's docs:check, and follow-up prose sits against the 15,000 one (`bun run next M1-23c`).
 Next: F54.
-## 2026-10-25 — F54 a force-push of the default branch can't ride in on xargs input
-Done: the §5 force-push check reads the xargs stand-in's worst case (Q92: a force flag, the push itself, a default branch forced — alone, behind the push, or behind an option value; a replace-string word is replaced wholesale, so `xargs -I{} git push origin feature:{}` denies fail-closed); the same function now denies a remoteless `+refspec` (`git push +main`) and a run-time destination (`git push --force origin $BRANCH`), Q42 extended. 20 tests in `test/adversarial/guarantees.test.ts` + `decide.test.ts`; 495 tests across the policy suites pass. PR: #190 (open, not merged).
-Review: deep, 3 rounds (4 reviewer runs); 1 blocker + 3 majors + 2 minors + 4 nits fixed, 0 dropped, 6 pre-existing logged (F59, F61–F65).
-Learned: one xargs input line is whole words, not one word — single-word fills left `echo 'push origin +main' | xargs git` open; a `[, ...refs]` destructure already skips the first element, so a ternary in front of it double-skipped (the tests caught it). The M1-23c ceiling (15,000) sits ~125 tokens below main's own size, so every new open major costs trims elsewhere; measure with `bun -e` (report("M1-23c").length/4) before committing prose, and simulate the F54-to-Fixed move in a clone.
+## 2026-10-25 — F54 force-push can't ride in on xargs input
+Done: the §5 force-push check reads the xargs stand-in's worst case (Q92) and a remoteless `+refspec` or run-time destination (Q42); 20 tests. PR: #190 (merged).
+Review: deep, 3 rounds (4 reviewers); 1 blocker, 3 majors, 2 minors, 4 nits fixed; 6 logged (F59, F61–F65).
+Learned: an input line is whole words, not one word; a `[, ...refs]` destructure already skips the first element. Measure M1-23c prose with `bun -e` before committing.
 Next: F57.
