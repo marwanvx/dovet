@@ -75,7 +75,6 @@ import {
   type SdkCall,
   type StreamEvent,
   type TokenTotals,
-  type TranscriptItem,
 } from "../ai/index.ts";
 import {
   canonicalizePath,
@@ -1183,17 +1182,21 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         outputs: outputTokens,
         rates: PLACEHOLDER_RATES,
       });
-    const summaryForkChars = (transcript: readonly TranscriptItem[]): number =>
-      transcriptChars(transcript) + prompt("compact.md").length;
     /** The pre-flight's reservation for the summary's first request; later sends (retries, failover) gate themselves. */
     let summaryReservation: { settle: string | null } | undefined;
+    /** A later send's gate refusal rides out of `compact()` as an abort; the `Stop` itself is kept here (a refusal is final, there is nothing to retry). */
+    let summaryBudgetStop: Stop | null = null;
     const sendSummary: SendSummary = async (transcript) => {
       const reserved = summaryReservation;
       summaryReservation = undefined;
       let settleId: string | null = null;
       if (reserved === undefined) {
-        const gate = await gateSummary(estimateSummary(summaryForkChars(transcript)));
-        if (!gate.ok) return { ok: false, message: gate.stop.message, aborted: false };
+        // The fork's items already carry the compaction prompt; the pre-flight's epoch transcript does not yet.
+        const gate = await gateSummary(estimateSummary(transcriptChars(transcript)));
+        if (!gate.ok) {
+          summaryBudgetStop = gate.stop;
+          return { ok: false, message: gate.stop.message, aborted: false, budget: gate.stop };
+        }
         settleId = gate.requestId;
       } else settleId = reserved.settle;
       let finished: Extract<StreamEvent, { type: "done" }> | undefined;
@@ -1225,18 +1228,20 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       guards.cost += spend.usd;
       const t = spend.tokens;
       meter.record("compaction", spend.usd, t.input + t.cacheRead + t.cacheWrite + t.output);
-      if (settleId !== null) {
-        const daySpent = await ledger.commit(settleId, spend.usd).catch((e: unknown) => {
-          ledgerFailed(e);
-          return null;
-        });
-        for (const w of meter.warnings(daySpent)) budgetEvent(w);
-      }
+      const daySpent =
+        settleId !== null
+          ? await ledger.commit(settleId, spend.usd).catch((e: unknown) => {
+              ledgerFailed(e);
+              return null;
+            })
+          : null;
+      for (const w of meter.warnings(daySpent)) budgetEvent(w);
       return { ok: true, stored: finished.stored, stopReason: finished.stopReason, costUsd: spend.usd };
     };
     /**
-     * Starts the next epoch from a summary of this one; false if the user stopped the summary request, `{ budget }`
-     * when the budget refuses the summary request before `compact()` sends anything (receipts-budgets "Behavior" 3).
+     * Starts the next epoch from a summary of this one; `{ ok: false }` when the user stopped the summary request,
+     * `{ ok: false, budget }` when the budget refused the summary request, before or during `compact()`
+     * (receipts-budgets "Behavior" 3).
      */
     const compactEpoch = async (
       trigger: "auto" | "context-exceeded",
@@ -1246,6 +1251,7 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       const gate = await gateSummary(estimateSummary(forkChars + prompt("compact.md").length));
       if (!gate.ok) return { ok: false, budget: gate.stop };
       summaryReservation = { settle: gate.requestId };
+      summaryBudgetStop = null;
       const result = await compact({
         events,
         header,
@@ -1271,7 +1277,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         renderSystem: renderSystemNow,
         send: sendSummary,
       });
-      if ("aborted" in result) return { ok: false };
+      if ("aborted" in result) {
+        const stop = summaryBudgetStop;
+        summaryBudgetStop = null;
+        return stop === null ? { ok: false } : { ok: false, budget: stop };
+      }
       const next = result.epochStart.epoch;
       push("epoch.start", next, null, result.epochStart);
       push("compaction", next, null, result.compaction);
