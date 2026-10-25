@@ -34,21 +34,24 @@ export function unwrapCmd(sub: Subcommand): Subcommand {
   return sub;
 }
 
-const CMD_META = /[\^"&|;()<>%]/;
+const CMD_META = /[\^"&|;()<>%@!]/;
 
 /** Whether the words after this `cmd /c` operand's switches could be read by cmd other than as they stand: a
- * metacharacter (caret escapes, quote toggling, `&`/`|`/`()`/`<>` separators and redirections, `%VAR%` expansion),
- * or — when several words follow the switch — a first word holding whitespace, so the program itself arrived
- * quoted and cmd's leading-quote rules decide what it runs. One word is the whole line cmd re-splits honestly, and
- * later words keep their spaces honestly (the spawn re-quotes them, the child's argv keeps them). The xargs
- * stand-in is Dovet's own word, not cmd's. */
+ * metacharacter (caret escapes, quote toggling, `&`/`|`/`()`/`<>` separators and redirections, `@` echo-off, `!`
+ * delayed expansion, `%VAR%` expansion), an empty word (a quote pair bash consumed that cmd's leading-quote rules
+ * still see), or — when several words follow the switch — a first word holding whitespace, so the program itself
+ * arrived quoted and cmd's leading-quote rules decide what it runs. One word is the whole line cmd re-splits
+ * honestly, and later words keep their spaces honestly (the spawn re-quotes them, the child's argv keeps them).
+ * The xargs stand-in is Dovet's own word, not cmd's. */
 export function cmdOperandUnsafe(argv: string[]): boolean {
   if (commandName(argv[0]) !== "cmd") return false;
   let i = 1;
   while (i < argv.length && /^\/[a-z](:\S*)?$/i.test(argv[i] ?? "") && !/^\/[ck]$/i.test(argv[i] ?? "")) i++;
   if (!/^\/[ck]$/i.test(argv[i] ?? "")) return false;
   const words = argv.slice(i + 1);
-  return words.some((a, j) => a !== XARGS_INPUT && (CMD_META.test(a) || (words.length > 1 && j === 0 && /\s/.test(a))));
+  return words.some(
+    (a, j) => a !== XARGS_INPUT && (a === "" || CMD_META.test(a) || (words.length > 1 && j === 0 && /\s/.test(a))),
+  );
 }
 
 function isRootOrTop(env: Env, p: string): boolean {

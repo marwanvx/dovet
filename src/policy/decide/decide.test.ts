@@ -1002,6 +1002,11 @@ describe("a cmd /c layer below the head (FOLLOWUPS F59)", () => {
       `sudo cmd /c "echo x && git push --force origin main"`,
       "sudo cmd /c git push --force origin %BRANCH%",
       `cmd /c "git push" "origin +main"`,
+      `cmd /c "" git push origin +main`,
+      'sudo cmd /c "" git push origin +main',
+      "cmd /c @git push origin +main",
+      "cmd /v:on /c git push origin +!BRANCH!",
+      "cmd /c git push --force origin +!B!",
     ])
       expect(sh(c, bypass()).behavior, c).toBe("ask");
   });
