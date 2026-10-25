@@ -824,6 +824,10 @@ describe("what find's deletions could name gets the sensitive and protected chec
     "find . -path './secrets.yml' -delete",
     "find . -name '.env' -exec rm {} +",
     "find . -samefile .env -delete",
+    "find src -regex 'x' -delete",
+    "find . -lname 'x' -delete",
+    "find . -name '.' -delete",
+    "find . -path './' -delete",
   ])("%s asks under a tool-wide allow: the reach's deletions get the sensitive check", (command) => {
     for (const mode of GUARDED) {
       const d = shell(command, state(mode, { allow: ["Bash"] }));
@@ -836,10 +840,17 @@ describe("what find's deletions could name gets the sensitive and protected chec
   });
 
   // spec: permissions §4.4 (QUESTIONS Q93)
-  test("a deletion narrowed to a protected name asks even in bypassPermissions", () => {
-    const d = shell("find . -name '.gitconfig' -delete", state("bypassPermissions", { allow: ["Bash"] }));
-    expect(d.behavior).toBe("ask");
-    expect(d.findings.map((f) => f.kind)).toContain("protected");
+  test.each([
+    "find . -name '.gitconfig' -delete",
+    "find . -path './.config/git/config' -delete",
+    "find .config -name 'config' -delete",
+  ])("%s is narrowed to a protected path and asks even in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions", { allow: ["Bash"] }));
+    expect(d.behavior, command).toBe("ask");
+    expect(
+      d.findings.map((f) => f.kind),
+      command,
+    ).toContain("protected");
   });
 
   // spec: permissions §4.7
@@ -870,5 +881,6 @@ describe("what find's deletions could name gets the sensitive and protected chec
     expect(shell("find . -name x -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
     expect(shell("find src -name '*.pyc' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
     expect(shell("find . -name '.env.example' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
+    expect(shell("find src -name 'config' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
   });
 });

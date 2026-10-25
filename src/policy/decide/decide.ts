@@ -20,6 +20,7 @@ import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
 import {
   type Env,
   insideWorkingDirs,
+  protectedDirAbove,
   protectedName,
   protectedPath,
   resolveForms,
@@ -119,6 +120,7 @@ const SECTION: Record<FindingKind, string> = {
 };
 const BYPASS_SKIPS = new Set<FindingKind>(["sensitive", "outside", "unresolved", "remote", "computed"]);
 const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
+const PATH_GLOB = /[*?[]/;
 
 const finding = (
   kind: FindingKind,
@@ -253,9 +255,21 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
   return { all: out, complete };
 }
 
+/** A find action whose tests name no file leaves its whole reach asking; an exact allow rule naming the command
+ * lifts that ask, as the compatibility corpus requires. */
+function unnamedReach(st: State, tool: string, typed: Subcommand, del: FindDeletion): Finding {
+  return {
+    ...finding(
+      "sensitive",
+      `sensitive file: ${del.cmd.join(" ")} — no test before the action names what find deletes`,
+      "ask",
+    ),
+    lifted: explicitAllow(st, tool, typed, true),
+  };
+}
+
 /** A find action deletes what the narrowing tests before it name: their values are matched against the sensitive and
- * protected names, and tests that name no file leave the whole reach asking (§4.4 Q93, §4.3, §4.7). An exact allow
- * rule naming the command lifts the unnamed-reach ask, as the compatibility corpus requires. */
+ * protected names, and tests that name no file leave the whole reach asking (§4.4 Q93, §4.3, §4.7). */
 function findReachFindings(
   st: State,
   tool: string,
@@ -265,17 +279,7 @@ function findReachFindings(
   sandboxedRead: boolean,
 ): Finding[] {
   const ns = del.narrowings;
-  if (ns === undefined)
-    return [
-      {
-        ...finding(
-          "sensitive",
-          `sensitive file: ${del.cmd.join(" ")} — no test before the action names what find deletes`,
-          "ask",
-        ),
-        lifted: explicitAllow(st, tool, typed, true),
-      },
-    ];
+  if (ns === undefined) return [unnamedReach(st, tool, typed, del)];
   const out: Finding[] = [];
   for (const n of ns) {
     if (n.kind === "file") {
@@ -287,6 +291,15 @@ function findReachFindings(
       continue;
     }
     const value = n.value.slice(Math.max(n.value.lastIndexOf("/"), n.value.lastIndexOf("\\")) + 1);
+    if (value === "" || value === "." || value === "..") {
+      out.push(unnamedReach(st, tool, typed, del));
+      continue;
+    }
+    // A literal -path value is a concrete path: it gets the full checks a start path gets.
+    if (n.kind === "path" && !PATH_GLOB.test(n.value)) {
+      out.push(...pathFindings(st, { access: "edit", path: n.value, cwd }, false, sandboxedRead));
+      continue;
+    }
     const sensitive = sensitiveName(value, st.env, n.fold);
     if (sensitive !== undefined) {
       const banner = st.tainted === true ? `session tainted by ${st.taintSource ?? "untrusted input"}: ` : "";
@@ -332,7 +345,14 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
           }),
         );
       const cwd = sub.cwd ?? env.cwd;
-      if (program(v[0]) === "find")
+      if (program(v[0]) === "find") {
+        const above = findStarts(v)
+          .map((s) => protectedDirAbove(s, env))
+          .find((d) => d !== undefined);
+        if (above !== undefined)
+          out.push(
+            finding("protected", `write to a protected path: find could reach ${above} under its start path`, "ask"),
+          );
         for (const del of findDeletions(v)) {
           const why = criticalRemoval(env, unwrapCmd({ ...sub, argv: del.cmd }));
           if (why !== undefined)
@@ -343,6 +363,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             );
           out.push(...findReachFindings(st, tool, unwrapped, del, cwd, sandboxedRead));
         }
+      }
       // The input can name the command itself (a chain of xargs, a wrapper whose operand or `/c` the input
       // completes) or bring `find` its `-delete`: what runs can be a recursive removal of any path, so the
       // typed words alone can't clear it. `cmd /c` peeling moves the program, so the peeled words are read too.

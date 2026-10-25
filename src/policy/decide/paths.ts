@@ -177,6 +177,7 @@ const fnmatch = (pattern: string, ic: boolean): ((s: string) => boolean) => {
 
 /** Whether a name matching the find test `value` could also match the name pattern `pattern` (both without a `/`). */
 const nameOverlap = (value: string, pattern: string, ic: boolean): boolean => {
+  if (value === "" || pattern === "") return false;
   if (!GLOB_CHAR.test(value)) return ignore({ ignorecase: ic }).add(pattern).ignores(value);
   if (!GLOB_CHAR.test(pattern)) return fnmatch(value, ic)(pattern);
   // Both hold wildcards. A name matching both must start with both literal prefixes and end with both literal
@@ -211,6 +212,24 @@ export function protectedName(value: string, o: Pick<Env, "os">, fold = false): 
   const ic = fold || o.os !== "linux";
   for (const dir of PROTECTED_DIRS) if (nameOverlap(value, dir, ic)) return dir;
   for (const file of PROTECTED_FILES) if (nameOverlap(value, file, ic)) return file;
+  return undefined;
+}
+
+/** The protected directory a find start path could be a parent of: its last segments are a proper prefix of one's, so
+ * the reach could enter it (`find .config -name config -delete` reaches `.config/git/config`, §4.3). */
+export function protectedDirAbove(start: string, o: Pick<Env, "os">): string | undefined {
+  const fold = (s: string): string => (o.os !== "linux" ? s.toLowerCase() : s);
+  const segs = start.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
+  for (const dir of PROTECTED_DIRS) {
+    const parts = dir.split("/");
+    for (let k = Math.min(segs.length, parts.length - 1); k >= 1; k--) {
+      const tail = segs
+        .slice(segs.length - k)
+        .map(fold)
+        .join("/");
+      if (tail === fold(parts.slice(0, k).join("/"))) return dir;
+    }
+  }
   return undefined;
 }
 

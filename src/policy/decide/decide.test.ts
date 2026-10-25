@@ -11,7 +11,7 @@ import { expandGlob, isDirectory } from "../shell-parse/glob.ts";
 import { loadShellParsers, type ShellLanguage, type ShellParsers } from "../shell-parse/load.ts";
 import { criticalRemoval } from "./critical.ts";
 import { type Decision, decide, type Env, exampleDecider, planExitChoices, type State } from "./index.ts";
-import { protectedName, protectedPath, sensitiveName, sensitivePath } from "./paths.ts";
+import { protectedDirAbove, protectedName, protectedPath, sensitiveName, sensitivePath } from "./paths.ts";
 import { findDeletions } from "./targets.ts";
 
 let parsers: ShellParsers;
@@ -912,6 +912,17 @@ describe("what find's narrowing tests could name (FOLLOWUPS F57)", () => {
     expect(protectedName(".git", env())).toBe(".git");
     expect(protectedName("*.gitconfig", env())).toBe(".gitconfig");
     expect(protectedName("a.ts", env())).toBeUndefined();
+  });
+
+  // spec: permissions §4.4 (QUESTIONS Q93)
+  test("a find start path that could be a protected directory's parent", () => {
+    expect(protectedDirAbove(".config", env())).toBe(".config/git");
+    expect(protectedDirAbove("sub/.config", env())).toBe(".config/git");
+    expect(protectedDirAbove(".config/git", env())).toBeUndefined();
+    expect(protectedDirAbove(".git", env())).toBeUndefined();
+    expect(protectedDirAbove("src", env())).toBeUndefined();
+    expect(protectedDirAbove(".", env())).toBeUndefined();
+    expect(protectedName("", env())).toBeUndefined();
   });
 
   // spec: permissions §4.4 (QUESTIONS Q93)

@@ -157,7 +157,7 @@ export function findStarts(argv: string[]): string[] {
 // A test that picks files by name or place; past an `-o`, `!` or `,`, find removes everything under its start paths.
 const NARROWING = /^-(i?name|i?path|i?wholename|i?regex|i?lname|samefile|inum|empty)$/;
 const WIDENING = /^(-o|-or|!|-not|,)$/;
-const NAME_TEST = /^-(i?name|i?lname)$/;
+const NAME_TEST = /^-i?name$/;
 const PATH_TEST = /^-(i?path|i?wholename)$/;
 const REGEX_TEST = /^-i?regex$/;
 const FILE_TEST = /^-samefile$/;
@@ -189,7 +189,8 @@ function findNarrowings(argv: string[], at: number, widened: boolean): FindNarro
             : undefined;
     if (kind === undefined) continue;
     const value = i + 1 < at ? argv[i + 1] : undefined;
-    if (value === undefined || value === "" || (kind !== "file" && NO_NAME.test(value))) return undefined;
+    if (value === undefined || value === "" || value === "." || value === "..") return undefined;
+    if (kind !== "file" && NO_NAME.test(value)) return undefined;
     out.push(kind === "file" ? { kind, value } : { kind, value, fold: a.startsWith("-i") });
   }
   return out.length > 0 ? out : undefined;
