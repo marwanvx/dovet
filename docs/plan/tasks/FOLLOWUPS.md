@@ -36,7 +36,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F64 (F54 round-3 review): cmd's `%VAR%` destination spelling isn't an unresolved dst
 - **Severity:** minor (pre-existing) · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
-- `cmd /c git push --force origin %BRANCH%` allows in `bypassPermissions` though cmd expands it at run time; `%` is in no unresolved class. Add `%` to `unresolvedTarget` (its write-target callers get it in the same stroke) or name the limit wherever the class is claimed.
+- `git push --force origin %BRANCH%` allows in `bypassPermissions` though the spelling could expand at run time; `%` is in no unresolved class. Add `%` to `unresolvedTarget` (its write-target callers get it in the same stroke) or name the limit wherever the class is claimed. (2026-10-25, F59: the `cmd /c` spelling now asks — a `%VAR%` in a cmd operand is one of the metacharacters that make the layer not fully checkable; the spelling without a cmd layer remains.)
 
 ### F65 (F54 round-3 review): a delete of the default branch isn't in §5's deny list
 - **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:170-176`, permissions §5

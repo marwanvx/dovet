@@ -3,6 +3,7 @@ import { posix, win32 } from "node:path";
 import { isWithin, pathKey } from "../../platform/index.ts";
 import { commandName, type Subcommand } from "../rules/index.ts";
 import { type Env, resolveForms } from "./paths.ts";
+import { XARGS_INPUT } from "./targets.ts";
 
 const REMOVERS = new Set(["rm", "rmdir", "remove-item", "rd", "del", "erase"]);
 const VAR = String.raw`\$(?:\{[A-Za-z_][A-Za-z0-9_]*\}|[A-Za-z_][A-Za-z0-9_]*|\d)`;
@@ -25,9 +26,29 @@ export function unwrapCmd(sub: Subcommand): Subcommand {
     while (i < sub.argv.length && /^\/[a-z](:\S*)?$/i.test(sub.argv[i] ?? "") && !/^\/[ck]$/i.test(sub.argv[i] ?? ""))
       i++;
     if (!/^\/[ck]$/i.test(sub.argv[i] ?? "")) return sub;
-    sub = { ...sub, argv: sub.argv.slice(i + 1).flatMap((a) => a.split(/\s+/).filter(Boolean)) };
+    const rest = sub.argv.slice(i + 1);
+    // One word is the whole command line as cmd received it: re-split it. Several words were already split by the
+    // calling shell — a word keeping its spaces is one argument of the command (`find "/my dir" -delete`).
+    sub = { ...sub, argv: rest.length === 1 ? (rest[0] ?? "").split(/\s+/).filter(Boolean) : rest };
   }
   return sub;
+}
+
+const CMD_META = /[\^"&|;()<>%]/;
+
+/** Whether the words after this `cmd /c` operand's switches could be read by cmd other than as they stand: a
+ * metacharacter (caret escapes, quote toggling, `&`/`|`/`()`/`<>` separators and redirections, `%VAR%` expansion),
+ * or — when several words follow the switch — a first word holding whitespace, so the program itself arrived
+ * quoted and cmd's leading-quote rules decide what it runs. One word is the whole line cmd re-splits honestly, and
+ * later words keep their spaces honestly (the spawn re-quotes them, the child's argv keeps them). The xargs
+ * stand-in is Dovet's own word, not cmd's. */
+export function cmdOperandUnsafe(argv: string[]): boolean {
+  if (commandName(argv[0]) !== "cmd") return false;
+  let i = 1;
+  while (i < argv.length && /^\/[a-z](:\S*)?$/i.test(argv[i] ?? "") && !/^\/[ck]$/i.test(argv[i] ?? "")) i++;
+  if (!/^\/[ck]$/i.test(argv[i] ?? "")) return false;
+  const words = argv.slice(i + 1);
+  return words.some((a, j) => a !== XARGS_INPUT && (CMD_META.test(a) || (words.length > 1 && j === 0 && /\s/.test(a))));
 }
 
 function isRootOrTop(env: Env, p: string): boolean {

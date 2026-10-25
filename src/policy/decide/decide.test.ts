@@ -981,4 +981,36 @@ describe("a cmd /c layer below the head (FOLLOWUPS F59)", () => {
       "sudo cmd /c find . -name .env -delete",
     ).toBe("ask");
   });
+
+  // spec: AC-PERM-07
+  test("what runs below the cmd /c layer is read as its own readings: find -exec, xargs and shells (§4.4)", () => {
+    for (const c of [
+      "sudo cmd /c find . -exec rm -rf / ;",
+      "sudo cmd /c find . -execdir rm -rf / ;",
+      "sudo cmd /c xargs rm -rf /",
+      "sudo cmd /c sh -c 'rm -rf /'",
+      "cmd /c sh -c 'rm -rf /'",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("a cmd /c operand cmd could read otherwise is not fully checkable (§4.0)", () => {
+    for (const c of [
+      "sudo cmd /c git push origin +ma^in",
+      `sudo cmd /c 'git" "push origin +main'`,
+      `sudo cmd /c "echo x && git push --force origin main"`,
+      "sudo cmd /c git push --force origin %BRANCH%",
+      `cmd /c "git push" "origin +main"`,
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("the re-split keeps the calling shell's words: a spaced start path stays critical, a plain string splits (§4.4)", () => {
+    const spaced = state("bypassPermissions", {}, { env: env({ home: "/Users/my name" }) });
+    for (const c of ["find '/Users/my name' -delete", "sudo cmd /c find '/Users/my name' -delete"])
+      expect(sh(c, spaced).behavior, c).toBe("ask");
+    expect(sh(`sudo cmd /c "echo hello world"`, bypass()).behavior).toBe("allow");
+  });
 });
