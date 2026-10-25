@@ -823,3 +823,8 @@ Done: the §5 force-push check reads the xargs stand-in's worst case (Q92) and a
 Review: deep, 3 rounds (4 reviewers); 1 blocker, 3 majors, 2 minors, 4 nits fixed; 6 logged (F59, F61–F65).
 Learned: an input line is whole words, not one word; a `[, ...refs]` destructure already skips the first element. Measure M1-23c prose with `bun -e` before committing.
 Next: F57.
+## 2026-10-25 — F57 a narrowed find reach deletes a sensitive file without the §4.7 ask
+Done: the narrowing tests before each find deletion action are matched against the sensitive and protected names (Q93); an unnamed reach asks outside bypassPermissions, lifted by an exact allow rule (compat c067); a start path that properly prefixes a protected dir asks; `-lname` names no file. PR: #191 (open for CI).
+Review: deep, 3 rounds (3 security + 1 combined reviewer runs); 1 blocker + 4 majors + 1 minor + 1 nit fixed, 1 pre-existing minor logged (F66).
+Learned: never `git checkout` a file to undo a mutation — re-apply by hand or you discard your own uncommitted fixes (cost me a re-edit of decide.ts). The pinned allows (`*.pyc`, c067) force the wildcard-edge honest limit into Q93.
+Next: F59.

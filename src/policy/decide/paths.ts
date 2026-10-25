@@ -147,6 +147,92 @@ export function sensitivePath(abs: string, o: Pick<Env, "os" | "home" | "sensiti
   );
 }
 
+const GLOB_CHAR = /[*?[]/;
+const SENSITIVE_TAILS = SENSITIVE.map((p) => p.split("/").at(-1) ?? "").filter((t) => t !== "");
+
+/** A single-segment fnmatch (find's -name grammar) as a matcher; a class it can't compile matches everything (fail closed). */
+const fnmatch = (pattern: string, ic: boolean): ((s: string) => boolean) => {
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i] ?? "";
+    if (c === "*") re += "[^/]*";
+    else if (c === "?") re += "[^/]";
+    else if (c === "[") {
+      const end = pattern.indexOf("]", i + 1);
+      if (end < i + 2) re += "\\[";
+      else {
+        const body = pattern.slice(i + 1, end);
+        re += `[${body.startsWith("!") || body.startsWith("^") ? `^${body.slice(1)}` : body}]`;
+        i = end;
+      }
+    } else re += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  try {
+    const compiled = new RegExp(`^${re}$`, ic ? "i" : "");
+    return (s) => compiled.test(s);
+  } catch {
+    return () => true;
+  }
+};
+
+/** Whether a name matching the find test `value` could also match the name pattern `pattern` (both without a `/`). */
+const nameOverlap = (value: string, pattern: string, ic: boolean): boolean => {
+  if (value === "" || pattern === "") return false;
+  if (!GLOB_CHAR.test(value)) return ignore({ ignorecase: ic }).add(pattern).ignores(value);
+  if (!GLOB_CHAR.test(pattern)) return fnmatch(value, ic)(pattern);
+  // Both hold wildcards. A name matching both must start with both literal prefixes and end with both literal
+  // suffixes; a value starting with `*` against a pattern ending in one stays unchecked, so
+  // `find . -name '*.pyc' -delete` still runs (permissions §4.4 Q93).
+  const fold = (s: string): string => (ic ? s.toLowerCase() : s);
+  const firstGlob = (s: string): number =>
+    Math.min(...["*", "?", "["].map((c) => (s.indexOf(c) < 0 ? s.length : s.indexOf(c))));
+  const lastGlob = (s: string): number => Math.max(...["*", "?", "["].map((c) => s.lastIndexOf(c)));
+  const pv = fold(value.slice(0, firstGlob(value)));
+  const sv = fold(value.slice(lastGlob(value) + 1));
+  const pt = fold(pattern.slice(0, firstGlob(pattern)));
+  const st = fold(pattern.slice(lastGlob(pattern) + 1));
+  if (pv === "" && st === "") return false;
+  if (sv !== "" && st !== "" && !sv.endsWith(st) && !st.endsWith(sv)) return false;
+  if (pv !== "" && pt !== "" && !pv.startsWith(pt) && !pt.startsWith(pv)) return false;
+  return true;
+};
+
+/** The sensitive-file pattern (§4.7) a file named by the find test `value` could be, wherever it lies (§4.4 Q93). */
+export function sensitiveName(value: string, o: Pick<Env, "os" | "sensitiveFiles">, fold = false): string | undefined {
+  if (!GLOB_CHAR.test(value) && /^\.env(\..+)?$/i.test(value) && TEMPLATE.test(value)) return undefined;
+  const tails = [
+    ...SENSITIVE_TAILS,
+    ...(o.sensitiveFiles ?? []).map((p) => p.split("/").at(-1) ?? "").filter((t) => t !== ""),
+  ];
+  return tails.find((t) => nameOverlap(value, t, fold || o.os !== "linux"));
+}
+
+/** The protected path (§4.3) a file named by the find test `value` could be: a protected file's name or a protected directory. */
+export function protectedName(value: string, o: Pick<Env, "os">, fold = false): string | undefined {
+  const ic = fold || o.os !== "linux";
+  for (const dir of PROTECTED_DIRS) if (nameOverlap(value, dir, ic)) return dir;
+  for (const file of PROTECTED_FILES) if (nameOverlap(value, file, ic)) return file;
+  return undefined;
+}
+
+/** The protected directory a find start path could be a parent of: its last segments are a proper prefix of one's, so
+ * the reach could enter it (`find .config -name config -delete` reaches `.config/git/config`, §4.3). */
+export function protectedDirAbove(start: string, o: Pick<Env, "os">): string | undefined {
+  const fold = (s: string): string => (o.os !== "linux" ? s.toLowerCase() : s);
+  const segs = start.split(/[\\/]+/).filter((s) => s !== "" && s !== ".");
+  for (const dir of PROTECTED_DIRS) {
+    const parts = dir.split("/");
+    for (let k = Math.min(segs.length, parts.length - 1); k >= 1; k--) {
+      const tail = segs
+        .slice(segs.length - k)
+        .map(fold)
+        .join("/");
+      if (tail === fold(parts.slice(0, k).join("/"))) return dir;
+    }
+  }
+  return undefined;
+}
+
 export type Forms = { requested: string; canonical: string };
 
 /** The requested and the real spelling of a path, or undefined when it is refused (UNC, device). */

@@ -42,10 +42,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:170-176`, permissions §5
 - `git push origin :main` deletes the remote default branch in `bypassPermissions` while the forced spelling denies. Treat a dst-less delete refspec of a default branch like a force-push of it (§5 and Q42 wording to match).
 
-### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
-- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
-- With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs: the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
 
+### F66 (F57 round-3 review): every `find -exec cmd {}` is treated as a deletion
+- **Severity:** minor (pre-existing, F32) · `src/policy/decide/targets.ts:215-222` (`findDeletions`'s `-exec` arm)
+- `find .config -exec echo {} \;` asks (unnamed reach) though `echo` deletes nothing: any `-exec` with a `{}` counts. Restrict the arm to removal-capable commands or lift the reach ask for proven-non-writing commands, and align Q90's sentence.
 
 ### F52 (F32): a `$( )` in a read command's file position reaches no check
 - **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
@@ -197,6 +197,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
+- With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs: the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
+- **Fixed (#191):** the narrowing tests before each deletion action are matched against the sensitive and protected names (Q93); a test that names no file leaves the reach asking outside `bypassPermissions`, lifted by an exact allow rule; a start path that is a proper prefix of a protected directory's path asks; `-lname` names no file.
+
 
 ### F54 (F32): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map), permissions §5
