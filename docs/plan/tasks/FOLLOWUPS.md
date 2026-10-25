@@ -14,13 +14,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
+- **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
+- `git push origin +!BRANCH!` allows in `bypassPermissions`: `!` is in no unresolved class, while the `cmd /c` spelling asks since F59 (delayed expansion is in its metacharacter set). In a shell where `!` expands (zsh/fish history, cmd with `/v:on` without the layer) the destination is known only at run time. Add `!` to `unresolvedTarget` like F64's `%`, or name the limit where the class is claimed.
+
+### F68 (F59 round-3 review): cmd-operand `,` and `=` are not metacharacters
+- **Severity:** minor · `src/policy/decide/critical.ts:37` (`CMD_META`)
+- `cmd /c git,push,origin,+main` and `cmd /c rd,/s,C:\Windows` allow in `bypassPermissions`: `,` and `=` are not in `CMD_META`. cmd's own delimiter handling of them was not verifiable without cmd.exe (for external commands the child CRT re-splits on spaces, so the spellings may be benign; internal commands are the plausible risk). Decide with a real cmd: either add them to the class or record them as read-as-typed.
 ### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
-
-### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
-- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
-- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading too.
 
 ### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
@@ -36,7 +39,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F64 (F54 round-3 review): cmd's `%VAR%` destination spelling isn't an unresolved dst
 - **Severity:** minor (pre-existing) · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
-- `cmd /c git push --force origin %BRANCH%` allows in `bypassPermissions` though cmd expands it at run time; `%` is in no unresolved class. Add `%` to `unresolvedTarget` (its write-target callers get it in the same stroke) or name the limit wherever the class is claimed.
+- `git push --force origin %BRANCH%` allows in `bypassPermissions` though the spelling could expand at run time; `%` is in no unresolved class. Add `%` to `unresolvedTarget` (its write-target callers get it in the same stroke) or name the limit wherever the class is claimed. (2026-10-25, F59: the `cmd /c` spelling now asks — a `%VAR%` in a cmd operand is one of the metacharacters that make the layer not fully checkable; the spelling without a cmd layer remains.)
 
 ### F65 (F54 round-3 review): a delete of the default branch isn't in §5's deny list
 - **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:170-176`, permissions §5
@@ -197,6 +200,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
+- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading too.
+- **Fixed (#192):** each `cmd` reading peels into its operand reading, which re-enters the reader (Q94) — the remote, force-push and find deletion checks run on it and on what expands below it; one `/c` operand word is re-split as the line cmd received while the calling shell's words keep their spaces; a metacharacter (`^"&|;()<>%@!`), an empty word, a quoted first word or a shell script under the layer is not fully checkable and asks (`bypassPermissions` included). F67 and F68 logged from round 3.
+
 
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)

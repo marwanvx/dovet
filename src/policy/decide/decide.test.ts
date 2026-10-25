@@ -947,3 +947,75 @@ describe("what find's narrowing tests could name (FOLLOWUPS F57)", () => {
     expect(findDeletions(["find", ".", "-name", "x", "-o", "-delete"])[0]?.narrowings).toBeUndefined();
   });
 });
+
+describe("a cmd /c layer below the head (FOLLOWUPS F59)", () => {
+  const bypass = (): State => state("bypassPermissions");
+
+  // spec: AC-PERM-29
+  test("a push under a wrapper's cmd /c is still a force-push of the default branch (§5)", () => {
+    for (const c of [
+      "sudo cmd /c git push origin +main",
+      "sudo cmd.exe /c git push --force origin main",
+      "env cmd /c git push --force origin main",
+      "busybox cmd /c git push origin +main",
+      "sudo cmd /c cmd /c git push origin +main",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    expect(sh("sudo cmd /c git push origin +main", bypass()).reason).toContain("git push origin +main");
+  });
+
+  // spec: AC-PERM-27
+  test("a push or publish under a wrapper's cmd /c is a remote action: denied while tainted, not lifted by a rule that doesn't name it (§4.8)", () => {
+    expect(sh("sudo cmd /c git push origin main", state("default", {}, { tainted: true })).behavior).toBe("deny");
+    const st = state("default", { allow: ["Bash(sudo cmd *)"] }, { sandboxAutoAllow: true });
+    expect(sh("sudo cmd /c npm publish", st, { sandboxed: true }).behavior, "sudo cmd /c npm publish").toBe("ask");
+    expect(sh("sudo cmd /c gh release create v1", st, { sandboxed: true }).behavior).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("find's deletion checks read the cmd /c reading below a wrapper too (§4.4, §4.7)", () => {
+    for (const c of ["sudo cmd /c find . -delete", "sudo cmd /c find . -exec rm -rf {} +"])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+    expect(
+      sh("sudo cmd /c find . -name .env -delete", state("default", { allow: ["Bash(sudo cmd *)"] })).behavior,
+      "sudo cmd /c find . -name .env -delete",
+    ).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("what runs below the cmd /c layer is read as its own readings: find -exec, xargs and shells (§4.4)", () => {
+    for (const c of [
+      "sudo cmd /c find . -exec rm -rf / ;",
+      "sudo cmd /c find . -execdir rm -rf / ;",
+      "sudo cmd /c xargs rm -rf /",
+      "sudo cmd /c sh -c 'rm -rf /'",
+      "cmd /c sh -c 'rm -rf /'",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("a cmd /c operand cmd could read otherwise is not fully checkable (§4.0)", () => {
+    for (const c of [
+      "sudo cmd /c git push origin +ma^in",
+      `sudo cmd /c 'git" "push origin +main'`,
+      `sudo cmd /c "echo x && git push --force origin main"`,
+      "sudo cmd /c git push --force origin %BRANCH%",
+      `cmd /c "git push" "origin +main"`,
+      `cmd /c "" git push origin +main`,
+      'sudo cmd /c "" git push origin +main',
+      "cmd /c @git push origin +main",
+      "cmd /v:on /c git push origin +!BRANCH!",
+      "cmd /c git push --force origin +!B!",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-07
+  test("the re-split keeps the calling shell's words: a spaced start path stays critical, a plain string splits (§4.4)", () => {
+    const spaced = state("bypassPermissions", {}, { env: env({ home: "/Users/my name" }) });
+    for (const c of ["find '/Users/my name' -delete", "sudo cmd /c find '/Users/my name' -delete"])
+      expect(sh(c, spaced).behavior, c).toBe("ask");
+    expect(sh(`sudo cmd /c "echo hello world"`, bypass()).behavior).toBe("allow");
+  });
+});
