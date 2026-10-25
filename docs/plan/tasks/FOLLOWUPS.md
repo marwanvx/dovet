@@ -16,7 +16,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
-- The interrupted-during-compaction output returns without `events`, so under `--output stream-json` the consumer gets the text fallback (`src/cli/main.ts:301-305`) instead of the `turn.end` events; F34's round-1 fixed the same class for the compaction budget stop (`budgetDuringCompaction`), the sibling one function below remains. One `events,` field, with a test that pins it.
+- The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
 
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
@@ -180,12 +180,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F34 (M2-16 spec review): compaction requests never reach the daily ledger
 - **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
 - It calls `meter.record` but no `ledger.reserve/commit`, so the hard daily cap (AC-RCPT-10) undercounts. Reserve and commit like the main request (:1374-1639); also run `meter.check` before `compact()` (F35, minor, :1165). Test: a summary that crosses the day limit is refused.
-- **Fixed (#189):** every summary request gates like a main request (meter.check, then a daily-ledger reserve, commit of the actual spend, release on failure/abort); the first send's reservation is taken by a pre-flight in `compactEpoch` before `compact()` runs. Six tests in `src/cli/headless-budget.test.ts` pin refusal before send, the reserve/commit lines, the per-attempt releases, and the budget stop of a later send (F35's review found a refusal there degraded the compaction to a mechanical fallback — fixed in the same PR).
+- **Fixed (#189):** every summary request gates like a main request (meter.check, daily-ledger reserve, commit of the actual spend, release on failure/abort); the first send's reservation is taken by a pre-flight in `compactEpoch` before `compact()`. Six tests in `src/cli/headless-budget.test.ts` pin refusal before send, the reserve/commit lines, per-attempt releases, and a later send's budget stop (a refusal there degraded the compaction to a mechanical fallback — fixed in the same PR).
 
 ### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
 - **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
 - A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
-- **Fixed (#189):** `compactEpoch` gates before `compact()` with the summary fork's estimate (last response's usage + the transcript's growth + the compaction prompt); a refusal stops the turn with the budget message and no `compaction` event, in both the auto and the context-exceeded path.
+- **Fixed (#189):** `compactEpoch` gates before `compact()` on the summary fork's estimate (last response's usage + transcript growth + the compact prompt); a refusal stops the turn with the budget message and no `compaction` event, auto and context-exceeded both.
 
 ### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
 - **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
