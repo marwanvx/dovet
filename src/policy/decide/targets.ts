@@ -157,9 +157,46 @@ export function findStarts(argv: string[]): string[] {
 // A test that picks files by name or place; past an `-o`, `!` or `,`, find removes everything under its start paths.
 const NARROWING = /^-(i?name|i?path|i?wholename|i?regex|i?lname|samefile|inum|empty)$/;
 const WIDENING = /^(-o|-or|!|-not|,)$/;
+const NAME_TEST = /^-(i?name|i?lname)$/;
+const PATH_TEST = /^-(i?path|i?wholename)$/;
+const REGEX_TEST = /^-i?regex$/;
+const FILE_TEST = /^-samefile$/;
+// A value of pure wildcards (`*`) narrows nothing.
+const NO_NAME = /^[*?]+$/;
 
-/** What `find -delete` and `find -exec rm … {}` remove, as removal commands: each start path, or what's under it. */
-export function findRemovals(argv: string[]): string[][] {
+/** One narrowing test before a find deletion action: what file names it lets through. */
+export type FindNarrowing =
+  | { kind: "name" | "path" | "regex"; value: string; fold: boolean }
+  | { kind: "file"; value: string };
+
+export type FindDeletion = { cmd: string[]; narrowings: FindNarrowing[] | undefined };
+
+/** The narrowing tests before `at` (find evaluates in order), or undefined when they name no file: no test, a widening
+ * `-o`/`!`/`,`, a test without a value, or a pure-wildcard value. */
+function findNarrowings(argv: string[], at: number, widened: boolean): FindNarrowing[] | undefined {
+  if (widened) return undefined;
+  const out: FindNarrowing[] = [];
+  for (let i = 1; i < at; i++) {
+    const a = argv[i] ?? "";
+    const kind = NAME_TEST.test(a)
+      ? "name"
+      : PATH_TEST.test(a)
+        ? "path"
+        : REGEX_TEST.test(a)
+          ? "regex"
+          : FILE_TEST.test(a)
+            ? "file"
+            : undefined;
+    if (kind === undefined) continue;
+    const value = i + 1 < at ? argv[i + 1] : undefined;
+    if (value === undefined || value === "" || (kind !== "file" && NO_NAME.test(value))) return undefined;
+    out.push(kind === "file" ? { kind, value } : { kind, value, fold: a.startsWith("-i") });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/** What `find -delete` and `find -exec rm … {}` remove, as removal commands with the narrowing tests before each action. */
+export function findDeletions(argv: string[]): FindDeletion[] {
   const widened = argv.some((a) => WIDENING.test(a));
   // An unset `$DIR` start leaves find in the working directory.
   const starts = findStarts(argv).flatMap((s) => (/[$`]/.test(s) ? [s, "."] : [s]));
@@ -171,12 +208,17 @@ export function findRemovals(argv: string[]): string[][] {
         ? s
         : `${s.replace(/[\\/]+$/, "")}/*`,
     );
-  const out: string[][] = [];
-  for (const [at, a] of argv.entries()) if (a === "-delete") out.push(["rm", "-r", ...reach(at)]);
+  const out: FindDeletion[] = [];
+  for (const [at, a] of argv.entries())
+    if (a === "-delete") out.push({ cmd: ["rm", "-r", ...reach(at)], narrowings: findNarrowings(argv, at, widened) });
   for (const { at, cmd } of findCommandsAt(argv)) {
     const [name = "", ...args] = cmd;
     if (args.some((a) => a.includes("{}")))
-      out.push(...reach(at).map((r) => [commandName(name), ...args.map((a) => a.replaceAll("{}", r))]));
+      for (const r of reach(at))
+        out.push({
+          cmd: [commandName(name), ...args.map((a) => a.replaceAll("{}", r))],
+          narrowings: findNarrowings(argv, at, widened),
+        });
   }
   return out;
 }

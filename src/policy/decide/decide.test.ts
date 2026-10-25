@@ -11,7 +11,8 @@ import { expandGlob, isDirectory } from "../shell-parse/glob.ts";
 import { loadShellParsers, type ShellLanguage, type ShellParsers } from "../shell-parse/load.ts";
 import { criticalRemoval } from "./critical.ts";
 import { type Decision, decide, type Env, exampleDecider, planExitChoices, type State } from "./index.ts";
-import { protectedPath, sensitivePath } from "./paths.ts";
+import { protectedName, protectedPath, sensitiveName, sensitivePath } from "./paths.ts";
+import { findDeletions } from "./targets.ts";
 
 let parsers: ShellParsers;
 let root = "";
@@ -885,5 +886,53 @@ describe("review findings", () => {
     const st = state("default", {}, { sandboxAutoAllow: true });
     expect(sh("cat ../x", st, { sandboxed: true }).behavior).toBe("allow");
     expect(sh("cat ~/.ssh/id_rsa", st, { sandboxed: true }).behavior).toBe("ask");
+  });
+});
+
+describe("what find's narrowing tests could name (FOLLOWUPS F57)", () => {
+  // spec: permissions §4.4 (QUESTIONS Q93)
+  test("the sensitive and protected names a find -name value could delete", () => {
+    expect(sensitiveName(".env", env())).toBe(".env");
+    expect(sensitiveName("credentials.json", env())).toBe("credentials.json");
+    expect(sensitiveName("id_rsa", env())).toBe("id_rsa*");
+    expect(sensitiveName("secrets.yml", env())).toBe("secrets.y*ml");
+    expect(sensitiveName("*.env", env())).toBe(".env");
+    // The tail found first wins (`a.js.pem` matches both), so only the ask is pinned here.
+    expect(sensitiveName("*.js*", env())).toBeDefined();
+    expect(sensitiveName("id_rsa*", env())).toBeDefined();
+    expect(sensitiveName("*.pyc", env())).toBeUndefined();
+    expect(sensitiveName("a.ts", env())).toBeUndefined();
+    expect(sensitiveName(".env.example", env())).toBeUndefined();
+    expect(sensitiveName("x.env", { ...env(), sensitiveFiles: ["**/x.env"] })).toBe("x.env");
+  });
+
+  // spec: permissions §4.4 (QUESTIONS Q93)
+  test("the protected names a find -name value could delete", () => {
+    expect(protectedName(".gitconfig", env())).toBe(".gitconfig");
+    expect(protectedName(".git", env())).toBe(".git");
+    expect(protectedName("*.gitconfig", env())).toBe(".gitconfig");
+    expect(protectedName("a.ts", env())).toBeUndefined();
+  });
+
+  // spec: permissions §4.4 (QUESTIONS Q93)
+  test("each find deletion action carries the tests before it", () => {
+    expect(findDeletions(["find", ".", "-name", "x", "-delete"])).toEqual([
+      { cmd: ["rm", "-r", "./*"], narrowings: [{ kind: "name", value: "x", fold: false }] },
+    ]);
+    expect(findDeletions(["find", ".", "-delete"])).toEqual([{ cmd: ["rm", "-r", "."], narrowings: undefined }]);
+    expect(findDeletions(["find", ".", "-iname", "*.env", "-delete"])[0]?.narrowings).toEqual([
+      { kind: "name", value: "*.env", fold: true },
+    ]);
+    expect(findDeletions(["find", ".", "-name", "x", "-exec", "rm", "-rf", "{}", "+"])).toEqual([
+      { cmd: ["rm", "-rf", "./*"], narrowings: [{ kind: "name", value: "x", fold: false }] },
+    ]);
+    expect(findDeletions(["find", ".", "-type", "f", "-delete"])).toEqual([
+      { cmd: ["rm", "-r", "."], narrowings: undefined },
+    ]);
+    expect(findDeletions(["find", ".", "-name", "-delete"])).toEqual([
+      { cmd: ["rm", "-r", "./*"], narrowings: undefined },
+    ]);
+    expect(findDeletions(["find", ".", "-name", "*", "-delete"])[0]?.narrowings).toBeUndefined();
+    expect(findDeletions(["find", ".", "-name", "x", "-o", "-delete"])[0]?.narrowings).toBeUndefined();
   });
 });

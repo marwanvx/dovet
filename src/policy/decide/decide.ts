@@ -17,11 +17,20 @@ import { shouldRefuseLocalHost } from "../sandbox/network.ts";
 import type { Analysis } from "../shell-parse/analyze.ts";
 import { classify } from "../shell-parse/read-only.ts";
 import { criticalRemoval, systemRemoval, unwrapCmd } from "./critical.ts";
-import { type Env, insideWorkingDirs, protectedPath, resolveForms, sensitivePath } from "./paths.ts";
+import {
+  type Env,
+  insideWorkingDirs,
+  protectedName,
+  protectedPath,
+  resolveForms,
+  sensitiveName,
+  sensitivePath,
+} from "./paths.ts";
 import { forcePushWithInput, program, type RemoteKind, remoteWithInput, selfControl } from "./remote.ts";
 import {
+  type FindDeletion,
   FS_COMMANDS,
-  findRemovals,
+  findDeletions,
   findStarts,
   NETWORK_PATH,
   sedEscapes,
@@ -244,6 +253,61 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
   return { all: out, complete };
 }
 
+/** A find action deletes what the narrowing tests before it name: their values are matched against the sensitive and
+ * protected names, and tests that name no file leave the whole reach asking (§4.4 Q93, §4.3, §4.7). An exact allow
+ * rule naming the command lifts the unnamed-reach ask, as the compatibility corpus requires. */
+function findReachFindings(
+  st: State,
+  tool: string,
+  typed: Subcommand,
+  del: FindDeletion,
+  cwd: string,
+  sandboxedRead: boolean,
+): Finding[] {
+  const ns = del.narrowings;
+  if (ns === undefined)
+    return [
+      {
+        ...finding(
+          "sensitive",
+          `sensitive file: ${del.cmd.join(" ")} — no test before the action names what find deletes`,
+          "ask",
+        ),
+        lifted: explicitAllow(st, tool, typed, true),
+      },
+    ];
+  const out: Finding[] = [];
+  for (const n of ns) {
+    if (n.kind === "file") {
+      out.push(...pathFindings(st, { access: "edit", path: n.value, cwd }, false, sandboxedRead));
+      continue;
+    }
+    if (n.kind === "regex") {
+      out.push(finding("sensitive", "sensitive file: find's -regex test could name one", "ask"));
+      continue;
+    }
+    const value = n.value.slice(Math.max(n.value.lastIndexOf("/"), n.value.lastIndexOf("\\")) + 1);
+    const sensitive = sensitiveName(value, st.env, n.fold);
+    if (sensitive !== undefined) {
+      const banner = st.tainted === true ? `session tainted by ${st.taintSource ?? "untrusted input"}: ` : "";
+      out.push(
+        finding(
+          "sensitive",
+          `${banner}sensitive file: find could delete a file named ${n.value} (${sensitive})`,
+          "ask",
+        ),
+      );
+      continue;
+    }
+    const hit = protectedName(value, st.env, n.fold);
+    if (hit !== undefined)
+      out.push(
+        finding("protected", `write to a protected path: find could delete a file named ${n.value} (${hit})`, "ask"),
+      );
+  }
+  return out;
+}
+
 function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shell" }>): Finding[] {
   const { env } = st;
   const out: Finding[] = [];
@@ -267,15 +331,17 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
         );
+      const cwd = sub.cwd ?? env.cwd;
       if (program(v[0]) === "find")
-        for (const argv of findRemovals(v)) {
-          const why = criticalRemoval(env, unwrapCmd({ ...sub, argv }));
+        for (const del of findDeletions(v)) {
+          const why = criticalRemoval(env, unwrapCmd({ ...sub, argv: del.cmd }));
           if (why !== undefined)
             out.push(
               finding("critical", `critical-path removal: find ${why}`, "ask", {
                 ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
               }),
             );
+          out.push(...findReachFindings(st, tool, unwrapped, del, cwd, sandboxedRead));
         }
       // The input can name the command itself (a chain of xargs, a wrapper whose operand or `/c` the input
       // completes) or bring `find` its `-delete`: what runs can be a recursive removal of any path, so the
@@ -297,7 +363,6 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
       const deletes = program(v[0]) === "find" && v.includes("-delete") ? findStarts(v) : [];
-      const cwd = sub.cwd ?? env.cwd;
       for (const t of [
         ...shellTargets(sub, env.cwd),
         ...deletes.map((path): Target => ({ access: "edit", path, cwd })),
