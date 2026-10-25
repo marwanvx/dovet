@@ -295,10 +295,11 @@ function findReachFindings(
       out.push(unnamedReach(st, tool, typed, del));
       continue;
     }
-    // A literal -path value is a concrete path: it gets the full checks a start path gets.
+    // A literal -path value is a concrete path: it gets the full checks a start path gets; a case-insensitive
+    // test falls through to the name checks, which fold (`./.GITCONFIG` on Linux).
     if (n.kind === "path" && !PATH_GLOB.test(n.value)) {
       out.push(...pathFindings(st, { access: "edit", path: n.value, cwd }, false, sandboxedRead));
-      continue;
+      if (!n.fold) continue;
     }
     const sensitive = sensitiveName(value, st.env, n.fold);
     if (sensitive !== undefined) {
@@ -346,14 +347,18 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         );
       const cwd = sub.cwd ?? env.cwd;
       if (program(v[0]) === "find") {
-        const above = findStarts(v)
-          .map((s) => protectedDirAbove(s, env))
-          .find((d) => d !== undefined);
+        const dels = findDeletions(v);
+        const above =
+          dels.length > 0
+            ? findStarts(v)
+                .map((s) => protectedDirAbove(s, env))
+                .find((d) => d !== undefined)
+            : undefined;
         if (above !== undefined)
           out.push(
             finding("protected", `write to a protected path: find could reach ${above} under its start path`, "ask"),
           );
-        for (const del of findDeletions(v)) {
+        for (const del of dels) {
           const why = criticalRemoval(env, unwrapCmd({ ...sub, argv: del.cmd }));
           if (why !== undefined)
             out.push(

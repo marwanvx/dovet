@@ -843,6 +843,7 @@ describe("what find's deletions could name gets the sensitive and protected chec
   test.each([
     "find . -name '.gitconfig' -delete",
     "find . -path './.config/git/config' -delete",
+    "find . -ipath './.GITCONFIG' -delete",
     "find .config -name 'config' -delete",
   ])("%s is narrowed to a protected path and asks even in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions", { allow: ["Bash"] }));
@@ -882,5 +883,6 @@ describe("what find's deletions could name gets the sensitive and protected chec
     expect(shell("find src -name '*.pyc' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
     expect(shell("find . -name '.env.example' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
     expect(shell("find src -name 'config' -delete", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
+    expect(shell("find .config -type f", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
   });
 });
