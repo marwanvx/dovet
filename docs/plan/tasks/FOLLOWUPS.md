@@ -25,10 +25,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
 
-### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
-- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
-- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading too.
-
 ### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
 - `git push --mir` allows in `bypassPermissions`; real git reads it as `--mirror` and force-updates `main`. Match the abbreviations; `/^--post-/` has the same gap.
@@ -204,6 +200,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
+- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading too.
+- **Fixed (#192):** each `cmd` reading peels into its operand reading, which re-enters the reader (Q94) — the remote, force-push and find deletion checks run on it and on what expands below it; one `/c` operand word is re-split as the line cmd received while the calling shell's words keep their spaces; a metacharacter (`^"&|;()<>%@!`), an empty word, a quoted first word or a shell script under the layer is not fully checkable and asks (`bypassPermissions` included). F67 and F68 logged from round 3.
+
 
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
