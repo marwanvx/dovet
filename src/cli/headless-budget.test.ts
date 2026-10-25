@@ -98,10 +98,12 @@ function compacting(script: Step[], summary: SummaryStep[] = [{ text: "SUMMARY O
     },
     stream: async function* () {
       const transcript = current?.transcript ?? [];
-      const last = transcript.at(-1);
-      const isSummary =
-        last?.kind === "user" &&
-        last.parts.some((p) => p.kind === "text" && p.text.includes("User's requests and constraints"));
+      // Any user item, not only the last: the no-tools retry's last message is the NO_TOOLS text, the prompt rides earlier.
+      const isSummary = transcript.some(
+        (i) =>
+          i.kind === "user" &&
+          i.parts.some((p) => p.kind === "text" && p.text.includes("User's requests and constraints")),
+      );
       requests.push({ summary: isSummary });
       if (isSummary) {
         const step: SummaryStep = summary[summaryNext++] ?? { text: "SUMMARY OF THE WORK" };
@@ -423,6 +425,8 @@ describe("budgets in a headless run", () => {
       expect(log.findLast((e) => e.type === "turn.end")?.data).toEqual({ reason: "budget" });
       // The refusal happens before compact() runs: no epoch is replaced by a mechanical-fallback compaction.
       expect(log.some((e) => e.type === "compaction")).toBe(false);
+      // The stream-json output carries the events, not a text fallback.
+      expect(out.events?.some((e) => e.type === "budget.event")).toBe(true);
       const lines = (await readFile(join(dir.root, "data", "budget", `${DAY}.ledger`), "utf8")).trim().split("\n");
       expect(lines.filter((l) => l.includes(out.sessionId)).map((l) => l.split(" ")[0])).toEqual(["reserve", "commit"]);
     } finally {

@@ -9,7 +9,9 @@ export type SummaryReply =
   | {
       ok: false;
       message: string;
-      aborted: boolean /** The budget refused this request (receipts-budgets "Behavior" 3); no retry can help. */;
+      /** The user stopped the request. */
+      aborted: boolean;
+      /** The budget refused this request (receipts-budgets "Behavior" 3); no retry can help. */
       budget?: Stop;
     };
 

@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
+- **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
+- The interrupted-during-compaction output returns without `events`, so under `--output stream-json` the consumer gets the text fallback (`src/cli/main.ts:301-305`) instead of the `turn.end` events; F34's round-1 fixed the same class for the compaction budget stop (`budgetDuringCompaction`), the sibling one function below remains. One `events,` field, with a test that pins it.
+
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
 - With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs (`*.env` the same): the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
