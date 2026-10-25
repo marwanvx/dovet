@@ -46,9 +46,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
 - With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs: the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
 
-### F54 (F32): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
-- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map), permissions §5
-- `echo +main | xargs git push origin` is allowed in `bypassPermissions` while `git push origin +main` denies: the stand-in filling reaches the §4.8 remote check but not §5's `forcePushToDefault`, which reads literal words. Run the force-push check over the stand-in-filled readings too.
 
 ### F52 (F32): a `$( )` in a read command's file position reaches no check
 - **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
@@ -200,6 +197,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F54 (F32): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map), permissions §5
+- `echo +main | xargs git push origin` is allowed in `bypassPermissions` while `git push origin +main` denies: the stand-in filling reaches the §4.8 remote check but not §5's `forcePushToDefault`, which reads literal words. Run the force-push check over the stand-in-filled readings too.
+- **Fixed:** #190
 
 ### F34 (M2-16 spec review): compaction requests never reach the daily ledger
 - **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
