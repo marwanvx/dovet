@@ -1,11 +1,19 @@
 // The summary request of a compaction: a fork that is never appended to the epoch (context §6 procedure 1, 3b, 4).
 import type { StopReason, TranscriptItem } from "../../ai/index.ts";
 import type { StoredResponse } from "../../schema/index.ts";
+import type { Stop } from "../budgets/index.ts";
 import { reduceForSummary } from "./reduce.ts";
 
 export type SummaryReply =
   | { ok: true; stored: StoredResponse; stopReason: StopReason; costUsd: number | null }
-  | { ok: false; message: string; aborted: boolean };
+  | {
+      ok: false;
+      message: string;
+      /** The user stopped the request. */
+      aborted: boolean;
+      /** The budget refused this request (receipts-budgets "Behavior" 3); no retry can help. */
+      budget?: Stop;
+    };
 
 /** One summary request, with the retry budget the model call itself has. */
 export type SendSummary = (transcript: TranscriptItem[]) => Promise<SummaryReply>;
@@ -91,7 +99,7 @@ export async function summarize(a: {
       }
     }
     if (!reply.ok) {
-      if (reply.aborted) return { kind: "aborted" };
+      if (reply.aborted || reply.budget !== undefined) return { kind: "aborted" };
       why = reply.message;
       continue;
     }

@@ -16,6 +16,7 @@ import {
   decideStopAction,
   discoverInstructions,
   ENDED_NOT_RUN,
+  type Estimate,
   type ExecutedResult,
   estimateContext,
   estimateRequest,
@@ -48,6 +49,7 @@ import {
   requestCapFor,
   responseSpend,
   type SendSummary,
+  type Stop,
   serializeTools,
   sessionDate,
   shellToolFor,
@@ -1135,7 +1137,68 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     let contextMark: ContextMark | null = null;
     let forcedSinceResponse = false;
     const contextWindow = input.contextWindow ?? PLACEHOLDER_CONTEXT_WINDOW;
+    /**
+     * One summary request's budget gate (receipts-budgets "Behavior" 1, 3, 5): the meter's scopes, then the day's
+     * ledger. `requestId: null` says the ledger could not be written and no daily limit is set, so there is nothing
+     * to settle; a refused request leaves no line.
+     */
+    const gateSummary = async (
+      estimate: Estimate,
+    ): Promise<{ ok: true; requestId: string | null } | { ok: false; stop: Stop }> => {
+      meter.limits = budgetLimits(input.args.budget, effectiveSettings.budget);
+      const stop = meter.check({
+        usd: estimate.usd,
+        tokens: estimate.inputTokens + estimate.cacheReadTokens + estimate.outputTokens,
+      });
+      if (stop !== null) return { ok: false, stop };
+      requestSeq += 1;
+      const requestId = `${sessionId}.${requestSeq}`;
+      try {
+        const r = await ledger.reserve(requestId, estimate.usd, meter.limits.day);
+        if (!r.ok) return { ok: false, stop: meter.dayStop(r.daySpent, estimate.usd) };
+        for (const w of meter.warnings(r.daySpent)) budgetEvent(w);
+        return { ok: true, requestId };
+      } catch (err) {
+        if (meter.limits.day !== null)
+          return {
+            ok: false,
+            stop: {
+              scope: "day",
+              spent: 0,
+              limit: meter.limits.day,
+              estimate: estimate.usd,
+              message: `The daily budget cannot be checked (${err instanceof Error ? err.message : String(err)}).`,
+            },
+          };
+        ledgerFailed(err);
+        return { ok: true, requestId: null };
+      }
+    };
+    /** The summary fork's estimate: what the last response read (priced from its usage) plus what the transcript grew and the compaction prompt. */
+    const estimateSummary = (forkChars: number): Estimate =>
+      estimateRequest({
+        last: lastTokens,
+        newChars: contextMark === null ? forkChars : Math.max(0, forkChars - contextMark.chars),
+        outputs: outputTokens,
+        rates: PLACEHOLDER_RATES,
+      });
+    /** The pre-flight's reservation for the summary's first request; later sends (retries, failover) gate themselves. */
+    let summaryReservation: { settle: string | null } | undefined;
+    /** A later send's gate refusal rides out of `compact()` as an abort; the `Stop` itself is kept here (a refusal is final, there is nothing to retry). */
+    let summaryBudgetStop: Stop | null = null;
     const sendSummary: SendSummary = async (transcript) => {
+      const reserved = summaryReservation;
+      summaryReservation = undefined;
+      let settleId: string | null = null;
+      if (reserved === undefined) {
+        // The fork's items already carry the compaction prompt; the pre-flight's epoch transcript does not yet.
+        const gate = await gateSummary(estimateSummary(transcriptChars(transcript)));
+        if (!gate.ok) {
+          summaryBudgetStop = gate.stop;
+          return { ok: false, message: gate.stop.message, aborted: false, budget: gate.stop };
+        }
+        settleId = gate.requestId;
+      } else settleId = reserved.settle;
       let finished: Extract<StreamEvent, { type: "done" }> | undefined;
       let failure = "the model returned no answer";
       for await (const e of callModel(
@@ -1145,9 +1208,15 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       )) {
         if (e.type === "done") finished = e;
         else if (e.type === "failed") failure = e.error.message;
-        else if (e.type === "aborted") return { ok: false, message: "stopped", aborted: true };
+        else if (e.type === "aborted") {
+          if (settleId !== null) await ledger.release(settleId).catch(ledgerFailed);
+          return { ok: false, message: "stopped", aborted: true };
+        }
       }
-      if (finished === undefined) return { ok: false, message: failure, aborted: false };
+      if (finished === undefined) {
+        if (settleId !== null) await ledger.release(settleId).catch(ledgerFailed);
+        return { ok: false, message: failure, aborted: false };
+      }
       const requestUsage = jsonSafeUsage({ ...(finished.stored.usage as Record<string, unknown>) });
       usage = addUsage(usage, requestUsage);
       const spend = responseSpend({
@@ -1159,10 +1228,30 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       guards.cost += spend.usd;
       const t = spend.tokens;
       meter.record("compaction", spend.usd, t.input + t.cacheRead + t.cacheWrite + t.output);
+      const daySpent =
+        settleId !== null
+          ? await ledger.commit(settleId, spend.usd).catch((e: unknown) => {
+              ledgerFailed(e);
+              return null;
+            })
+          : null;
+      for (const w of meter.warnings(daySpent)) budgetEvent(w);
       return { ok: true, stored: finished.stored, stopReason: finished.stopReason, costUsd: spend.usd };
     };
-    /** Starts the next epoch from a summary of this one; false if the user stopped the summary request. */
-    const compactEpoch = async (trigger: "auto" | "context-exceeded", tokensBefore: number): Promise<boolean> => {
+    /**
+     * Starts the next epoch from a summary of this one; `{ ok: false }` when the user stopped the summary request,
+     * `{ ok: false, budget }` when the budget refused the summary request, before or during `compact()`
+     * (receipts-budgets "Behavior" 3).
+     */
+    const compactEpoch = async (
+      trigger: "auto" | "context-exceeded",
+      tokensBefore: number,
+      forkChars: number,
+    ): Promise<{ ok: true } | { ok: false; budget?: Stop }> => {
+      const gate = await gateSummary(estimateSummary(forkChars + prompt("compact.md").length));
+      if (!gate.ok) return { ok: false, budget: gate.stop };
+      summaryReservation = { settle: gate.requestId };
+      summaryBudgetStop = null;
       const result = await compact({
         events,
         header,
@@ -1188,7 +1277,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         renderSystem: renderSystemNow,
         send: sendSummary,
       });
-      if ("aborted" in result) return false;
+      if ("aborted" in result) {
+        const stop = summaryBudgetStop;
+        summaryBudgetStop = null;
+        return stop === null ? { ok: false } : { ok: false, budget: stop };
+      }
       const next = result.epochStart.epoch;
       push("epoch.start", next, null, result.epochStart);
       push("compaction", next, null, result.compaction);
@@ -1202,7 +1295,25 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         result.notice ??
           `context compacted (${trigger}): about ${result.compaction.tokensBefore} → ${result.compaction.tokensAfter} tokens.`,
       );
-      return true;
+      return { ok: true };
+    };
+    /** The turn's budget stop when it is the summary request that the budget refused: the same shape as a main request's pause. */
+    const budgetDuringCompaction = async (stop: Stop): Promise<HeadlessRunOutput> => {
+      budgetEvent({ kind: "limit-reached", scope: stop.scope, spent: stop.spent, limit: stop.limit });
+      push("turn.end", epochNum, turn, { reason: "budget" });
+      await flushLog();
+      return {
+        sessionId,
+        result: `${stop.message} Budget stops the turn before the next request.`,
+        stopReason: "error",
+        incomplete: true,
+        usage,
+        cost: costOut(),
+        receipt: {},
+        exit: { kind: "budget" },
+        warnings,
+        events,
+      };
     };
     const stoppedDuringCompaction = async (): Promise<HeadlessRunOutput> => {
       push("turn.end", epochNum, turn, { reason: sawOutput ? "interrupted" : "cancelled" });
@@ -1285,7 +1396,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
         });
       // Never between a tool call and its result: those turns wait until the round's results are logged.
       if (!hasOpenRound(built.transcript) && overThreshold(contextTokens())) {
-        if (!(await compactEpoch("auto", contextTokens()))) return stoppedDuringCompaction();
+        const compacted = await compactEpoch("auto", contextTokens(), transcriptChars(built.transcript));
+        if (!compacted.ok)
+          return compacted.budget === undefined
+            ? await stoppedDuringCompaction()
+            : await budgetDuringCompaction(compacted.budget);
         built = rebuild();
         const thrash = guards.noteCompaction(overThreshold(contextTokens()));
         if (thrash !== null) {
@@ -1812,7 +1927,11 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
       if (action.kind === "compact-retry" && !forcedSinceResponse) {
         recordNotRun(() => "Not run: the context window was full.");
         forcedSinceResponse = true;
-        if (!(await compactEpoch("context-exceeded", contextTokens()))) return stoppedDuringCompaction();
+        const compacted = await compactEpoch("context-exceeded", contextTokens(), transcriptChars(built.transcript));
+        if (!compacted.ok)
+          return compacted.budget === undefined
+            ? await stoppedDuringCompaction()
+            : await budgetDuringCompaction(compacted.budget);
         continue;
       }
       if (action.kind === "compact-retry") {

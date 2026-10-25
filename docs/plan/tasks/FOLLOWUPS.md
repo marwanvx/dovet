@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
+- **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
+- The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
+
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
 - With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs (`*.env` the same): the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
@@ -99,14 +103,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (same class as the fixed F18, F24) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
 - Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
 
-### F34 (M2-16 spec review): compaction requests never reach the daily ledger
-- **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
-- It calls `meter.record` but no `ledger.reserve/commit`, so the hard daily cap (AC-RCPT-10) undercounts. Reserve and commit like the main request (:1374-1639); also run `meter.check` before `compact()` (F35, minor, :1165). Test: a summary that crosses the day limit is refused.
-
-### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
-- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
-- A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
-
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
 - **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
 - 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
@@ -180,6 +176,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F34 (M2-16 spec review): compaction requests never reach the daily ledger
+- **Severity:** major · `src/cli/headless-run.ts:1141-1162` (`sendSummary`)
+- It calls `meter.record` but no `ledger.reserve/commit`, so the hard daily cap (AC-RCPT-10) undercounts. Reserve and commit like the main request (:1374-1639); also run `meter.check` before `compact()` (F35, minor, :1165). Test: a summary that crosses the day limit is refused.
+- **Fixed (#189):** every summary request gates like a main request (meter.check, daily-ledger reserve, commit of the actual spend, release on failure/abort); the first send's reservation is taken by a pre-flight in `compactEpoch` before `compact()`. Six tests in `src/cli/headless-budget.test.ts` pin refusal before send, the reserve/commit lines, per-attempt releases, and a later send's budget stop (a refusal there degraded the compaction to a mechanical fallback — fixed in the same PR).
+
+### F35 (M2-16 spec review): compaction requests get no pre-flight budget check
+- **Severity:** minor (pre-existing) · `src/cli/headless-run.ts:1165` (`compactEpoch`, called from :1288 and :1815; `meter.check` runs only at :1367)
+- A session at 99% of `--budget` still sends and pays a full summary request before the next check refuses. Estimate the summary request and run `meter.check` plus the ledger reserve before `compact()`; on refusal stop with the budget message. Fix together with F34.
+- **Fixed (#189):** `compactEpoch` gates before `compact()` on the summary fork's estimate (last response's usage + transcript growth + the compact prompt); a refusal stops the turn with the budget message and no `compaction` event, auto and context-exceeded both.
 
 ### F32 (M2-16, F40 review): `xargs` stdin arguments and `find -delete` reach no check
 - **Severity:** major (logged twice) · `src/policy/decide/critical.ts`, `decide.ts`
