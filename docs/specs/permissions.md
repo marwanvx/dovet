@@ -271,10 +271,12 @@ Behavior:
 - While tainted, these are denied in **every** mode, `bypassPermissions` included (§10).
 - **Honest limit:** this is text recognition, a guardrail; the network boundary (§7.4) is what stops unknown destinations.
 
-**Decided while building (QUESTIONS Q42):** the default branch is `main`, `master` and `State.defaultBranch`; a force-push naming no branch, or `HEAD`, counts as the default branch (fail closed). A remote-action ask is lifted only by an allow rule that names the command: no `*`, or two fixed words before it (`git push*`, not `git *`). Every check runs on the command with wrappers (`sudo`, `env`, `timeout`) stripped and the program reduced to its basename.
+**Decided while building (QUESTIONS Q42):** the default branch is `main`, `master` and `State.defaultBranch`; a force-push naming no branch, `HEAD`, or a destination known only at run time (`$BRANCH`, a find `-exec` `{}`) counts as the default branch (fail closed; cmd's `%VAR%` destination spelling is not read — F64), and a first positional starting with `+` is read as the refspec of a remoteless push, misreading a real remote only adding denies (F54). A remote-action ask is lifted only by an allow rule that names the command: no `*`, or two fixed words before it (`git push*`, not `git *`). Every check runs on the command with wrappers (`sudo`, `env`, `timeout`) stripped and the program reduced to its basename.
 
 ## 5. Actions no mode auto-approves
 Even in `bypassPermissions`: critical-path removals (prompt with countdown), protected-path writes (§4.3), shell commands with network-path arguments (§4.1), `AskUserQuestion`, `ExitPlanMode`, and (v0.2) MCP tools marked `requiresUserInteraction`. Additionally, `git push --force*` (and `--force-with-lease`, `+refspec`) to the default branch is **denied** in every mode unless an exact-match allow rule (no `*`) names that command.
+
+**Decided while building (QUESTIONS Q92):** the force-push check reads the xargs stand-in's worst case too: at its place it tries a force flag, the push itself, and a default branch forced — alone, behind the push, or behind an option value — so `echo +main | xargs git push origin` and `echo 'push origin +main' | xargs git` deny like `git push origin +main`; when no typed reading hits and only the input can supply the force, the finding says `(from xargs input)`. The stand-in replaces a word holding a replace string wholesale (Q90), so typed text around it doesn't narrow the check (`xargs -I{} git push origin feature:{}` denies fail-closed).
 
 ## 6. Permission prompt
 

@@ -818,3 +818,8 @@ Done: every summary request gates like a main request (meter.check, daily-ledger
 Review: standard, 3 rounds (4 reviewer runs; 2 died on provider outages, respawned); 1 blocker + 1 major + 2 minors + 2 nits fixed, 0 dropped, 1 pre-existing minor logged (F58).
 Learned: a refusal a helper's retry loop would swallow rides out as a distinct reply field (`SummaryReply.budget`), never as a message string. The fixture detects the summary request by any user item, not the last (the no-tools retry's last message is the NO_TOOLS text). The committed instruction files sit exactly at the 7,500-token ceiling: any growth breaks CI's docs:check, and follow-up prose sits against the 15,000 one (`bun run next M1-23c`).
 Next: F54.
+## 2026-10-25 — F54 force-push can't ride in on xargs input
+Done: the §5 force-push check reads the xargs stand-in's worst case (Q92) and a remoteless `+refspec` or run-time destination (Q42); 20 tests. PR: #190 (merged).
+Review: deep, 3 rounds (4 reviewers); 1 blocker, 3 majors, 2 minors, 4 nits fixed; 6 logged (F59, F61–F65).
+Learned: an input line is whole words, not one word; a `[, ...refs]` destructure already skips the first element. Measure M1-23c prose with `bun -e` before committing.
+Next: F57.

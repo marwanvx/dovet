@@ -1,6 +1,7 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
 import { commandName } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
+import { unresolvedTarget } from "./targets.ts";
 
 export const REMOTE_VERSION = 1;
 
@@ -162,14 +163,50 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   const args = gitArgs(v.slice(1));
   if (args[0] !== "push") return undefined;
   const rest = args.slice(1);
-  const [, ...refs] = positional(rest);
+  const pos = positional(rest);
+  // A leading `+` reads as the refspec of a remoteless push; misreading a real remote this way only adds denies.
+  const refs = pos[0]?.startsWith("+") ? pos : pos.slice(1);
   const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
   const hits = (refs.length === 0 ? [""] : refs).some((r) => {
     const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
-    // No named branch, or HEAD, may be the default branch: fail closed.
-    return (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || branches.includes(dst));
+    // No named branch, HEAD, or one known only at run time, may be the default branch: fail closed.
+    return (
+      (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || unresolvedTarget(dst) || branches.includes(dst))
+    );
   });
   return hits ? v.join(" ") : undefined;
+}
+
+/** Words one xargs-input line can be that make a force-push reading: a force flag, the push itself, a default branch forced. A line is whole words (`push origin +main`), and a leading `.` stands for an option value so the push survives `gitArgs` (`xargs git -c`). Keep in step with `forcePushToDefault`'s spellings. */
+const FORCE_INPUT = (branches: readonly string[]): string[][] => {
+  const b = branches[0] ?? "main";
+  return [
+    ["--force"],
+    ["push"],
+    [`+${b}`],
+    ["push", `+${b}`],
+    ["push", "--force"],
+    [".", "push", `+${b}`],
+    [".", "push", "--force"],
+  ];
+};
+
+/** The force-push (§5) this command could be once each `input` word is filled in at run time (xargs input), else the typed one. */
+export function forcePushWithInput(argv: string[], input: string, branches: readonly string[]): string | undefined {
+  const at = argv.flatMap((w, i) => (w === input ? [i] : []));
+  if (at.length === 0) return forcePushToDefault(argv, branches);
+  for (const i of at)
+    for (const words of FORCE_INPUT(branches)) {
+      const f = forcePushToDefault(
+        [...argv.slice(0, i), ...words, ...argv.slice(i + 1)].filter((w) => w !== input),
+        branches,
+      );
+      if (f !== undefined) return `${f} (from xargs input)`;
+    }
+  return forcePushToDefault(
+    argv.filter((w) => w !== input),
+    branches,
+  );
 }
 
 const KILLERS = new Set(["kill", "taskkill", "stop-process", "pkill", "killall"]);
