@@ -164,7 +164,7 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   if (args[0] !== "push") return undefined;
   const rest = args.slice(1);
   const pos = positional(rest);
-  // A remote name never starts with `+`, so a leading `+` is the refspec of a remoteless push.
+  // A leading `+` reads as the refspec of a remoteless push; misreading a real remote this way only adds denies.
   const refs = pos[0]?.startsWith("+") ? pos : pos.slice(1);
   const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
   const hits = (refs.length === 0 ? [""] : refs).some((r) => {

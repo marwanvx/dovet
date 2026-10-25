@@ -20,7 +20,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
-- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading (`decide.ts:260`) too.
+- `sudo cmd /c git push origin +main` allows in `bypassPermissions` (typed `cmd /c …` denies): check the `cmd`-peeled reading too.
+
+### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
+- `git push --mir` allows in `bypassPermissions`; real git reads it as `--mirror` and force-updates `main`. Match the abbreviations; `/^--post-/` has the same gap.
 
 ### F61 (F54 security review): many stand-ins decide in quadratic time
 - **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:78-87`
@@ -28,11 +32,19 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F62 (F54 tests review): the bypass corpus wasn't extended with the series' bypasses
 - **Severity:** minor (pre-existing) · `src/policy/testdata/bypass-corpus.jsonl`
-- testing.md "Permission corpora" says it grows with each Dovet bug; no F32/F42/F54 case is in it.
+- testing.md "Permission corpora" says it grows with each Dovet bug; no F32/F42/F54 case is in it. Add them as corpus cases.
+
+### F64 (F54 round-3 review): cmd's `%VAR%` destination spelling isn't an unresolved dst
+- **Severity:** minor (pre-existing) · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
+- `cmd /c git push --force origin %BRANCH%` allows in `bypassPermissions` though cmd expands it at run time; `%` is in no unresolved class. Add `%` to `unresolvedTarget` (its write-target callers get it in the same stroke) or name the limit wherever the class is claimed.
+
+### F65 (F54 round-3 review): a delete of the default branch isn't in §5's deny list
+- **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:170-176`, permissions §5
+- `git push origin :main` deletes the remote default branch in `bypassPermissions` while the forced spelling denies. Treat a dst-less delete refspec of a default branch like a force-push of it (§5 and Q42 wording to match).
 
 ### F57 (F32 round-4 security review): a narrowed find reach deletes a sensitive file without the §4.7 ask
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:299-305` (the write checks see the start paths; the reach feeds only `criticalRemoval`)
-- With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs (`*.env` the same): the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
+- With a tool-wide `Bash` allow, `rm .env` asks but `find . -name '.env' -delete` runs: the reach crosses only the critical-path check. Run the sensitive/protected checks over the reach's deletions too; §4.4's sentence grows with it.
 
 ### F54 (F32): a `+refspec` from xargs input force-pushes the default branch in untainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `forcePushToDefault` map), permissions §5
@@ -49,11 +61,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F50 (F40 review): wrappers outside §3.2's list hide the command
 - **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
 - `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
-- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su`, `echo 'rm -rf /' | xargs bash -c` — allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
+- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su` — allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
-- Over 10,000 characters or the 200 ms budget (checked too rarely), a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
+- Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
@@ -61,7 +73,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
-- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s` (win32: `/s` isn't read as recursion). Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`; bare `xargs toybox` still asks critical.
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s`. Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`.
 
 ### F55 (F32 security review): `pwsh -c` scripts reach no check, with or without xargs
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
@@ -71,7 +83,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `SECTION`, `test/adversarial/guarantees.test.ts`
 - Every `by` string a prompt shows ("critical-path removal (§4.4)", "remote-action check (§4.8)", …) is asserted nowhere (the F32 round pinned only the new `computed` one), so a wrong section reference reaches users silently — the traps table's "pin the literal text". One `expect(...by)` per kind where a test already produces that finding.
 
-### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret (not rechecked)
+### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
 - `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
 
@@ -97,7 +109,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
 - **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
-- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n` (no repair marker).
+- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n`.
 
 ### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
