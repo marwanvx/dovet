@@ -828,6 +828,18 @@ describe("review findings", () => {
     expect(sh("git push --force origin feature", bypass()).behavior).toBe("allow");
   });
 
+  // spec: AC-PERM-29
+  test("a remoteless +refspec, and a destination known only at run time, are force-pushes of the default branch", () => {
+    for (const c of [
+      "git push +main",
+      "git push +refs/heads/main",
+      "git push +HEAD:main",
+      "git push --force origin $BRANCH",
+    ])
+      expect(sh(c, bypass()).behavior, c).toBe("deny");
+    expect(sh("git push +feature", bypass()).behavior, "git push +feature").toBe("allow");
+  });
+
   // spec: AC-PERM-07
   test("$HOME with more expansion after it is critical", () => {
     for (const c of ["rm -rf $HOME$X", "rm -rf ${HOME%/}"]) expect(sh(c, bypass()).behavior, c).toBe("ask");

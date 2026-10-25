@@ -1,6 +1,7 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
 import { commandName } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
+import { unresolvedTarget } from "./targets.ts";
 
 export const REMOTE_VERSION = 1;
 
@@ -162,12 +163,16 @@ export function forcePushToDefault(v: string[], branches: readonly string[]): st
   const args = gitArgs(v.slice(1));
   if (args[0] !== "push") return undefined;
   const rest = args.slice(1);
-  const [, ...refs] = positional(rest);
+  const pos = positional(rest);
+  // A remote name never starts with `+`, so a leading `+` is the refspec of a remoteless push.
+  const refs = pos[0]?.startsWith("+") ? pos : pos.slice(1);
   const forced = rest.some((a) => /^--(force|mirror|all)/.test(a) || /^-[a-zA-Z]*f/.test(a));
   const hits = (refs.length === 0 ? [""] : refs).some((r) => {
     const dst = (r.replace(/^\+/, "").split(":").at(-1) ?? "").replace(/^refs\/heads\//, "");
-    // No named branch, or HEAD, may be the default branch: fail closed.
-    return (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || branches.includes(dst));
+    // No named branch, HEAD, or one known only at run time, may be the default branch: fail closed.
+    return (
+      (forced || r.startsWith("+")) && (dst === "" || dst === "HEAD" || unresolvedTarget(dst) || branches.includes(dst))
+    );
   });
   return hits ? v.join(" ") : undefined;
 }
