@@ -228,14 +228,18 @@ const PLAIN_PARALLEL_OPTION = /^(-k|-j\S*|--keep-order|--jobs(=\S*)?)$/;
 
 /**
  * Why a `parallel`/`sem` command this reading could run can't be followed (its arguments can be placed anywhere), or
- * undefined when every one it runs is plain. The env check reaches readings that name parallel among their words
- * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones, and reads any word holding `PARALLEL`, since
- * bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`, `env ${X:+PARALLEL=-i} …`).
+ * undefined when every one it runs is plain. The env checks reach readings that name parallel among their words
+ * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones. A word holding `PARALLEL` counts whatever it
+ * holds it for, since bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`,
+ * `env ${X:+PARALLEL=-i} …`); a command-substitution word counts because it can assemble the assignment from pieces
+ * (`env "$(printf %s PAR ALLEL)=-iXX" …`).
  */
 function parallelOddity(v: string[], scriptSetsParallelEnv: boolean): string | undefined {
   if (!v.some((w) => PARALLEL_PROGRAMS.has(program(w)))) return undefined;
   if (v.some((w) => w.includes("PARALLEL")) || scriptSetsParallelEnv)
-    return "the script sets PARALLEL/PARALLEL_HOME and parallel reads options from it, so what runs can't be checked";
+    return "a word of the script holds PARALLEL, and parallel reads its options from that variable, so what runs can't be checked";
+  if (v.some((w) => w.includes("$(") || w.includes("`")))
+    return "a command substitution in the script could hand parallel its options, so what runs can't be checked";
   if (!PARALLEL_PROGRAMS.has(program(v[0]))) return undefined;
   const { starts } = xargsCommandStarts(v);
   const end = starts.length === 0 ? v.length : Math.max(...starts);

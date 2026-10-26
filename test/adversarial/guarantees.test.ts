@@ -1081,6 +1081,7 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     "read PARALLEL <<< '-iXX'; parallel git XX origin ::: push",
     "X=1; env ${X:+PARALLEL=-iXX} parallel git XX origin ::: push",
     "X=PARALLEL; declare $X=-iXX; parallel git XX origin ::: push",
+    'env "$(printf %s PAR ALLEL)=-iXX" parallel git XX origin ::: push',
     'parallel -k git {= $_="push" =} origin ::: x',
     "parallel -v echo ::: a b",
     "sem --wait echo hi",
@@ -1093,11 +1094,14 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
   // spec: permissions §3.2 "Stripped wrappers"
   test("the parallel asks name what can't be checked, and the plain form stays allowed", () => {
     expect(shell("env PARALLEL=-iXX parallel git XX origin ::: push", state("bypassPermissions")).reason).toStartWith(
-      "the script sets PARALLEL",
+      "a word of the script holds PARALLEL",
     );
     expect(shell("export PARALLEL=-i; parallel git {} origin ::: push", state("bypassPermissions")).reason).toStartWith(
-      "the script sets PARALLEL",
+      "a word of the script holds PARALLEL",
     );
+    expect(
+      shell('env "$(printf %s PAR ALLEL)=-iXX" parallel git XX origin ::: push', state("bypassPermissions")).reason,
+    ).toStartWith("a command substitution in the script could hand parallel its options");
     expect(shell('parallel -k git {= $_="push" =} origin ::: x', state("bypassPermissions")).reason).toStartWith(
       "parallel's {= perl =}",
     );
