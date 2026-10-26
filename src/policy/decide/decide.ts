@@ -5,6 +5,7 @@ import {
   type Behavior,
   commandFromInput,
   evaluateRules,
+  PARALLEL_PROGRAMS,
   type RuleCall,
   type RuleMatch,
   type RuleSet,
@@ -220,15 +221,31 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
 
 const MAX_VARIANT_WORDS = 2_000_000;
 
-// parallel's options that leave where its arguments go as typed; any other (`-i`, `--rpl`, `-N`, `--colsep`, …) may move them.
-const PLAIN_PARALLEL_OPTION = /^(-[kv]+|-[jP]\d*|--(keep-order|jobs(=\S*)?|verbose|bar|eta|progress))$/;
+// The plain form of a `parallel`/`sem` command is the only one whose arguments stay where they are typed: options only
+// `-k`/`-j` (`--keep-order`, `--jobs`), no `{= perl =}` replacement, and no `PARALLEL`/`PARALLEL_HOME` set in the script —
+// parallel reads options from that variable and from `$PARALLEL_HOME/config`, and `{= =}` computes any word (QUESTIONS Q97).
+const PLAIN_PARALLEL_OPTION = /^(-k|-j\S*|--keep-order|--jobs(=\S*)?)$/;
+const PARALLEL_ASSIGNMENT = /^(?:export\s+|\$env:)?PARALLEL(_HOME)?=/;
 
-/** The first option of a `parallel`/`sem` reading outside the plain set, if any. */
-function parallelOption(v: string[]): string | undefined {
-  if (!["parallel", "sem"].includes(program(v[0]))) return undefined;
+/**
+ * Why a `parallel`/`sem` command this reading could run can't be followed (its arguments can be placed anywhere), or
+ * undefined when every one it runs is plain. The env check reaches readings that name parallel among their words
+ * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones.
+ */
+function parallelOddity(v: string[], scriptSetsParallelEnv: boolean): string | undefined {
+  if (!v.some((w) => PARALLEL_PROGRAMS.has(program(w)))) return undefined;
+  if (v.some((w) => PARALLEL_ASSIGNMENT.test(w)) || scriptSetsParallelEnv)
+    return "the script sets PARALLEL/PARALLEL_HOME and parallel reads options from it, so what runs can't be checked";
+  if (!PARALLEL_PROGRAMS.has(program(v[0]))) return undefined;
   const { starts } = xargsCommandStarts(v);
   const end = starts.length === 0 ? v.length : Math.max(...starts);
-  return v.slice(1, end).find((w) => w.startsWith("-") && w !== "-" && !PLAIN_PARALLEL_OPTION.test(w));
+  const odd = v.slice(1, end).find((w) => w.startsWith("-") && w !== "-" && !PLAIN_PARALLEL_OPTION.test(w));
+  if (odd !== undefined)
+    return `parallel's option ${odd} can place its arguments anywhere, so what runs can't be checked`;
+  const perl = v.find((w) => w.includes("{="));
+  if (perl !== undefined)
+    return `parallel's {= perl =} replacement ${perl} computes any word, so what runs can't be checked`;
+  return undefined;
 }
 
 /** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
@@ -340,7 +357,13 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   const out: Finding[] = [];
   const branches = ["main", "master", ...(st.defaultBranch === undefined ? [] : [st.defaultBranch])];
   const sandboxedRead = st.sandboxAutoAllow === true && a.sandboxed;
-  for (const sub0 of a.analysis.commands ?? []) {
+  const subs = a.analysis.commands ?? [];
+  // A `PARALLEL`/`PARALLEL_HOME` assignment anywhere in the script reaches every parallel in it, so none of them is
+  // plain while it stands (`export PARALLEL=-i; parallel …`, `env PARALLEL=-i parallel …`).
+  const scriptSetsParallelEnv =
+    subs.some((s) => s.argv.some((w) => PARALLEL_ASSIGNMENT.test(w))) &&
+    subs.some((s) => s.argv.some((w) => PARALLEL_PROGRAMS.has(program(w))));
+  for (const sub0 of subs) {
     const unwrapped = unwrapCmd(sub0);
     const viaCmd = unwrapped !== sub0;
     const { all, complete } = variants(unwrapped.argv);
@@ -425,15 +448,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
         );
-      const odd = parallelOption(v);
-      if (odd !== undefined)
-        out.push(
-          finding(
-            "unchecked",
-            `parallel's option ${odd} can place its arguments anywhere, so what runs can't be checked`,
-            "ask",
-          ),
-        );
+      const odd = parallelOddity(v, scriptSetsParallelEnv);
+      if (odd !== undefined) out.push(finding("unchecked", odd, "ask"));
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
       const deletes = program(sub.argv[0]) === "find" && sub.argv.includes("-delete") ? findStarts(sub.argv) : [];

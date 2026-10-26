@@ -200,7 +200,8 @@ const OPTIONAL_OPERAND = new Set(["chrt", "setarch"]);
 const SCRIPT_OPTION = new Set(["flock", "su", "runuser", "script", "sg"]);
 /** Wrappers that join their command words into one line for `sh -c` (`watch`, `sg group 'a; b'`, `parallel`). */
 const JOINED = new Set(["watch", "sg", "parallel", "sem"]);
-const PARALLEL = new Set(["parallel", "sem"]);
+/** The two launchers whose options may move or rewrite their arguments (decide keeps them to the plain form). */
+export const PARALLEL_PROGRAMS = new Set(["parallel", "sem"]);
 const PARALLEL_SEPARATOR = /^::::?\+?$/;
 /** A replacement string of GNU parallel: `{}`, `{2}`, `{.}`, `{//}`, `{= perl =}`. */
 export const PARALLEL_REPLACEMENT = /\{(?:=.*?=|[^{}\s]*)\}/gs;
@@ -510,7 +511,7 @@ function wrapperReadings(argv: string[], name: string, operands: number, budget:
   // `command -v x` only prints where x is.
   if (name === "command" && argv.some((a) => /^-[a-zA-Z]*[vV]/.test(a))) return [];
   const out = commandStarts(argv, operands, name === "env", OPTIONAL_OPERAND.has(name)).starts.flatMap((s) =>
-    (PARALLEL.has(name)
+    (PARALLEL_PROGRAMS.has(name)
       ? parallelCommands(argv.slice(s), parallelReplaces(argv.slice(0, s)), budget)
       : [argv.slice(s)]
     ).flatMap((r) => take(budget, r)),

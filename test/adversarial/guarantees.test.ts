@@ -1068,6 +1068,41 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
   });
 
   // spec: permissions §3.2 "Stripped wrappers"
+  // Only the plain form of parallel/sem stays checkable: no options but -k/-j, no {= perl =} replacement, and no
+  // PARALLEL/PARALLEL_HOME set in the script — parallel reads options from that variable and $PARALLEL_HOME/config,
+  // and {= =} computes any word (F50 round 3).
+  test.each([
+    "env PARALLEL=-iXX parallel git XX origin ::: push",
+    "PARALLEL_HOME=. parallel rm -rf {} ::: x",
+    "PARALLEL=-i parallel git {} origin ::: push",
+    "export PARALLEL=-i; parallel git {} origin ::: push",
+    "env -S 'PARALLEL=-i parallel git {} origin ::: push'",
+    'parallel -k git {= $_="push" =} origin ::: x',
+    "parallel -v echo ::: a b",
+    "sem --wait echo hi",
+  ])("%s takes options from the script or computes a word: it asks even in bypassPermissions", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const])
+      notAllowed(shell(command, state(mode, { allow: ["Bash"], tainted: true })));
+    notAllowed(shell(command, state("bypassPermissions")));
+  });
+
+  // spec: permissions §3.2 "Stripped wrappers"
+  test("the parallel asks name what can't be checked, and the plain form stays allowed", () => {
+    expect(shell("env PARALLEL=-iXX parallel git XX origin ::: push", state("bypassPermissions")).reason).toStartWith(
+      "the script sets PARALLEL",
+    );
+    expect(shell("export PARALLEL=-i; parallel git {} origin ::: push", state("bypassPermissions")).reason).toStartWith(
+      "the script sets PARALLEL",
+    );
+    expect(shell('parallel -k git {= $_="push" =} origin ::: x', state("bypassPermissions")).reason).toStartWith(
+      "parallel's {= perl =}",
+    );
+    expect(shell("parallel -v echo ::: a b", state("bypassPermissions")).reason).toStartWith("parallel's option -v");
+    expect(shell("parallel echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
+    expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
+  });
+
+  // spec: permissions §3.2 "Stripped wrappers"
   test("a wrapper around a harmless command still runs under a tool-wide allow", () => {
     for (const command of [
       "taskset -c 0 git status",
