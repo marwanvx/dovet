@@ -64,3 +64,4 @@
 {"language": "powershell", "command": "Get-Content env:PATH", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
 {"language": "powershell", "command": "Get-ChildItem env:", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
 {"language": "powershell", "command": "Get-Content HKCU:\\Software\\x", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
+{"language": "bash", "command": "git push --fo origin main", "source": "FOLLOWUPS F63: an abbreviated git long option escapes the forced regex", "allow": ["Bash(git push *)"]}

@@ -25,10 +25,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
 
-### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
-- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
-- `git push --mir` allows in `bypassPermissions`; real git reads it as `--mirror` and force-updates `main`. Match the abbreviations; `/^--post-/` has the same gap.
-
 ### F61 (F54 security review): many stand-ins decide in quadratic time
 - **Severity:** minor (pre-existing) · `src/policy/decide/remote.ts:78-87`
 - 2,000 stand-ins in a 4 KB command decide in ~1.7 s (`bypassPermissions`), ~8–9 s near the parse cap: `REMOTE_WORDS` × positions (the force fill adds ~20%). Cap substitution attempts like `MAX_WORDS`.
@@ -66,6 +62,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
 - Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
+- Extended (F63 security review): an unparsed analysis (`commands` undefined) makes `shellFindings` produce no findings, so **untainted** `bypassPermissions` allows too — every built-in check skipped (§5, countdown included); under CPU contention the 200 ms budget actually misses (`guarantees.test.ts:794` received `allow` on `main` under 6 CPU hogs). Fix: ask in bypass (deny in `dontAsk`) when `!analysis.understood`/`commands === undefined` before the early return, or push an `unchecked` ask in `shellFindings` (not in `BYPASS_SKIPS`).
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
@@ -200,6 +197,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
+- `git push --mir` allows in `bypassPermissions`; real git reads it as `--mirror` and force-updates `main`. Match the abbreviations; `/^--post-/` has the same gap.
+- **Fixed (#193):** the force-push check matches `--force`, `--force-with-lease`, `--force-if-includes`, `--mirror`, `--all` and git's `--branches` alias, and the `wget` upload check `--post-data`/`--post-file`, through any unique prefix past the bare `--`, with an optional `=value` (`isLongOption`, shared with §3.2's `needsExactRule`, whose `--force`/`--no-verify`/`--amend` set reads its abbreviations too — Q95). git.c's global options (`--git-dir`) and curl's long options are matched exactly — verified against git 2.53.0, GNU wget and curl: an unknown spelling errors and allows. F51's entry extended from the round's security review.
 
 ### F59 (F54 security review): a `cmd /c` layer below the head hides a push from §5 and §4.8
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts:336`
