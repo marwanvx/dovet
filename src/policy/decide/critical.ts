@@ -18,15 +18,24 @@ const targets = (sub: Subcommand): string[] => {
     .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^\/[a-z]$/i.test(a)));
 };
 
+const CMD_SWITCH = /^(?:\/(?![ck])[a-z](?::[^/\s]*)?)+$/i;
+const CMD_RUN = /^(?:\/(?![ck])[a-z](?::[^/\s]*)?)*\/[ck](.*)$/is;
+
+/** The words after `cmd`'s `/c` or `/k`, past its other switches (`/d /q /c`); cmd also takes the command glued on (`/crd`, `/q/c`). */
+function cmdOperand(argv: string[]): string[] | undefined {
+  for (let i = 1; i < argv.length; i++) {
+    const run = CMD_RUN.exec(argv[i] ?? "");
+    if (run !== null) return run[1] === "" || run[1] === undefined ? argv.slice(i + 1) : [run[1], ...argv.slice(i + 1)];
+    if (!CMD_SWITCH.test(argv[i] ?? "")) return undefined;
+  }
+  return undefined;
+}
+
 /** `cmd /c cmd /c rd /s C:\x` as the command it runs, every `cmd` layer peeled (the same sub when it is not a `cmd` wrapper). */
 export function unwrapCmd(sub: Subcommand): Subcommand {
   while (commandName(sub.argv[0]) === "cmd") {
-    // `cmd /d /q /c …`: other switches may come before /c or /k.
-    let i = 1;
-    while (i < sub.argv.length && /^\/[a-z](:\S*)?$/i.test(sub.argv[i] ?? "") && !/^\/[ck]$/i.test(sub.argv[i] ?? ""))
-      i++;
-    if (!/^\/[ck]$/i.test(sub.argv[i] ?? "")) return sub;
-    const rest = sub.argv.slice(i + 1);
+    const rest = cmdOperand(sub.argv);
+    if (rest === undefined) return sub;
     // One word is the whole command line as cmd received it: re-split it. Several words were already split by the
     // calling shell — a word keeping its spaces is one argument of the command (`find "/my dir" -delete`).
     sub = { ...sub, argv: rest.length === 1 ? (rest[0] ?? "").split(/\s+/).filter(Boolean) : rest };
@@ -45,10 +54,8 @@ const CMD_META = /[\^"&|;()<>%@!]/;
  * The xargs stand-in is Dovet's own word, not cmd's. */
 export function cmdOperandUnsafe(argv: string[]): boolean {
   if (commandName(argv[0]) !== "cmd") return false;
-  let i = 1;
-  while (i < argv.length && /^\/[a-z](:\S*)?$/i.test(argv[i] ?? "") && !/^\/[ck]$/i.test(argv[i] ?? "")) i++;
-  if (!/^\/[ck]$/i.test(argv[i] ?? "")) return false;
-  const words = argv.slice(i + 1);
+  const words = cmdOperand(argv);
+  if (words === undefined) return false;
   return words.some(
     (a, j) => a !== XARGS_INPUT && (a === "" || CMD_META.test(a) || (words.length > 1 && j === 0 && /\s/.test(a))),
   );

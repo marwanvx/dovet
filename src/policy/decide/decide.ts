@@ -34,6 +34,7 @@ import {
   findDeletions,
   findStarts,
   NETWORK_PATH,
+  parallelRuns,
   sedEscapes,
   shellTargets,
   type Target,
@@ -217,7 +218,6 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
   return m?.behavior === "allow" && namesCommand(m.rule, label) && !(exact && m.rule.includes("*"));
 }
 
-const PEELED = new Set(["exec", "busybox", "toybox"]);
 const MAX_VARIANT_WORDS = 2_000_000;
 
 /** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
@@ -230,7 +230,7 @@ function collapseXargs(argv: string[]): string[] {
 
 /**
  * The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front, and what xargs
- * runs with its input in place; `complete` is false when not every reading was looked at.
+ * and parallel run with their input in place; `complete` is false when not every reading was looked at.
  */
 function variants(argv: string[]): { all: string[][]; complete: boolean } {
   const out: string[][] = [];
@@ -249,9 +249,9 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       out.push(v);
       words += v.length;
       if (words > MAX_VARIANT_WORDS) complete = false;
-      if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
       // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
       if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
+      if (program(v[0]) === "parallel" && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
     }
   }
   return { all: out, complete };

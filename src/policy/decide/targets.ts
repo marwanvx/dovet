@@ -223,3 +223,18 @@ export function findDeletions(argv: string[]): FindDeletion[] {
   }
   return out;
 }
+
+/** What `parallel` runs with arguments from its input or a file: appended to its command, or as the command when it names none. */
+export function parallelRuns(argv: string[]): string[][] {
+  // Only `:::` arguments are all typed; `::::`, `-a`/`--arg-file` and no source at all read a file or the input.
+  const typed = argv.some((w) => /^:::\+?$/.test(w)) && !argv.some((w) => /^::::\+?$|^-a|^--a/.test(w));
+  if (typed) return [];
+  const { starts, none } = xargsCommandStarts(argv);
+  const out = none ? [[XARGS_INPUT]] : [];
+  for (const s of starts) {
+    const rest = argv.slice(s);
+    const sep = rest.findIndex((w) => /^::::?\+?$/.test(w));
+    out.push([...(sep < 0 ? rest : rest.slice(0, sep)), XARGS_INPUT]);
+  }
+  return out;
+}

@@ -129,9 +129,54 @@ const SAFE_WRAPPERS = new Map<string, Grammar>([
 /** Every wrapper deny and ask rules and the built-in checks see past, with the operands before its command (`flock FILE`). */
 const DEEP_WRAPPERS = new Map<string, number>([
   ...[...SAFE_WRAPPERS].map(([name, g]): [string, number] => [name, g.operands]),
-  ...["env", "sudo", "doas", "watch", "ionice", "setsid"].map((name): [string, number] => [name, 0]),
-  ["flock", 1],
+  ...[
+    "env",
+    "sudo",
+    "doas",
+    "watch",
+    "ionice",
+    "setsid",
+    "exec",
+    "busybox",
+    "toybox",
+    "nsenter",
+    "unshare",
+    "runuser",
+    "strace",
+    "ltrace",
+    "valgrind",
+    "pkexec",
+    "fakeroot",
+    "systemd-run",
+    "numactl",
+    "parallel",
+    "firejail",
+    "prlimit",
+    "setpriv",
+    "eatmydata",
+    "torsocks",
+    "proxychains",
+    "proxychains4",
+    "unbuffer",
+    "caffeinate",
+    "xvfb-run",
+    "dbus-run-session",
+    "cgexec",
+  ].map((name): [string, number] => [name, 0]),
+  ...["flock", "chroot", "taskset", "su", "script", "sg", "faketime", "chrt", "setarch"].map(
+    (name): [string, number] => [name, 1],
+  ),
 ]);
+// chrt's priority and setarch's architecture may be left out.
+const OPTIONAL_OPERAND = new Set(["chrt", "setarch"]);
+/** Wrappers whose `-c`/`--command` string a shell runs (`su root -c 'cmd'`). */
+const SCRIPT_OPTION = new Set(["flock", "su", "runuser", "script", "sg"]);
+/** Wrappers that join their command words into one line for `sh -c` (`watch`, `sg group 'a; b'`, `parallel`). */
+const JOINED = new Set(["watch", "sg", "parallel"]);
+const PARALLEL_SEPARATOR = /^::::?\+?$/;
+
+/** Whether this program runs another command named in its arguments, so a prefix rule on it hands over every command. */
+export const isExecWrapper = (name: string): boolean => DEEP_WRAPPERS.has(name);
 export const SAFE_ENV = new Set([
   "NODE_ENV",
   "CI",
@@ -214,7 +259,12 @@ function safeCommandAt(argv: string[], g: Grammar): number | undefined {
  * Every word the command a wrapper runs could start at. Each option is read both as taking the next word and as not,
  * so an option Dovet has no grammar for, or reads with the wrong value kind, can't move the command out of sight.
  */
-function commandStarts(argv: string[], operands: number, env: boolean): { starts: number[]; none: boolean } {
+function commandStarts(
+  argv: string[],
+  operands: number,
+  env: boolean,
+  optional = false,
+): { starts: number[]; none: boolean } {
   const starts = new Set<number>();
   let none = false;
   const seen = new Set<number>();
@@ -229,8 +279,10 @@ function commandStarts(argv: string[], operands: number, env: boolean): { starts
     else if ((tok.startsWith("-") && tok.length > 1) || (env && tok === "-")) todo.push([p + 1, left], [p + 2, left]);
     else if (env && ASSIGNMENT.test(tok)) todo.push([p + 1, left]);
     // `flock FILE -c cmd`: options may follow an operand.
-    else if (left > 0) todo.push([p + 1, left - 1]);
-    else starts.add(p);
+    else if (left > 0) {
+      todo.push([p + 1, left - 1]);
+      if (optional) starts.add(p);
+    } else starts.add(p);
   }
   if ([...starts].some((s) => s >= argv.length)) none = true;
   return { starts: [...starts].filter((s) => s < argv.length).sort((a, b) => a - b), none };
@@ -243,10 +295,10 @@ export const xargsCommandStarts = (argv: string[]): { starts: number[]; none: bo
 /** Whether a reading leaves the command `argv` runs to start at `input` or beyond it, so the input can name it. */
 export function commandFromInput(argv: string[], input: string): boolean {
   const name = commandName(argv[0]);
-  if (!DEEP_WRAPPERS.has(name) && !["busybox", "toybox"].includes(name)) return false;
+  const operands = DEEP_WRAPPERS.get(name);
   const x = argv.indexOf(input);
-  if (x < 0) return false;
-  const { starts, none } = commandStarts(argv, DEEP_WRAPPERS.get(name) ?? 0, name === "env");
+  if (operands === undefined || x < 0) return false;
+  const { starts, none } = commandStarts(argv, operands, name === "env", OPTIONAL_OPERAND.has(name));
   return none || starts.some((s) => s >= x);
 }
 
@@ -377,21 +429,35 @@ export function findCommands(argv: string[]): string[][] {
   return findCommandsAt(argv).map(({ cmd }) => cmd);
 }
 
+/** `parallel CMD ::: a b` runs CMD with the arguments after it; with no CMD, each argument is a command line. */
+function parallelCommands(rest: string[]): string[][] {
+  const sep = rest.findIndex((w) => PARALLEL_SEPARATOR.test(w));
+  const cmd = sep < 0 ? rest : rest.slice(0, sep);
+  const args = sep < 0 ? [] : rest.slice(sep).filter((w) => !PARALLEL_SEPARATOR.test(w));
+  return cmd.length === 0 ? args.map((a) => ["sh", "-c", a]) : [[...cmd, ...args]];
+}
+
 /** What an exec wrapper may run, read every way its options allow (deny side). */
 function wrapperReadings(argv: string[], name: string, operands: number, budget: Budget): string[][] {
   // `command -v x` only prints where x is.
   if (name === "command" && argv.some((a) => /^-[a-zA-Z]*[vV]/.test(a))) return [];
-  const out = commandStarts(argv, operands, name === "env").starts.flatMap((s) => take(budget, argv.slice(s)));
+  const out = commandStarts(argv, operands, name === "env", OPTIONAL_OPERAND.has(name)).starts.flatMap((s) =>
+    (name === "parallel" ? parallelCommands(argv.slice(s)) : [argv.slice(s)]).flatMap((r) => take(budget, r)),
+  );
   for (let j = 1; j < argv.length && budget.complete; j++) {
     const tok = argv[j] ?? "";
     if (!tok.startsWith("-")) continue;
     if (name === "env") out.push(...splitStrings(argv, j, budget));
-    // `flock FILE -c 'cmd'` and `--command`: the shell runs the string.
-    if (name === "flock")
-      for (const [script] of optionValues(argv, j, "c", "--command")) out.push(["sh", "-c", script]);
+    // `flock FILE -c 'cmd'`, `su root --command=cmd`: the shell runs the string.
+    if (SCRIPT_OPTION.has(name))
+      for (const [script] of [
+        ...optionValues(argv, j, "c", "--command"),
+        ...(name === "su" || name === "runuser" ? optionValues(argv, j, "c", "--session-command") : []),
+      ])
+        out.push(["sh", "-c", script]);
   }
-  // watch hands its words, joined, to `sh -c`: anything but plain characters (quotes, escapes, `;`) is shell syntax.
-  if (name === "watch")
+  // These hand their words, joined, to `sh -c`: anything but plain characters (quotes, escapes, `;`) is shell syntax.
+  if (JOINED.has(name))
     for (const rest of [...out]) if (rest.some((a) => /[^\w./:=@%+,-]/.test(a))) out.push(["sh", "-c", rest.join(" ")]);
   return out;
 }

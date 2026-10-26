@@ -5,6 +5,7 @@ import {
   allowRuleArgv,
   escapeLiteral,
   evaluateRules,
+  isExecWrapper,
   loadRules,
   needsExactRule,
   type Subcommand,
@@ -139,7 +140,8 @@ function shellRule(tool: string, called: Subcommand): string | undefined {
   if (first === "" || NON_ASCII.test(first) || argv.some((w) => w.includes("*"))) return undefined;
   const name = program(first);
   const exact = () => (argv.some((w) => /\s/.test(w)) ? undefined : `${tool}(${argv.join(" ")})`);
-  if (needsExactRule(argv) || EXACT_ONLY.has(name) || /[\\/]/.test(first) || argv.length === 1) return exact();
+  if (needsExactRule(argv) || EXACT_ONLY.has(name) || isExecWrapper(name) || /[\\/]/.test(first) || argv.length === 1)
+    return exact();
   if (VERBS.has(name)) {
     if (second?.startsWith("-") || RUNNING_VERBS[name]?.includes(second ?? "")) return exact();
     return `${tool}(${first} ${second} *)`;

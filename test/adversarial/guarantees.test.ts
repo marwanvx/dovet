@@ -889,3 +889,128 @@ describe("what find's deletions could name gets the sensitive and protected chec
     expect(shell("find .config -type f", state("default", { allow: ["Bash"] })).behavior).toBe("allow");
   });
 });
+
+describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS F50)", () => {
+  // `CMD` is where the wrapped command goes: as words, or inside a quoted string the wrapper hands to a shell.
+  const WRAPPED = [
+    "chroot / CMD",
+    "chroot --userspec=u:g / CMD",
+    "taskset 0x1 CMD",
+    "taskset -c 0 CMD",
+    "nsenter -t 1 -m CMD",
+    "unshare -r CMD",
+    "runuser -u root CMD",
+    "runuser root -c 'CMD'",
+    "strace -f -o /dev/null CMD",
+    "su -c 'CMD'",
+    "su root -c 'CMD'",
+    "su - root --command='CMD'",
+    "script -qc 'CMD' /dev/null",
+    "script --command 'CMD'",
+    "pkexec CMD",
+    "pkexec --user root CMD",
+    "fakeroot -- CMD",
+    "systemd-run --user -p X=1 CMD",
+    "chrt -f 99 CMD",
+    "chrt -o CMD",
+    "numactl --interleave=all CMD",
+    "numactl -C 0 CMD",
+    "parallel 'CMD' ::: x",
+    "parallel ::: 'CMD'",
+    "exec -a x CMD",
+    "exec -c CMD",
+    "busybox CMD",
+    "sudo -u x busybox CMD",
+    "setarch x86_64 CMD",
+    "sg wheel 'CMD'",
+    "faketime 2020-01-01 CMD",
+    "valgrind --tool=none CMD",
+    "firejail --quiet CMD",
+    "prlimit --nofile=10 CMD",
+    "setpriv --reuid=0 CMD",
+    "eatmydata CMD",
+    "torsocks CMD",
+    "proxychains4 -q CMD",
+    "unbuffer CMD",
+    "caffeinate -i CMD",
+    "xvfb-run -a CMD",
+    "dbus-run-session -- CMD",
+    "cgexec -g cpu:x CMD",
+    "ltrace -f CMD",
+  ];
+
+  // spec: permissions §0 guarantee 4
+  test.each(WRAPPED.map((w) => w.replace("CMD", "rm -rf /")))(
+    "%s is a critical-path removal under a tool-wide allow, in every mode",
+    (command) => {
+      for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+        const d = shell(command, state(mode, { allow: ["Bash"] }));
+        notAllowed(d);
+        expect(d.findings.map((f) => f.kind)).toContain("critical");
+      }
+      expect(shell(command, state("bypassPermissions")).countdown).toBe(true);
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test.each(WRAPPED.map((w) => w.replace("CMD", "git push origin feature")))(
+    "%s is a remote action while tainted",
+    (command) => {
+      const d = shell(command, state("bypassPermissions", { tainted: true }));
+      expect(d.behavior).toBe("deny");
+      expect(d.reason).toStartWith("remote action:");
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test.each([
+    "echo root -c 'rm -rf /' | xargs su",
+    "echo / rm -rf / | xargs chroot",
+    "echo rm -rf / | xargs strace",
+    "echo rm -rf / | xargs parallel",
+    "echo rm -rf / | parallel",
+    "echo / | parallel rm -rf",
+    "echo rm -rf / | xargs nsenter -t 1",
+    "parallel rm -rf :::: list",
+    "parallel -a list rm -rf",
+  ])("%s takes its command or target from the input: a critical-path removal in every mode", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+      const d = shell(command, state(mode, { allow: ["Bash"] }));
+      notAllowed(d);
+      expect(d.findings.map((f) => f.kind)).toContain("critical");
+    }
+    expect(shell(command, state("bypassPermissions")).countdown).toBe(true);
+  });
+
+  // spec: permissions §4.4 "Critical paths"
+  test.each(["cmd /crd /s /q C:\\Windows", "cmd /d /krd /s C:\\Windows", 'cmd /C"rd /s C:\\Windows"'])(
+    "%s, with the command glued to /c, reaches the removal checks",
+    (command) => {
+      const st = (mode: PermissionMode): State => ({
+        mode,
+        rules: rulesFor(["Bash"]),
+        env: { ...env(), os: "win32", canonicalize: (p: string) => canonicalizePath(p, root, "win32") },
+      });
+      for (const mode of [...GUARDED, "bypassPermissions" as const]) notAllowed(shell(command, st(mode)));
+      expect(shell(command, st("bypassPermissions")).behavior).not.toBe("allow");
+    },
+  );
+
+  // spec: permissions §0 guarantee 4
+  test("odd wrapper inputs end in a decision, and a glued switch run still finds /c", () => {
+    const win = (mode: PermissionMode): State => ({
+      ...state(mode, { allow: ["Bash"] }),
+      env: { ...env(), os: "win32", canonicalize: (p: string) => canonicalizePath(p, root, "win32") },
+    });
+    for (const command of ["cmd /c", "cmd /C\u{1F600}", "cmd /q/c", "su -c", "chrt", "parallel :::", "sg", "script -c"])
+      expect(["allow", "ask", "deny"]).toContain(shell(command, win("default")).behavior);
+    expect(shell("cmd /q/crd /s C:\\Windows", win("bypassPermissions")).behavior).not.toBe("allow");
+    expect(shell("cmd /e:on/crd /s C:\\Windows", win("bypassPermissions")).behavior).not.toBe("allow");
+  });
+
+  // spec: permissions §3.2 "Stripped wrappers"
+  test("a wrapper around a harmless command still runs under a tool-wide allow", () => {
+    for (const command of ["taskset -c 0 git status", "chrt -f 99 ls", "strace -f ls", "parallel echo ::: a b"])
+      expect(shell(command, state("default", { allow: ["Bash"] })).behavior).toBe("allow");
+  });
+});
