@@ -595,7 +595,12 @@ function shellDefault(
   const done = (behavior: Behavior, reason: string, by: string): Decision =>
     finish(st, { reason, by }, findings, behavior);
   const understood = analysis.understood && subs !== undefined;
-  if (st.mode === "bypassPermissions") return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
+  if (st.mode === "bypassPermissions") {
+    // An unparsed analysis yields no findings, so every check was skipped: bypass asks instead of allowing (§4.0 item 7).
+    if (subs === undefined)
+      return done("ask", `not fully checkable: ${analysis.reasons.join("; ") || "unparsed"}`, "the analyzer (§4.0)");
+    return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
+  }
   if (understood && subs.every((s) => s.readOnly === true))
     return done("allow", "read-only command", "the read-only command list (§4.6)");
   const why = understood

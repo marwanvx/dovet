@@ -387,6 +387,19 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         ctx.commands.push({ argv: [a.text], readOnly: a.ok });
         return;
       }
+      case "declaration_command": {
+        // A declaration whose name holds an expansion parses as bare words, not an assignment: recording them keeps
+        // every word-scan over the commands able to see the text (FOLLOWUPS F51).
+        ctx.fail("unsupported syntax declaration_command");
+        for (const c of n.namedChildren) {
+          if (c.type === "variable_assignment") {
+            const a = assignment(c, st);
+            if (!a.ok) ctx.fail(`assignment ${a.text.split("=")[0]}`);
+            ctx.commands.push({ argv: [a.text], readOnly: a.ok });
+          } else ctx.commands.push({ argv: [word(c, st).text] });
+        }
+        return;
+      }
       case "for_statement":
         forLoop(n, st);
         return;
