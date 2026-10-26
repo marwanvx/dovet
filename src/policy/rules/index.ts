@@ -15,6 +15,7 @@ export {
   isLongOption,
   isSafeEnv,
   needsExactRule,
+  PARALLEL_REPLACEMENT,
   shellScriptAt,
   splitCommand,
   strippedArgvs,

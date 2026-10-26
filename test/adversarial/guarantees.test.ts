@@ -937,6 +937,21 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     "dbus-run-session -- CMD",
     "cgexec -g cpu:x CMD",
     "ltrace -f CMD",
+    "x86_64 CMD",
+    "linux32 CMD",
+    "run0 CMD",
+    "sem CMD",
+    "torify CMD",
+    "gosu root CMD",
+    "su-exec root CMD",
+    "chpst -u x CMD",
+    "arch -arm64 CMD",
+    "sandbox-exec -n x CMD",
+    "systemd-nspawn -D / CMD",
+    "schroot -c x -- CMD",
+    "cpulimit -l 5 -- CMD",
+    "perf stat CMD",
+    "parallel -k 'CMD' ::: x",
   ];
 
   // spec: permissions §0 guarantee 4
@@ -971,6 +986,14 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     "echo rm -rf / | parallel",
     "echo / | parallel rm -rf",
     "echo rm -rf / | xargs nsenter -t 1",
+    "echo rm -rf / | xargs run0",
+    "parallel rm -rf {//} ::: ~/x",
+    "parallel rm -rf {.} ::: ~/x.y",
+    "parallel rm -rf '{= s:/x:: =}' ::: ~/x",
+    "echo / | parallel rm -rf {}",
+    "parallel -0a list rm -rf ::: x",
+    "parallel ::: rm ::: -rf ::: /",
+    "parallel ::: 'rm -rf' ::: /",
     "parallel rm -rf :::: list",
     "parallel -a list rm -rf",
   ])("%s takes its command or target from the input: a critical-path removal in every mode", (command) => {
@@ -982,19 +1005,38 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     expect(shell(command, state("bypassPermissions")).countdown).toBe(true);
   });
 
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "parallel git {} origin ::: push",
+    "parallel -I XX git XX origin ::: push",
+    "parallel git {1} {2} ::: push ::: origin",
+    "parallel 'git {}' ::: push",
+    "echo push | parallel git {} origin",
+    "parallel git {} origin :::: list",
+    "parallel ::: git ::: push",
+    "parallel ::: git :::+ push",
+  ])("%s puts its argument where parallel does: a remote action while tainted", (command) => {
+    const d = shell(command, state("bypassPermissions", { tainted: true }));
+    expect(d.behavior).toBe("deny");
+    expect(d.reason).toStartWith("remote action:");
+  });
+
   // spec: permissions §4.4 "Critical paths"
-  test.each(["cmd /crd /s /q C:\\Windows", "cmd /d /krd /s C:\\Windows", 'cmd /C"rd /s C:\\Windows"'])(
-    "%s, with the command glued to /c, reaches the removal checks",
-    (command) => {
-      const st = (mode: PermissionMode): State => ({
-        mode,
-        rules: rulesFor(["Bash"]),
-        env: { ...env(), os: "win32", canonicalize: (p: string) => canonicalizePath(p, root, "win32") },
-      });
-      for (const mode of [...GUARDED, "bypassPermissions" as const]) notAllowed(shell(command, st(mode)));
-      expect(shell(command, st("bypassPermissions")).behavior).not.toBe("allow");
-    },
-  );
+  test.each([
+    "cmd /r rd /s /q C:\\Windows",
+    "cmd /d /rrd /s /q C:\\Windows",
+    "cmd /crd /s /q C:\\Windows",
+    "cmd /d /krd /s C:\\Windows",
+    'cmd /C"rd /s C:\\Windows"',
+  ])("%s, with the command glued to /c, reaches the removal checks", (command) => {
+    const st = (mode: PermissionMode): State => ({
+      mode,
+      rules: rulesFor(["Bash"]),
+      env: { ...env(), os: "win32", canonicalize: (p: string) => canonicalizePath(p, root, "win32") },
+    });
+    for (const mode of [...GUARDED, "bypassPermissions" as const]) notAllowed(shell(command, st(mode)));
+    expect(shell(command, st("bypassPermissions")).behavior).not.toBe("allow");
+  });
 
   // spec: permissions §0 guarantee 4
   test("odd wrapper inputs end in a decision, and a glued switch run still finds /c", () => {

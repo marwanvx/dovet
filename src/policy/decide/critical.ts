@@ -18,10 +18,10 @@ const targets = (sub: Subcommand): string[] => {
     .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^\/[a-z]$/i.test(a)));
 };
 
-const CMD_SWITCH = /^(?:\/(?![ck])[a-z](?::[^/\s]*)?)+$/i;
-const CMD_RUN = /^(?:\/(?![ck])[a-z](?::[^/\s]*)?)*\/[ck](.*)$/is;
+const CMD_SWITCH = /^(?:\/(?![ckr])[a-z](?::[^/\s]*)?)+$/i;
+const CMD_RUN = /^(?:\/(?![ckr])[a-z](?::[^/\s]*)?)*\/[ckr](.*)$/is;
 
-/** The words after `cmd`'s `/c` or `/k`, past its other switches (`/d /q /c`); cmd also takes the command glued on (`/crd`, `/q/c`). */
+/** The words after `cmd`'s `/c` (or its `/r` synonym) or `/k`, past its other switches (`/d /q /c`); cmd also takes the command glued on (`/crd`, `/q/c`). */
 function cmdOperand(argv: string[]): string[] | undefined {
   for (let i = 1; i < argv.length; i++) {
     const run = CMD_RUN.exec(argv[i] ?? "");

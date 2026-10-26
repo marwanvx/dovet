@@ -251,7 +251,7 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       if (words > MAX_VARIANT_WORDS) complete = false;
       // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
       if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
-      if (program(v[0]) === "parallel" && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
+      if (["parallel", "sem"].includes(program(v[0])) && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
     }
   }
   return { all: out, complete };

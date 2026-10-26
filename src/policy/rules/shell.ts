@@ -162,18 +162,49 @@ const DEEP_WRAPPERS = new Map<string, number>([
     "xvfb-run",
     "dbus-run-session",
     "cgexec",
+    "x86_64",
+    "linux64",
+    "linux32",
+    "i386",
+    "run0",
+    "torify",
+    "sem",
+    "chpst",
+    "arch",
+    "sandbox-exec",
+    "cpulimit",
+    "nocache",
+    "trickle",
+    "schroot",
+    "systemd-nspawn",
   ].map((name): [string, number] => [name, 0]),
-  ...["flock", "chroot", "taskset", "su", "script", "sg", "faketime", "chrt", "setarch"].map(
-    (name): [string, number] => [name, 1],
-  ),
+  ...[
+    "flock",
+    "chroot",
+    "taskset",
+    "su",
+    "script",
+    "sg",
+    "faketime",
+    "chrt",
+    "setarch",
+    "gosu",
+    "su-exec",
+    "setuidgid",
+    "perf",
+  ].map((name): [string, number] => [name, 1]),
 ]);
 // chrt's priority and setarch's architecture may be left out.
 const OPTIONAL_OPERAND = new Set(["chrt", "setarch"]);
 /** Wrappers whose `-c`/`--command` string a shell runs (`su root -c 'cmd'`). */
 const SCRIPT_OPTION = new Set(["flock", "su", "runuser", "script", "sg"]);
 /** Wrappers that join their command words into one line for `sh -c` (`watch`, `sg group 'a; b'`, `parallel`). */
-const JOINED = new Set(["watch", "sg", "parallel"]);
+const JOINED = new Set(["watch", "sg", "parallel", "sem"]);
+const PARALLEL = new Set(["parallel", "sem"]);
 const PARALLEL_SEPARATOR = /^::::?\+?$/;
+/** A replacement string of GNU parallel: `{}`, `{2}`, `{.}`, `{//}`, `{= perl =}`. */
+export const PARALLEL_REPLACEMENT = /\{(?:=.*?=|[^{}\s]*)\}/gs;
+const MAX_COMBINATIONS = 256;
 
 /** Whether this program runs another command named in its arguments, so a prefix rule on it hands over every command. */
 export const isExecWrapper = (name: string): boolean => DEEP_WRAPPERS.has(name);
@@ -429,20 +460,60 @@ export function findCommands(argv: string[]): string[][] {
   return findCommandsAt(argv).map(({ cmd }) => cmd);
 }
 
-/** `parallel CMD ::: a b` runs CMD with the arguments after it; with no CMD, each argument is a command line. */
-function parallelCommands(rest: string[]): string[][] {
+/**
+ * `parallel CMD ::: a b ::: c` runs CMD once per combination of one argument from each source, appended or put where
+ * a replacement string (`{}`, `{2}`, `-I XX`) stands; with no CMD, the combination is the command line.
+ */
+function parallelCommands(rest: string[], replaces: string[], budget: Budget): string[][] {
   const sep = rest.findIndex((w) => PARALLEL_SEPARATOR.test(w));
   const cmd = sep < 0 ? rest : rest.slice(0, sep);
-  const args = sep < 0 ? [] : rest.slice(sep).filter((w) => !PARALLEL_SEPARATOR.test(w));
-  return cmd.length === 0 ? args.map((a) => ["sh", "-c", a]) : [[...cmd, ...args]];
+  const sources: string[][] = [];
+  for (const w of sep < 0 ? [] : rest.slice(sep)) {
+    if (PARALLEL_SEPARATOR.test(w)) sources.push([]);
+    else sources.at(-1)?.push(w);
+  }
+  let combos: string[][] = [[]];
+  for (const src of sources.filter((x) => x.length > 0)) {
+    combos = combos.flatMap((c) => src.map((a) => [...c, a]));
+    if (combos.length > MAX_COMBINATIONS) {
+      budget.complete = false;
+      return [];
+    }
+  }
+  if (cmd.length === 0) return sources.every((x) => x.length === 0) ? [] : combos.map((c) => ["sh", "-c", c.join(" ")]);
+  const out = [[...cmd, ...sources.flat()]];
+  if (cmd.some((w) => w.search(PARALLEL_REPLACEMENT) >= 0 || replaces.some((r) => w.includes(r))))
+    for (const c of combos) {
+      const put = (w: string): string => {
+        let x = w.replace(PARALLEL_REPLACEMENT, (m) =>
+          /^\{\d+\}$/.test(m) ? (c[Number(m.slice(1, -1)) - 1] ?? "") : c.join(" "),
+        );
+        for (const r of replaces) x = x.split(r).join(c.join(" "));
+        return x;
+      };
+      out.push(cmd.map(put));
+    }
+  return out;
 }
+
+/** The replacement strings `-I XX` and `--replace[=XX]` set (`{}` when given none). */
+const parallelReplaces = (opts: string[]): string[] =>
+  opts
+    .flatMap((_, j) => [
+      ...optionValues(opts, j, "I", "--replace").map(([v]) => v),
+      ...(/^--rep/.test(opts[j] ?? "") && !(opts[j] ?? "").includes("=") ? ["{}"] : []),
+    ])
+    .filter((r) => r !== "");
 
 /** What an exec wrapper may run, read every way its options allow (deny side). */
 function wrapperReadings(argv: string[], name: string, operands: number, budget: Budget): string[][] {
   // `command -v x` only prints where x is.
   if (name === "command" && argv.some((a) => /^-[a-zA-Z]*[vV]/.test(a))) return [];
   const out = commandStarts(argv, operands, name === "env", OPTIONAL_OPERAND.has(name)).starts.flatMap((s) =>
-    (name === "parallel" ? parallelCommands(argv.slice(s)) : [argv.slice(s)]).flatMap((r) => take(budget, r)),
+    (PARALLEL.has(name)
+      ? parallelCommands(argv.slice(s), parallelReplaces(argv.slice(0, s)), budget)
+      : [argv.slice(s)]
+    ).flatMap((r) => take(budget, r)),
   );
   for (let j = 1; j < argv.length && budget.complete; j++) {
     const tok = argv[j] ?? "";
