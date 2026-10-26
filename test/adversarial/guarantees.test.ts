@@ -1077,6 +1077,10 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     "PARALLEL=-i parallel git {} origin ::: push",
     "export PARALLEL=-i; parallel git {} origin ::: push",
     "env -S 'PARALLEL=-i parallel git {} origin ::: push'",
+    "printf -v PARALLEL '%s' -iXX; parallel git XX origin ::: push",
+    "read PARALLEL <<< '-iXX'; parallel git XX origin ::: push",
+    "X=1; env ${X:+PARALLEL=-iXX} parallel git XX origin ::: push",
+    "X=PARALLEL; declare $X=-iXX; parallel git XX origin ::: push",
     'parallel -k git {= $_="push" =} origin ::: x',
     "parallel -v echo ::: a b",
     "sem --wait echo hi",
@@ -1100,6 +1104,8 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     expect(shell("parallel -v echo ::: a b", state("bypassPermissions")).reason).toStartWith("parallel's option -v");
     expect(shell("parallel echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
+    // A PARALLEL word with no parallel command in the script sets nothing parallel reads: no ask.
+    expect(shell("PARALLEL=x ls", state("bypassPermissions")).behavior).toBe("allow");
   });
 
   // spec: permissions §3.2 "Stripped wrappers"

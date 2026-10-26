@@ -54,6 +54,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, F32) · `src/policy/decide/targets.ts:215-222` (`findDeletions`'s `-exec` arm)
 - `find .config -exec echo {} \;` asks (unnamed reach) though `echo` deletes nothing: any `-exec` with a `{}` counts. Restrict the arm to removal-capable commands or lift the reach ask for proven-non-writing commands, and align Q90's sentence.
 
+### F71 (F50 round-4 security review): a planted `~/.parallel/config` feeds `parallel` its options with no ask
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `BYPASS_SKIPS`, permissions §4.1, §3.2
+- `echo '--rpl XX $_="push"' >> ~/.parallel/config` allows in `bypassPermissions` (the outside-write ask is one of the skipped kinds), after which the fully plain `parallel git XX origin ::: push` runs `git push origin` from the planted config in every later session — the plain-form gate only vouches for the script's text. Guarded modes ask (the write under §4.1, the run under §7.5). Decide: a write into `~/.parallel` (or `$PARALLEL_HOME`) asks even in bypass, or the limit is named where the plain form is claimed.
+
+### F72 (F50 round-4 security review): a `{=` replacement riding xargs input bypasses the plain-form gate
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `BYPASS_SKIPS`
+- `echo '{= a =}' | xargs parallel echo {}` allows in `bypassPermissions`: the `{=` word rides the pipe and never appears in the parallel subcommand's text, and the computed ask is skipped (`computed` in `BYPASS_SKIPS`). Control: `echo push | xargs git {} origin` allows identically. The stronger form `echo '{= $_="git push origin main" =}' | xargs parallel` asks (critical).
+
 ### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
 - **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
 - `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
@@ -68,6 +76,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
 - Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
 - Extended (F63 security review): an unparsed analysis (`commands` undefined) makes `shellFindings` produce no findings, so **untainted** `bypassPermissions` allows too — every built-in check skipped (§5, countdown included); under CPU contention the 200 ms budget actually misses (`guarantees.test.ts:794` received `allow` on `main` under 6 CPU hogs). Fix: ask in bypass (deny in `dontAsk`) when `!analysis.understood`/`commands === undefined` before the early return, or push an `unchecked` ask in `shellFindings` (not in `BYPASS_SKIPS`).
+- Extended (F50 round-4 review, two more shapes of the same class — words Dovet can't read run unasked in bypass): (1) tree-sitter-powershell treats `parallel` as a reserved word, so on the PowerShell tool every parallel form parses as an error (`analyzeShell` → `understood: false`, `commands: []`, `analyze.ts:57-58`) and `decide.ts:593` allows in bypass before the understood check — `parallel -v echo ::: a b` and `$env:PARALLEL = "-i"; parallel git {} origin ::: push` allow; (2) the walker drops a declaration command whose words hold an expansion ("unsupported syntax declaration_command/concatenation/expansion"), so `typeset PARALLEL${PWD##*}=-iXX; parallel git XX origin ::: push` keeps no trace of the assignment and allows in bypass+tainted while real bash sets `PARALLEL=-iXX` (F50's plain-form env gate can't see dropped words). The planned fix covers both: ask in bypass when `!analysis.understood`.
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`

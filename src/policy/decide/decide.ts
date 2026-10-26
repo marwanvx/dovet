@@ -225,16 +225,16 @@ const MAX_VARIANT_WORDS = 2_000_000;
 // `-k`/`-j` (`--keep-order`, `--jobs`), no `{= perl =}` replacement, and no `PARALLEL`/`PARALLEL_HOME` set in the script —
 // parallel reads options from that variable and from `$PARALLEL_HOME/config`, and `{= =}` computes any word (QUESTIONS Q97).
 const PLAIN_PARALLEL_OPTION = /^(-k|-j\S*|--keep-order|--jobs(=\S*)?)$/;
-const PARALLEL_ASSIGNMENT = /^(?:export\s+|\$env:)?PARALLEL(_HOME)?=/;
 
 /**
  * Why a `parallel`/`sem` command this reading could run can't be followed (its arguments can be placed anywhere), or
  * undefined when every one it runs is plain. The env check reaches readings that name parallel among their words
- * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones.
+ * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones, and reads any word holding `PARALLEL`, since
+ * bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`, `env ${X:+PARALLEL=-i} …`).
  */
 function parallelOddity(v: string[], scriptSetsParallelEnv: boolean): string | undefined {
   if (!v.some((w) => PARALLEL_PROGRAMS.has(program(w)))) return undefined;
-  if (v.some((w) => PARALLEL_ASSIGNMENT.test(w)) || scriptSetsParallelEnv)
+  if (v.some((w) => w.includes("PARALLEL")) || scriptSetsParallelEnv)
     return "the script sets PARALLEL/PARALLEL_HOME and parallel reads options from it, so what runs can't be checked";
   if (!PARALLEL_PROGRAMS.has(program(v[0]))) return undefined;
   const { starts } = xargsCommandStarts(v);
@@ -359,9 +359,10 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   const sandboxedRead = st.sandboxAutoAllow === true && a.sandboxed;
   const subs = a.analysis.commands ?? [];
   // A `PARALLEL`/`PARALLEL_HOME` assignment anywhere in the script reaches every parallel in it, so none of them is
-  // plain while it stands (`export PARALLEL=-i; parallel …`, `env PARALLEL=-i parallel …`).
+  // plain while it stands (`export PARALLEL=-i; parallel …`, `env PARALLEL=-i parallel …`). Any word holding
+  // `PARALLEL` counts: bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`).
   const scriptSetsParallelEnv =
-    subs.some((s) => s.argv.some((w) => PARALLEL_ASSIGNMENT.test(w))) &&
+    subs.some((s) => s.argv.some((w) => w.includes("PARALLEL"))) &&
     subs.some((s) => s.argv.some((w) => PARALLEL_PROGRAMS.has(program(w))));
   for (const sub0 of subs) {
     const unwrapped = unwrapCmd(sub0);
