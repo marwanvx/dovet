@@ -1050,9 +1050,32 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
     expect(shell("cmd /e:on/crd /s C:\\Windows", win("bypassPermissions")).behavior).not.toBe("allow");
   });
 
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "parallel -iXX git XX origin ::: push",
+    "parallel --er XX git XX origin ::: push.y",
+    "parallel --bnr XX git XX origin ::: /a/push",
+    "parallel --rpl '{} $_=\"push\"' git {} origin ::: x",
+    "parallel --rpl 'XX $_=\"push\"' git XX origin ::: x",
+    "parallel -N2 git {2} origin ::: x push",
+    "parallel --colsep , git {2} origin ::: x,push",
+    "parallel --rpl '{} $_=\"/\"' rm -rf {} ::: x",
+    "parallel -iXX",
+  ])("%s may place its arguments where Dovet can't follow: it asks even in bypassPermissions", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const])
+      notAllowed(shell(command, state(mode, { allow: ["Bash"], tainted: true })));
+    notAllowed(shell(command, state("bypassPermissions")));
+  });
+
   // spec: permissions §3.2 "Stripped wrappers"
   test("a wrapper around a harmless command still runs under a tool-wide allow", () => {
-    for (const command of ["taskset -c 0 git status", "chrt -f 99 ls", "strace -f ls", "parallel echo ::: a b"])
+    for (const command of [
+      "taskset -c 0 git status",
+      "chrt -f 99 ls",
+      "strace -f ls",
+      "parallel echo ::: a b",
+      "sem echo hi",
+    ])
       expect(shell(command, state("default", { allow: ["Bash"] })).behavior).toBe("allow");
   });
 });

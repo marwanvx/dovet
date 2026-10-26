@@ -472,16 +472,16 @@ function parallelCommands(rest: string[], replaces: string[], budget: Budget): s
     if (PARALLEL_SEPARATOR.test(w)) sources.push([]);
     else sources.at(-1)?.push(w);
   }
+  const out = cmd.length === 0 ? [] : [[...cmd, ...sources.flat()]];
   let combos: string[][] = [[]];
   for (const src of sources.filter((x) => x.length > 0)) {
     combos = combos.flatMap((c) => src.map((a) => [...c, a]));
     if (combos.length > MAX_COMBINATIONS) {
       budget.complete = false;
-      return [];
+      return out;
     }
   }
   if (cmd.length === 0) return sources.every((x) => x.length === 0) ? [] : combos.map((c) => ["sh", "-c", c.join(" ")]);
-  const out = [[...cmd, ...sources.flat()]];
   if (cmd.some((w) => w.search(PARALLEL_REPLACEMENT) >= 0 || replaces.some((r) => w.includes(r))))
     for (const c of combos) {
       const put = (w: string): string => {

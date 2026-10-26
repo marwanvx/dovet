@@ -220,6 +220,17 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
 
 const MAX_VARIANT_WORDS = 2_000_000;
 
+// parallel's options that leave where its arguments go as typed; any other (`-i`, `--rpl`, `-N`, `--colsep`, …) may move them.
+const PLAIN_PARALLEL_OPTION = /^(-[kv]+|-[jP]\d*|--(keep-order|jobs(=\S*)?|verbose|bar|eta|progress))$/;
+
+/** The first option of a `parallel`/`sem` reading outside the plain set, if any. */
+function parallelOption(v: string[]): string | undefined {
+  if (!["parallel", "sem"].includes(program(v[0]))) return undefined;
+  const { starts } = xargsCommandStarts(v);
+  const end = starts.length === 0 ? v.length : Math.max(...starts);
+  return v.slice(1, end).find((w) => w.startsWith("-") && w !== "-" && !PLAIN_PARALLEL_OPTION.test(w));
+}
+
 /** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
 function collapseXargs(argv: string[]): string[] {
   if (program(argv[0]) !== "xargs") return argv;
@@ -251,7 +262,7 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       if (words > MAX_VARIANT_WORDS) complete = false;
       // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
       if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
-      if (["parallel", "sem"].includes(program(v[0])) && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
+      if (program(v[0]) === "parallel" && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
     }
   }
   return { all: out, complete };
@@ -413,6 +424,15 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
           finding("critical", "critical-path removal: what xargs reads from its input can be one of any path", "ask", {
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
+        );
+      const odd = parallelOption(v);
+      if (odd !== undefined)
+        out.push(
+          finding(
+            "unchecked",
+            `parallel's option ${odd} can place its arguments anywhere, so what runs can't be checked`,
+            "ask",
+          ),
         );
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
