@@ -21,6 +21,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F68 (F59 round-3 review): cmd-operand `,` and `=` are not metacharacters
 - **Severity:** minor · `src/policy/decide/critical.ts:37` (`CMD_META`)
 - `cmd /c git,push,origin,+main` and `cmd /c rd,/s,C:\Windows` allow in `bypassPermissions`: `,` and `=` are not in `CMD_META`. cmd's own delimiter handling of them was not verifiable without cmd.exe (for external commands the child CRT re-splits on spaces, so the spellings may be benign; internal commands are the plausible risk). Decide with a real cmd: either add them to the class or record them as read-as-typed.
+
+### F69 (F52 security review): a file a command outside §4.6's forms reads gets no sensitive or outside check
+- **Severity:** minor (pre-existing) · `src/policy/shell-parse/bash.ts` `command()` (operands only from `classify`), permissions §4.0 item 4, §4.7
+- Under a tool-wide `Bash` allow `grep -e x .env`, `tail -f .env`, `jq . .env`, `sed -n p .env`, `base64 .env`, `git show HEAD:.env` run unprompted while `cat .env` asks: a literal file is read-checked only when the whole call is a read-only form. Decide whether §4.7 covers these (read every non-option word of a known reader as a read operand) or write the limit into §4.7.
+
+### F70 (F52 round-2 security review): an option's write target isn't an edit target
+- **Severity:** minor (pre-existing) · `src/policy/decide/targets.ts` `shellTargets`
+- Under a tool-wide `Bash` allow `sort -o ../out a.ts` writes outside the working directories unprompted while `cp a.ts ../out` and `echo x > ../out` ask. Add `sort -o`/`--output` and the other `-o FILE` writers as edit targets.
 ### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.
@@ -45,10 +53,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F66 (F57 round-3 review): every `find -exec cmd {}` is treated as a deletion
 - **Severity:** minor (pre-existing, F32) · `src/policy/decide/targets.ts:215-222` (`findDeletions`'s `-exec` arm)
 - `find .config -exec echo {} \;` asks (unnamed reach) though `echo` deletes nothing: any `-exec` with a `{}` counts. Restrict the arm to removal-capable commands or lift the reach ask for proven-non-writing commands, and align Q90's sentence.
-
-### F52 (F32): a `$( )` in a read command's file position reaches no check
-- **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
-- With a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks). A substitution's words, like xargs input (Q90), can name any file; treat one in a non-read-only command's arguments like a variable.
 
 ### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
 - **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
@@ -197,6 +201,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F52 (F32): a `$( )` in a read command's file position reaches no check
+- **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
+- With a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks). A substitution's words, like xargs input (Q90), can name any file; treat one in a non-read-only command's arguments like a variable.
+- **Fixed:** #195
 
 ### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
