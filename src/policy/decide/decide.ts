@@ -5,6 +5,7 @@ import {
   type Behavior,
   commandFromInput,
   evaluateRules,
+  PARALLEL_PROGRAMS,
   type RuleCall,
   type RuleMatch,
   type RuleSet,
@@ -34,6 +35,7 @@ import {
   findDeletions,
   findStarts,
   NETWORK_PATH,
+  parallelRuns,
   sedEscapes,
   shellTargets,
   type Target,
@@ -217,8 +219,38 @@ function explicitAllow(st: State, tool: string, sub: Subcommand, exact: boolean,
   return m?.behavior === "allow" && namesCommand(m.rule, label) && !(exact && m.rule.includes("*"));
 }
 
-const PEELED = new Set(["exec", "busybox", "toybox"]);
 const MAX_VARIANT_WORDS = 2_000_000;
+
+// The plain form of a `parallel`/`sem` command is the only one whose arguments stay where they are typed: options only
+// `-k`/`-j` (`--keep-order`, `--jobs`), no `{= perl =}` replacement, and no `PARALLEL`/`PARALLEL_HOME` set in the script —
+// parallel reads options from that variable and from `$PARALLEL_HOME/config`, and `{= =}` computes any word (QUESTIONS Q97).
+const PLAIN_PARALLEL_OPTION = /^(-k|-j\S*|--keep-order|--jobs(=\S*)?)$/;
+
+/**
+ * Why a `parallel`/`sem` command this reading could run can't be followed (its arguments can be placed anywhere), or
+ * undefined when every one it runs is plain. The env checks reach readings that name parallel among their words
+ * (`env -S 'PARALLEL=-i parallel …'`), not only parallel-headed ones. A word holding `PARALLEL` counts whatever it
+ * holds it for, since bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`,
+ * `env ${X:+PARALLEL=-i} …`); a command-substitution word counts because it can assemble the assignment from pieces
+ * (`env "$(printf %s PAR ALLEL)=-iXX" …`).
+ */
+function parallelOddity(v: string[], scriptSetsParallelEnv: boolean): string | undefined {
+  if (!v.some((w) => PARALLEL_PROGRAMS.has(program(w)))) return undefined;
+  if (v.some((w) => w.includes("PARALLEL")) || scriptSetsParallelEnv)
+    return "a word of the script holds PARALLEL, and parallel reads its options from that variable, so what runs can't be checked";
+  if (v.some((w) => w.includes("$(") || w.includes("`")))
+    return "a command substitution in the script could hand parallel its options, so what runs can't be checked";
+  if (!PARALLEL_PROGRAMS.has(program(v[0]))) return undefined;
+  const { starts } = xargsCommandStarts(v);
+  const end = starts.length === 0 ? v.length : Math.max(...starts);
+  const odd = v.slice(1, end).find((w) => w.startsWith("-") && w !== "-" && !PLAIN_PARALLEL_OPTION.test(w));
+  if (odd !== undefined)
+    return `parallel's option ${odd} can place its arguments anywhere, so what runs can't be checked`;
+  const perl = v.find((w) => w.includes("{="));
+  if (perl !== undefined)
+    return `parallel's {= perl =} replacement ${perl} computes any word, so what runs can't be checked`;
+  return undefined;
+}
 
 /** A run of bare `xargs` words led by `xargs` itself is one re-invocation: the chain's command and arguments carry the stand-in. */
 function collapseXargs(argv: string[]): string[] {
@@ -230,7 +262,7 @@ function collapseXargs(argv: string[]): string[] {
 
 /**
  * The command and itself with each wrapper (`sudo`, `env`, `exec`, `busybox`) stripped off the front, and what xargs
- * runs with its input in place; `complete` is false when not every reading was looked at.
+ * and parallel run with their input in place; `complete` is false when not every reading was looked at.
  */
 function variants(argv: string[]): { all: string[][]; complete: boolean } {
   const out: string[][] = [];
@@ -249,9 +281,9 @@ function variants(argv: string[]): { all: string[][]; complete: boolean } {
       out.push(v);
       words += v.length;
       if (words > MAX_VARIANT_WORDS) complete = false;
-      if (PEELED.has(program(v[0])) && v.length > 1) queue.push(v.slice(1));
       // Each xargs is expanded once: a chain re-expanding its own stand-in readings is what xargs runs anyway.
       if (program(v[0]) === "xargs" && !v.includes(XARGS_INPUT)) queue.push(...xargsRuns(v));
+      if (program(v[0]) === "parallel" && !v.includes(XARGS_INPUT)) queue.push(...parallelRuns(v));
     }
   }
   return { all: out, complete };
@@ -329,7 +361,14 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   const out: Finding[] = [];
   const branches = ["main", "master", ...(st.defaultBranch === undefined ? [] : [st.defaultBranch])];
   const sandboxedRead = st.sandboxAutoAllow === true && a.sandboxed;
-  for (const sub0 of a.analysis.commands ?? []) {
+  const subs = a.analysis.commands ?? [];
+  // A `PARALLEL`/`PARALLEL_HOME` assignment anywhere in the script reaches every parallel in it, so none of them is
+  // plain while it stands (`export PARALLEL=-i; parallel …`, `env PARALLEL=-i parallel …`). Any word holding
+  // `PARALLEL` counts: bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`).
+  const scriptSetsParallelEnv =
+    subs.some((s) => s.argv.some((w) => w.includes("PARALLEL"))) &&
+    subs.some((s) => s.argv.some((w) => PARALLEL_PROGRAMS.has(program(w))));
+  for (const sub0 of subs) {
     const unwrapped = unwrapCmd(sub0);
     const viaCmd = unwrapped !== sub0;
     const { all, complete } = variants(unwrapped.argv);
@@ -414,6 +453,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
             ...(st.mode === "bypassPermissions" ? { countdown: true as const } : {}),
           }),
         );
+      const odd = parallelOddity(v, scriptSetsParallelEnv);
+      if (odd !== undefined) out.push(finding("unchecked", odd, "ask"));
       const self = selfControl(env, sub.argv);
       if (self !== undefined) out.push(finding("self", self.reason, self.behavior));
       const deletes = program(sub.argv[0]) === "find" && sub.argv.includes("-delete") ? findStarts(sub.argv) : [];

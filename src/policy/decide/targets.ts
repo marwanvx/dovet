@@ -1,5 +1,11 @@
 // The files a shell command writes or reads that the analyzer does not already list as operands (permissions §4.0 item 4, §4.5).
-import { commandName, findCommandsAt, type Subcommand, xargsCommandStarts } from "../rules/index.ts";
+import {
+  commandName,
+  findCommandsAt,
+  PARALLEL_REPLACEMENT,
+  type Subcommand,
+  xargsCommandStarts,
+} from "../rules/index.ts";
 
 export type Target = { access: "read" | "edit"; path: string; cwd: string };
 
@@ -220,6 +226,26 @@ export function findDeletions(argv: string[]): FindDeletion[] {
           cmd: [commandName(name), ...args.map((a) => a.replaceAll("{}", r))],
           narrowings: findNarrowings(argv, at, widened),
         });
+  }
+  return out;
+}
+
+/** What `parallel` runs with arguments from its input or a file: appended to its command, or as the command when it names
+ * none; a replacement string stands for them too, and one that rewrites its argument (`{//}`, `{.}`, `{= =}`) is computed
+ * even when every argument is typed. */
+export function parallelRuns(argv: string[]): string[][] {
+  // Only `:::` arguments are all typed; `::::`, `-a`/`--arg-file` and no source at all read a file or the input.
+  const typed = argv.some((w) => /^:::\+?$/.test(w)) && !argv.some((w) => /^::::\+?$|^-[^-]*a|^--a/.test(w));
+  const { starts, none } = xargsCommandStarts(argv);
+  const out = none && !typed ? [[XARGS_INPUT]] : [];
+  for (const s of starts) {
+    const rest = argv.slice(s);
+    const sep = rest.findIndex((w) => /^::::?\+?$/.test(w));
+    const cmd = sep < 0 ? rest : rest.slice(0, sep);
+    const computed = (w: string): boolean =>
+      (w.match(PARALLEL_REPLACEMENT) ?? []).some((m) => !typed || !/^\{\d*\}$/.test(m));
+    if (cmd.some(computed)) out.push(cmd.map((w) => (computed(w) ? XARGS_INPUT : w)));
+    if (!typed) out.push([...cmd, XARGS_INPUT]);
   }
   return out;
 }

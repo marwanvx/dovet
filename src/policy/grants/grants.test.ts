@@ -156,6 +156,15 @@ describe("suggestGrant", () => {
     }
   });
 
+  // spec: AC-PERM-18
+  test("a command behind an exec wrapper is saved exactly, never as the wrapper's prefix rule (F50)", () => {
+    const st = state();
+    for (const command of ["strace -f npm run build", "taskset -c 0 npm run build", "chroot / npm run build"]) {
+      const req = shell(command, st);
+      expect(suggestGrant(req, decide(req, st), st)?.rules).toEqual([`Bash(${command})`]);
+    }
+  });
+
   test("never Bash(*): a forced push is saved exactly; a wildcard argument or an unparsed command offers nothing", () => {
     const st = state();
     const glob = shell("npm run 'a*'", st);

@@ -54,19 +54,27 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, F32) · `src/policy/decide/targets.ts:215-222` (`findDeletions`'s `-exec` arm)
 - `find .config -exec echo {} \;` asks (unnamed reach) though `echo` deletes nothing: any `-exec` with a `{}` counts. Restrict the arm to removal-capable commands or lift the reach ask for proven-non-writing commands, and align Q90's sentence.
 
+### F71 (F50 round-4 security review): a planted `~/.parallel/config` feeds `parallel` its options with no ask
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `BYPASS_SKIPS`, permissions §4.1, §3.2
+- `echo '--rpl XX $_="push"' >> ~/.parallel/config` allows in `bypassPermissions` (the outside-write ask is one of the skipped kinds), after which the fully plain `parallel git XX origin ::: push` runs `git push origin` from the planted config in every later session — the plain-form gate only vouches for the script's text. Guarded modes ask (the write under §4.1, the run under §7.5). Decide: a write into `~/.parallel` (or `$PARALLEL_HOME`) asks even in bypass, or the limit is named where the plain form is claimed.
+
+### F72 (F50 round-4 security review): a `{=` replacement riding xargs input bypasses the plain-form gate
+- **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `BYPASS_SKIPS`
+- `echo '{= a =}' | xargs parallel echo {}` allows in `bypassPermissions`: the `{=` word rides the pipe and never appears in the parallel subcommand's text, and the computed ask is skipped (`computed` in `BYPASS_SKIPS`). Control: `echo push | xargs git {} origin` allows identically. The stronger form `echo '{= $_="git push origin main" =}' | xargs parallel` asks (critical).
+
 ### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
 - **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
 - `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
 
-### F50 (F40 review): wrappers outside §3.2's list hide the command
-- **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
-- `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
-- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su` — allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
+### F73 (F50 round-4 ship): the M1-23c reading budget has no headroom
+- **Severity:** minor (pre-existing) · `scripts/check-docs.ts` `CONTEXT_BUDGET`, `scripts/next.ts`
+- `main`'s `bun run next M1-23c` measured ~14970 of 15000 tokens on CI, so any follow-up extension or progress entry can push `docs:check` over and fail CI (this PR failed on it; locally the failure was masked by the skip-worktree instruction-budget overrun). The reading mixes a growing header (the owner block, the open majors, the last two progress entries) with the task's sections. Decide the structural answer: cap the header separately from the task sections, or raise the ceiling.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
 - Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
 - Extended (F63 security review): an unparsed analysis (`commands` undefined) makes `shellFindings` produce no findings, so **untainted** `bypassPermissions` allows too — every built-in check skipped (§5, countdown included); under CPU contention the 200 ms budget actually misses (`guarantees.test.ts:794` received `allow` on `main` under 6 CPU hogs). Fix: ask in bypass (deny in `dontAsk`) when `!analysis.understood`/`commands === undefined` before the early return, or push an `unchecked` ask in `shellFindings` (not in `BYPASS_SKIPS`).
+- Extended (F50 round-4 review, two more shapes): tree-sitter-powershell treats `parallel` as a reserved word, so every parallel form there parses as an error (`commands: []`) and `decide.ts:593` allows in bypass before the understood check; and a declaration holding an expansion (`typeset PARALLEL${PWD##*}=-iXX; parallel …`) is dropped from `commands`, so the assignment leaves no trace. The planned fix covers both.
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
@@ -201,6 +209,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F50 (F40 review): wrappers outside §3.2's list hide the command
+- **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
+- `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
+- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su` — allowed in `bypassPermissions`.
+- **Fixed (#196):** one exec-wrapper table serves the rule readings, every built-in check and Q91's input check, `cmd /c` (and `/r`) glued on, no prompt saving a prefix rule on a wrapper. Security rounds 1–3 modelled `parallel`'s grammar and each found a new way for it to move its arguments, so round 4 rethinks: only the **plain form** of `parallel`/`sem` is checkable — no options but `-k`/`-j` (`--keep-order`, `--jobs`), no `{=` word, no word holding `PARALLEL` (any spelling) or a command substitution anywhere in the script; every other form asks in every mode, `bypassPermissions` included. F51 extended, F71/F72 logged; Q97 and §3.2 carry the rule.
 
 ### F52 (F32): a `$( )` in a read command's file position reaches no check
 - **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`

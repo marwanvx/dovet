@@ -503,6 +503,27 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
       ["watch", "git", "status"],
       ["git", "status"],
     ]);
+    expect(strippedArgvs(["su", "root", "-c", "git push"])).toContainEqual(["sh", "-c", "git push"]);
+    expect(strippedArgvs(["su", "--session-command=git push"])).toContainEqual(["sh", "-c", "git push"]);
+    expect(strippedArgvs(["sg", "wheel", "git push; rm x"])).toContainEqual(["sh", "-c", "git push; rm x"]);
+    expect(strippedArgvs(["chrt", "-o", "git", "push"])).toContainEqual(["git", "push"]);
+    expect(strippedArgvs(["chrt", "-f", "99", "git", "push"])).toContainEqual(["git", "push"]);
+    expect(strippedArgvs(["parallel", "git", "push", ":::", "a", ":::+", "b"])).toContainEqual([
+      "git",
+      "push",
+      "a",
+      "b",
+    ]);
+    expect(strippedArgvs(["parallel", ":::", "git push", "rm x"])).toEqual(
+      expect.arrayContaining([
+        ["sh", "-c", "git push"],
+        ["sh", "-c", "rm x"],
+      ]),
+    );
+    expect(strippedArgvs(["parallel"])).toEqual([["parallel"]]);
+    expect(strippedArgvs(["parallel", ":::"])).toEqual([["parallel", ":::"]]);
+    expect(strippedArgvs(["exec", "-a", "x", "git", "push"])).toContainEqual(["git", "push"]);
+    expect(strippedArgvs(["busybox", "rm", "x"])).toContainEqual(["rm", "x"]);
     expect(strippedArgvs(["env", "-"])).toEqual([["env", "-"]]);
     expect(strippedArgvs(["env", "-S", "git\\_push"])).toContainEqual(["git", "push"]);
     const deep = Array.from({ length: 200 }, () => "env -S").join(" ");
@@ -527,6 +548,20 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
       "xargs",
       "stdbuf",
       "watch",
+      "chroot",
+      "taskset",
+      "chrt",
+      "nsenter",
+      "unshare",
+      "runuser",
+      "strace",
+      "pkexec",
+      "fakeroot",
+      "systemd-run",
+      "numactl",
+      "exec",
+      "setarch",
+      "faketime",
     ];
     for (let round = 0; round < 2000; round++) {
       const argv: string[] = [];
@@ -541,7 +576,7 @@ describe("wrappers seen through for deny rules and built-in checks (FOLLOWUPS F4
           else if (form === 2) argv.push(`--made-up-${letter}=v`);
           else argv.push(`--made-up-${letter}`, `v${o}`);
         }
-        if (name === "timeout") argv.push("5");
+        if (["timeout", "chroot", "taskset", "chrt", "setarch", "faketime"].includes(name)) argv.push("5");
       }
       argv.push("git", "push");
       expect(strippedArgvs(argv)).toContainEqual(["git", "push"]);
