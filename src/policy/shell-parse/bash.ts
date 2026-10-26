@@ -41,6 +41,21 @@ const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
 
+/** Read as if every computed word were a plain one: does one land where the command takes a file (F52)? */
+function computedReadPath(head: string, args: Word[]): boolean {
+  if (args.every((a) => a.literal)) return false;
+  const computed = new Set<Word>();
+  const plain = args.map((a) => {
+    if (a.literal) return a;
+    const w: Word = { text: a.text, literal: true, glob: false };
+    computed.add(w);
+    return w;
+  });
+  const read = classify(head, plain);
+  // An attached value (`--file=$(x)`) comes back as a new word holding the substitution's text.
+  return read.ok && read.paths.some((p) => computed.has(p) || /[$`]/.test(p.text));
+}
+
 export function walkBash(root: Node, walk: Walk, st: State): void {
   const { ctx } = walk;
 
@@ -246,6 +261,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     const result = classify(name.text, args);
     if (!result.ok) {
       if (/glob/.test(result.reason)) ctx.fail(result.reason);
+      if (computedReadPath(name.text, args)) ctx.fail("a computed word where the command takes a file");
       return;
     }
     if (result.paths.length === 0 && CWD_DEFAULT.has(name.text))
@@ -273,6 +289,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       if (i === 0 && head === name.text) continue;
       const read = classify(head, rest);
       if (read.ok) ctx.checkPaths(read.paths, st.cwd, "read");
+      else if (computedReadPath(head, rest)) ctx.fail("a computed word where the command takes a file");
     }
   }
 

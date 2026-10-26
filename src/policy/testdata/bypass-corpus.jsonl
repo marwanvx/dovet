@@ -65,3 +65,6 @@
 {"language": "powershell", "command": "Get-ChildItem env:", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
 {"language": "powershell", "command": "Get-Content HKCU:\\Software\\x", "source": "AC-PERM-20 shape list (permissions.md): shapes from public bypass fixes in coding agents"}
 {"language": "bash", "command": "git push --fo origin main", "source": "FOLLOWUPS F63: an abbreviated git long option escapes the forced regex", "allow": ["Bash(git push *)"]}
+{"language": "bash", "command": "cat $(echo .env)", "source": "FOLLOWUPS F52: a $( ) in a read command's file position reaches no check", "allow": ["Bash(cat *)"]}
+{"language": "bash", "command": "grep --file=`echo .env` a.ts", "source": "FOLLOWUPS F52: a $( ) in a read command's file position reaches no check", "allow": ["Bash(grep *)"]}
+{"language": "bash", "command": "for f in '.env a.ts'; do cat $f; done", "source": "FOLLOWUPS F52: a loop value that splits names a file no check sees", "allow": ["Bash(cat *)"]}

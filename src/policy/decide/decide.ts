@@ -424,6 +424,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         out.push(...pathFindings(st, t, false, sandboxedRead));
         if (t.access === "edit" && unresolvedTarget(t.path))
           out.push(finding("unresolved", `write target needs approval: ${t.path}`, "ask"));
+        else if (t.access === "read" && DYNAMIC_WORD.test(t.path) && !sandboxedRead)
+          out.push(finding("unresolved", `read target needs approval: ${t.path}`, "ask"));
       }
       if (v.includes(XARGS_INPUT) && !sandboxedRead)
         out.push(

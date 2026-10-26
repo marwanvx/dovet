@@ -1059,3 +1059,43 @@ describe("an abbreviated git or wget long option (FOLLOWUPS F63)", () => {
       expect(sh(c, st, { sandboxed: true }).behavior, c).toBe("allow");
   });
 });
+
+describe("a computed word where a command takes a file (FOLLOWUPS F52)", () => {
+  const allowAll = (): State => state("default", { allow: ["Bash"] });
+
+  // spec: AC-PERM-20
+  test("a substitution or split loop value in a read command's file position asks under a tool-wide allow", () => {
+    for (const c of [
+      "cat $(echo .env)",
+      'cat "$(echo .env)"',
+      "cat `echo .env`",
+      "cat $(echo .en)*",
+      "head -n 1 -- $(echo .env)",
+      "grep -f $(echo .env) a.ts",
+      "grep --file=$(echo .env) a.ts",
+      "grep x $(echo .env)",
+      "env cat $(echo .env)",
+      "timeout 5 cat $(echo .env)",
+      "for f in '.env a.ts'; do cat $f; done",
+    ])
+      expect(sh(c, allowAll()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-20
+  test("a substitution naming what cp reads asks like the file it names", () => {
+    expect(sh("cp .env leak.txt", allowAll()).behavior).toBe("ask");
+    for (const c of ["cp $(echo .env) leak.txt", "cp `echo .env` leak.txt", "cp -t out $(echo .env)"])
+      expect(sh(c, allowAll()).behavior, c).toBe("ask");
+  });
+
+  // spec: AC-PERM-21
+  test("a substitution outside a file position still matches allow rules", () => {
+    const commit = "git commit -m \"$(cat <<'EOF'\nfix: a\nEOF\n)\"";
+    expect(sh(commit, state("default", { allow: ["Bash(git commit *)"] })).behavior).toBe("allow");
+    for (const c of ["echo $(date)", 'grep -e "$(echo x)" a.ts', "cat a.ts", "cp a.ts b.ts"])
+      expect(sh(c, allowAll()).behavior, c).toBe("allow");
+    const sandboxed = state("default", {}, { sandboxAutoAllow: true });
+    for (const c of ["cat $(echo a.ts)", "cp $(echo a.ts) b.ts"])
+      expect(sh(c, sandboxed, { sandboxed: true }).behavior, c).toBe("allow");
+  });
+});
