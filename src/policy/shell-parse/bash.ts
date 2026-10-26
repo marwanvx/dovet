@@ -10,7 +10,7 @@ import {
   xargsCommandStarts,
 } from "../rules/index.ts";
 import type { Context } from "./context.ts";
-import { classify, type Word } from "./read-only.ts";
+import { classify, textOnly, type Word } from "./read-only.ts";
 
 export type State = { cwd: string; stack: string[]; loops: Map<string, string[]>; depth: number };
 
@@ -51,12 +51,14 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     const values = st.loops.get(only.text.slice(1));
     if (values === undefined) return undefined;
     // A value that could be an option, split into words or expanded again is not a plain file name.
-    if (!values.every((v) => /^[^\s*?[{~$`\\'"-][^\s*?[{$`\\'"]*$/.test(v))) return opaque(n);
+    if (!values.every((v) => /^[^\s*?[{~$`\\'"-][^\s*?[{$`\\'"]*$/.test(v)))
+      return n.type === "string" ? opaque(n) : { ...opaque(n), split: true };
     return { text: n.text, literal: true, glob: false, values };
   }
 
-  /** Reads the call as if every computed word were plain text (F52): one where the command takes a file, or inside
-   * an option, is not checkable; the literal files beside one still get the read check. */
+  /** Reads the call as if every computed word were one plain word (F52): one where the command takes a file, inside
+   * an option or split into words where they could be either is not checkable; the literal files beside one still get
+   * the read check. */
   function computedRead(head: string, args: Word[], cwd: string): void {
     if (args.every((a) => a.literal)) return;
     const computed = new Set<Word>();
@@ -67,6 +69,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return w;
     });
     const read = classify(head, plain);
+    const split = args.some((a) => a.split === true);
+    if (split && !(read.ok && textOnly(head))) ctx.fail("an unquoted substitution splits into any words");
     if (!read.ok) {
       if (plain.some((w) => computed.has(w) && w.text.startsWith("-"))) ctx.fail("a computed word in an option");
       return;
@@ -114,11 +118,12 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
           text: literal ? parts.map((p) => p.text).join("") : n.text,
           literal,
           glob: parts.some((p) => p.glob),
+          ...(parts.some((p) => p.split) ? { split: true } : {}),
         };
       }
       case "command_substitution":
         inner(n, st);
-        return opaque(n);
+        return { ...opaque(n), split: true };
       case "process_substitution":
         ctx.fail("process substitution");
         inner(n, st);

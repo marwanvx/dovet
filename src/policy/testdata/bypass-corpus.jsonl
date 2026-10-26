@@ -69,3 +69,6 @@
 {"language": "bash", "command": "grep --file=`echo .env` a.ts", "source": "FOLLOWUPS F52: a $( ) in a read command's file position reaches no check", "allow": ["Bash(grep *)"]}
 {"language": "bash", "command": "for f in '.env a.ts'; do cat $f; done", "source": "FOLLOWUPS F52: a loop value that splits names a file no check sees", "allow": ["Bash(cat *)"]}
 {"language": "bash", "command": "cat -$(echo n) .env", "source": "FOLLOWUPS F52 review: a computed option can turn the words after it into files", "allow": ["Bash(cat *)"]}
+{"language": "bash", "command": "grep $(echo x .env)", "source": "FOLLOWUPS F52 round 2: an unquoted substitution splits into a pattern and a file", "allow": ["Bash(grep *)"]}
+{"language": "bash", "command": "timeout $(echo '5 cat') .env", "source": "FOLLOWUPS F52 round 2: an unquoted substitution splits into a wrapper's value and the command it runs", "allow": ["Bash(timeout *)"]}
+{"language": "bash", "command": "find . -name $(echo 'x -delete')", "source": "FOLLOWUPS F52 round 2: a split find predicate value adds -delete"}

@@ -9,6 +9,8 @@ export type Word = {
   glob: boolean;
   /** A loop variable: the values it takes. */
   values?: string[];
+  /** An unquoted expansion: bash may split it into any number of words. */
+  split?: boolean;
 };
 
 export const READ_ONLY_VERSION = 1;
@@ -539,6 +541,7 @@ function classifyFind(args: Word[]): Classified {
     i++;
     if (i >= args.length) return { ok: false, reason: `find ${w.text} has no value` };
     if (args[i]?.glob) return { ok: false, reason: "unquoted glob in a find predicate" };
+    if (!args[i]?.literal) return { ok: false, reason: "find predicate value is not literal" };
     if (w.text === "-newer" || w.text === "-samefile") paths.push(args[i] as Word);
   }
   return { ok: true, paths };
@@ -567,6 +570,9 @@ const TEST_FILE_OPS = new Set([
 
 /** An awk program that can run commands or write files is not read-only. */
 const AWK_UNSAFE = /@|system\s*\(|getline|>|\||ENVIRON|\bprintf?\b[^;}]*\)\s*>/;
+
+/** Every argument is plain text (`echo`): words split from a substitution can't become a file or an option. */
+export const textOnly = (name: string): boolean => SPECS[name]?.raw === true;
 
 /** Does the command only read? `args` are the words after the command name. */
 export function classify(name: string, args: Word[]): Classified {

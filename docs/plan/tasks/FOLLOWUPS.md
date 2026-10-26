@@ -25,6 +25,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F69 (F52 security review): a file a command outside §4.6's forms reads gets no sensitive or outside check
 - **Severity:** minor (pre-existing) · `src/policy/shell-parse/bash.ts` `command()` (operands only from `classify`), permissions §4.0 item 4, §4.7
 - Under a tool-wide `Bash` allow `grep -e x .env`, `tail -f .env`, `jq . .env`, `sed -n p .env`, `base64 .env`, `git show HEAD:.env` run unprompted while `cat .env` asks: a literal file is read-checked only when the whole call is a read-only form. Decide whether §4.7 covers these (read every non-option word of a known reader as a read operand) or write the limit into §4.7.
+
+### F70 (F52 round-2 security review): an option's write target isn't an edit target
+- **Severity:** minor (pre-existing) · `src/policy/decide/targets.ts` `shellTargets`
+- Under a tool-wide `Bash` allow `sort -o ../out a.ts` writes outside the working directories unprompted while `cp a.ts ../out` and `echo x > ../out` ask. Add `sort -o`/`--output` and the other `-o FILE` writers as edit targets.
 ### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.

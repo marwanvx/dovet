@@ -1098,7 +1098,39 @@ describe("a computed word where a command takes a file (FOLLOWUPS F52)", () => {
       expect(sh(c, allowAll()).behavior, c).toBe("ask");
       expect(sh(c, state("dontAsk", { allow: ["Bash"] })).behavior, c).toBe("deny");
     }
-    expect(sh("head -n $(echo 1) a.ts", allowAll()).behavior).toBe("allow");
+    expect(sh('head -n "$(echo 1)" a.ts', allowAll()).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-20
+  test("an unquoted substitution splits into any words, so it asks wherever it sits unless every argument is text", () => {
+    for (const c of [
+      "grep $(echo x .env)",
+      "grep -- $(echo x .env)",
+      "grep -e $(echo 'x .env')",
+      "head -n $(echo 1 .env)",
+      "head -n$(echo '1 .env')",
+      "head --lines=$(echo '1 .env')",
+      "git log -n $(echo '1 -- .env')",
+      "timeout $(echo '5 cat') .env",
+      "nice -n $(echo '1 cat') .env",
+      "for f in '1 .env'; do head -n $f; done",
+    ]) {
+      expect(sh(c, allowAll()).behavior, c).toBe("ask");
+      expect(sh(c, state("dontAsk", { allow: ["Bash"] })).behavior, c).toBe("deny");
+    }
+    for (const c of ["echo $(date)", "echo built $(git rev-parse HEAD)"])
+      expect(sh(c, state("default", { allow: ["Bash(echo *)"] })).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-20
+  test("a computed find predicate value is not read-only: split, it can add -delete or -exec", () => {
+    for (const c of [
+      "find . -name $(echo 'x -delete')",
+      "find . -newer $(echo '. -delete')",
+      'find . -name "$(echo x)"',
+    ])
+      expect(sh(c, state("default")).behavior, c).toBe("ask");
+    expect(sh("find . -name $(echo 'x -o -exec rm -rf src ;')", allowAll()).behavior).toBe("ask");
   });
 
   // spec: AC-PERM-20
