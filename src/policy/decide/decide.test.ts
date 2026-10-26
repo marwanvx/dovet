@@ -1038,6 +1038,8 @@ describe("an abbreviated git or wget long option (FOLLOWUPS F63)", () => {
       expect(sh(c, bypass()).behavior, c).toBe("deny");
     for (const c of ["git push --atomic origin main", "git push --no-force origin main", "git push -- origin main"])
       expect(sh(c, bypass()).behavior, c).toBe("allow");
+    // A guarded mode denies too, wildcard rule or not; a regression to ask is a §5 break, not just a bypass one.
+    expect(sh("git push --mir origin main", state("default", { allow: ["Bash(git push *)"] })).behavior).toBe("deny");
   });
 
   // spec: AC-PERM-29
