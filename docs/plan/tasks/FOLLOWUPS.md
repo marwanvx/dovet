@@ -58,6 +58,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
 - `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
 
+### F50 (F40 review): wrappers outside §3.2's list hide the command
+- **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
+- `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
+- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su` — allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
+- **In progress:** PR #196 (open, not merged) fixes the listed wrappers, `cmd /crd`/`/r` and the xargs case; security round 3 still breaks `parallel`: options from the `PARALLEL` environment variable or `$PARALLEL_HOME/config` (`env PARALLEL=-iXX parallel git XX origin ::: push` allowed while tainted; `PARALLEL_HOME=. parallel rm -rf {} ::: x` allowed in bypass) and an inline `{= perl =}` replacement (`parallel -k git {= $_="push" =} origin ::: x` allowed while tainted). Rethink: stop modelling parallel's grammar; ask on it unless its form is plain.
+
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
 - Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
@@ -196,12 +202,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
-
-### F50 (F40 review): wrappers outside §3.2's list hide the command
-- **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`
-- `chroot`, `taskset`, `nsenter`, `unshare`, `runuser`, `strace`, `su -c`, `script -c`, `pkexec`, `fakeroot`, `systemd-run`, `chrt`, `numactl`, `parallel`, `exec -a x`, `busybox`, `cmd /crd`: one `DEEP_WRAPPERS` entry each; changes §3.2.
-- Extended (F32 round-3 security review): the same wrappers take a command named by xargs input — `echo root -c 'rm -rf /' | xargs su` — allowed in `bypassPermissions`; Q91's `commandFromInput` returns false for a name outside its set.
-- **Fixed:** #PR
 
 ### F52 (F32): a `$( )` in a read command's file position reaches no check
 - **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
