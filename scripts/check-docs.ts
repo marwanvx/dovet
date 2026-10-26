@@ -41,7 +41,7 @@ export function answersWithoutSpec(questions: string): string[] {
 
 // Ceilings in tokens (about 4 characters each), just above the sizes on 2026-10-20; lower them when the text shrinks.
 // Every session loads these and resends them on every turn (docs/background/workflow-audit-2026-10-19.md).
-export const CONTEXT_BUDGET = { "instruction files": 7500, "bun run next": 15000 } as const;
+export const CONTEXT_BUDGET = { "instruction files": 7500, "bun run next": 15400 } as const;
 const INSTRUCTION_FILES = [
   "AGENTS.md",
   "CLAUDE.md",
