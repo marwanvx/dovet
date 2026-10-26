@@ -54,10 +54,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing, F32) · `src/policy/decide/targets.ts:215-222` (`findDeletions`'s `-exec` arm)
 - `find .config -exec echo {} \;` asks (unnamed reach) though `echo` deletes nothing: any `-exec` with a `{}` counts. Restrict the arm to removal-capable commands or lift the reach ask for proven-non-writing commands, and align Q90's sentence.
 
-### F52 (F32): a `$( )` in a read command's file position reaches no check
-- **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
-- With a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks). A substitution's words, like xargs input (Q90), can name any file; treat one in a non-read-only command's arguments like a variable.
-
 ### F53 (F32): an `xargs -I{}` replace string inside a `sh -c` script isn't the xargs input
 - **Severity:** minor · `src/policy/decide/targets.ts` `xargsRuns`
 - `echo / | xargs -I{} sh -c 'rm -rf {}'` in `bypassPermissions` runs with no countdown: the script's `rm -rf {}` is parsed as its own command, without the stand-in. Under other modes the `{}` write target still asks.
@@ -205,6 +201,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F52 (F32): a `$( )` in a read command's file position reaches no check
+- **Severity:** major · `src/policy/shell-parse/bash.ts`, `decide.ts` `shellFindings`
+- With a tool-wide `Bash` allow `cat $(echo .env)` is allowed (`cat $X` asks). A substitution's words, like xargs input (Q90), can name any file; treat one in a non-read-only command's arguments like a variable.
+- **Fixed:** #195
 
 ### F63 (F54 round 3): an abbreviated git long option escapes the forced regex
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts:169`
