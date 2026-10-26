@@ -68,3 +68,4 @@
 {"language": "bash", "command": "cat $(echo .env)", "source": "FOLLOWUPS F52: a $( ) in a read command's file position reaches no check", "allow": ["Bash(cat *)"]}
 {"language": "bash", "command": "grep --file=`echo .env` a.ts", "source": "FOLLOWUPS F52: a $( ) in a read command's file position reaches no check", "allow": ["Bash(grep *)"]}
 {"language": "bash", "command": "for f in '.env a.ts'; do cat $f; done", "source": "FOLLOWUPS F52: a loop value that splits names a file no check sees", "allow": ["Bash(cat *)"]}
+{"language": "bash", "command": "cat -$(echo n) .env", "source": "FOLLOWUPS F52 review: a computed option can turn the words after it into files", "allow": ["Bash(cat *)"]}

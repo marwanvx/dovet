@@ -21,6 +21,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F68 (F59 round-3 review): cmd-operand `,` and `=` are not metacharacters
 - **Severity:** minor · `src/policy/decide/critical.ts:37` (`CMD_META`)
 - `cmd /c git,push,origin,+main` and `cmd /c rd,/s,C:\Windows` allow in `bypassPermissions`: `,` and `=` are not in `CMD_META`. cmd's own delimiter handling of them was not verifiable without cmd.exe (for external commands the child CRT re-splits on spaces, so the spellings may be benign; internal commands are the plausible risk). Decide with a real cmd: either add them to the class or record them as read-as-typed.
+
+### F69 (F52 security review): a file a command outside §4.6's forms reads gets no sensitive or outside check
+- **Severity:** minor (pre-existing) · `src/policy/shell-parse/bash.ts` `command()` (operands only from `classify`), permissions §4.0 item 4, §4.7
+- Under a tool-wide `Bash` allow `grep -e x .env`, `tail -f .env`, `jq . .env`, `sed -n p .env`, `base64 .env`, `git show HEAD:.env` run unprompted while `cat .env` asks: a literal file is read-checked only when the whole call is a read-only form. Decide whether §4.7 covers these (read every non-option word of a known reader as a read operand) or write the limit into §4.7.
 ### F58 (F34 round-2 tests review): a SIGINT during compaction degrades stream-json like the budget stop did
 - **Severity:** minor (pre-existing, M2-14) · `src/cli/headless-run.ts:1318-1332` (`stoppedDuringCompaction`)
 - The interrupted-during-compaction output returns without `events` (`--output stream-json` gets the text fallback, `src/cli/main.ts:301-305`); F34 round 1 fixed the same class for the compaction budget stop. One `events,` field, with a test that pins it.

@@ -1082,6 +1082,26 @@ describe("a computed word where a command takes a file (FOLLOWUPS F52)", () => {
   });
 
   // spec: AC-PERM-20
+  test("a substitution beside a literal file still lets that file be checked; one inside an option asks", () => {
+    for (const c of [
+      "grep $(echo x) .env",
+      "head -n $(echo 1) .env",
+      "head -n$(echo 1) .env",
+      "head --lines=$(echo 1) .env",
+      "git log -n $(echo 1) -- .env",
+      "timeout 5 grep $(echo x) .env",
+      "head -c $(echo 1) ../outside",
+      "cat -$(echo n) .env",
+      "grep -$(echo f) .env a.ts",
+      "grep $(echo -f) .env a.ts",
+    ]) {
+      expect(sh(c, allowAll()).behavior, c).toBe("ask");
+      expect(sh(c, state("dontAsk", { allow: ["Bash"] })).behavior, c).toBe("deny");
+    }
+    expect(sh("head -n $(echo 1) a.ts", allowAll()).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-20
   test("a substitution naming what cp reads asks like the file it names", () => {
     expect(sh("cp .env leak.txt", allowAll()).behavior).toBe("ask");
     for (const c of ["cp $(echo .env) leak.txt", "cp `echo .env` leak.txt", "cp -t out $(echo .env)"])
