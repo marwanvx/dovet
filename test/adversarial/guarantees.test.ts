@@ -20,7 +20,7 @@ let root = "";
 let dispose: () => Promise<void>;
 beforeAll(async () => {
   parsers = await loadShellParsers();
-  const project = await tempProject({ "a.ts": "a", ".env": "K=1", "src/x.ts": "x" });
+  const project = await tempProject({ "a.ts": "a", ".env": "K=1", "src/x.ts": "x", ".git/HEAD": "ref: refs/heads/main\n" });
   root = project.root;
   dispose = project.dispose;
 });
@@ -608,6 +608,8 @@ describe("git runs no hidden push through a command its arguments or environment
     "LESSKEYIN=keys git log",
     "coproc git push",
     "git rebase -x 'coproc git push' HEAD~1",
+    "git rebase -x 'coproc { git push; }' HEAD~1",
+    "git rebase -x 'coproc X { git push; }' HEAD~1",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
@@ -636,10 +638,31 @@ describe("git runs no hidden push through a command its arguments or environment
     "Set-Item Environment::GIT_PAGER 'git push'; git log",
     "Set-Item Microsoft.PowerShell.Core\\Environment::GIT_PAGER 'git push'; git log",
     "Set-Item Env:\\\\GIT_PAGER 'git push'; git log",
+    "Set-Item env:git_pager 'git push'; git log",
+    "git rebase -x @'\ngit push\n'@ HEAD~1",
+    'git rebase -x @"\ngit push\n"@ HEAD~1',
+    "sh -c @'\ngit push\n'@",
+    'git rebase -x "git push $x" HEAD~1',
   ])("%s is a remote action while tainted in PowerShell", (command) => {
     expect(
       shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
     ).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("an sh -c script under PowerShell writes from the directory Set-Location moved to", () => {
+    const d = shell("Set-Location .git; sh -c 'printf x >> config'", state("default"), false, {
+      language: "powershell",
+    });
+    expect(d.findings.map((f) => f.kind)).toContain("protected");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a PowerShell path that only ends in a pager name stays allowed while tainted", () => {
+    const d = shell("Copy-Item ./src/pager ./dst", state("bypassPermissions", { tainted: true }), false, {
+      language: "powershell",
+    });
+    expect(d.behavior).toBe("allow");
   });
 
   // spec: permissions §0 guarantee 4
@@ -673,6 +696,10 @@ describe("git runs no hidden push through a command its arguments or environment
     "PAGER='less -FRX' git log",
     "LESS=-FRX git log",
     "LESS=FRX git log",
+    "GIT_PAGER=less git log",
+    "X=less git log",
+    "FOO=/usr/bin/less make",
+    "printf '%s\\n' docs/editor",
     "EDITOR=vim git commit",
     "git clone -cuser.name=x x",
     "FOO=1 grep EDITOR x",

@@ -137,7 +137,6 @@ const DEEP_WRAPPERS = new Map<string, number>([
     "ionice",
     "setsid",
     "exec",
-    "coproc",
     "busybox",
     "toybox",
     "nsenter",
@@ -556,6 +555,11 @@ function inner(argv: string[], deep: boolean, budget: Budget): string[][] {
   }
   const name = commandName(argv[0]);
   if (name === "find") return findCommands(argv);
+  if (name === "coproc") {
+    // `coproc [NAME] { cmd; }`: the grammar leaves the brace and the name as words.
+    const rest = argv.slice(1).filter((w) => w !== "{" && w !== "}");
+    return [rest, rest.slice(1)].filter((r) => r.length > 0).flatMap((r) => take(budget, r));
+  }
   if (name === "git") return [...gitAlias(argv, budget), ...gitRuns(argv).flatMap((r) => take(budget, r))];
   const operands = DEEP_WRAPPERS.get(name);
   return operands === undefined ? [] : wrapperReadings(argv, name, operands, budget);

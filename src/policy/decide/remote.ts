@@ -60,8 +60,10 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
 const GIT_ENV_NAMES =
   "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESS|LESSOPEN|LESSCLOSE|LESSKEY\\w*";
 const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
-// A provider path names the variable after its last `:`, `\` or `/` (`Env:\X`, `Microsoft.PowerShell.Core\Environment::X`).
-const GIT_ENV_NAME = new RegExp(`^(?:-v|.*[:\\\\/])?(${GIT_ENV_NAMES})$`, "i");
+const GIT_ENV_NAME = new RegExp(`^(?:-v)?(${GIT_ENV_NAMES})$`);
+// PowerShell's environment provider (`env:X`, `Env:\X`, `Microsoft.PowerShell.Core\Environment::X`); Windows names
+// ignore case.
+const GIT_ENV_PATH = new RegExp(`^(?:[\\w.\\\\]*::|env:)[\\\\/]*(${GIT_ENV_NAMES})$`, "i");
 const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
 /** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
 const NAME_SETTERS = new Set([
@@ -93,7 +95,7 @@ function gitEnvironment(argv: string[]): string | undefined {
       .slice(assigns ? 0 : 1)
       .map(
         (w) =>
-          (assigns ? undefined : GIT_ENV_NAME.exec(w)?.[1]) ??
+          (assigns ? undefined : (GIT_ENV_NAME.exec(w) ?? GIT_ENV_PATH.exec(w))?.[1]) ??
           (w.includes("=") ? GIT_ENV_NAME.exec(w.slice(w.indexOf("=") + 1))?.[1] : undefined),
       )
       .find((n) => n !== undefined);
