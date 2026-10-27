@@ -14,13 +14,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F86 (F84 security review): a substitution in an array subscript left of `=` is never walked
+### F86 (F84 security review): an array subscript left of `=` is never walked
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
-- `a[$(git push)]=1`, `` a[`git push`]=1 ``, `a[…]+=1`, `declare a[$(git push)]=1` and `a[$(git push)]=1 true` record no `git push` and allow in bypass past a deny rule; bash runs the subscript. Walk the `name` field's subscript through `word()`, or fail closed on it.
+- `a[$(git push)]=1` and `declare a[$(git push)]=1` allow in bypass past a deny rule. Walk the subscript or fail closed.
 
-### F85 (F84 differential fuzz): a quote followed by a backslash-escape splits one word in the bash grammar
-- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`, `concatenation`)
-- `git pu''\sh` and `git pu""\sh` read as argv `git pu sh` (`understood: true`), bash runs `git push`: past a deny rule; `cat .e''\nv` reads `cat .e nv` and passes the `.env` check. Also `printf x \  a` loses the `\ ` word. Join the parts the grammar split (no whitespace between them in the text), or fail closed on adjacent words.
+### F85 (F84 fuzz): a quote then a backslash-escape splits one word in the grammar
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`)
+- `git pu''\sh` reads `git pu sh` (bash: `git push`), past a deny rule; `cat .e''\nv` passes the `.env` check; `printf x \  a` loses `\ `. Join the split parts or fail closed.
 
 ### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
