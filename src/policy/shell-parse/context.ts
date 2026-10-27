@@ -26,6 +26,10 @@ export type Analysis = {
   reasons: string[];
   /** File operands of read-only commands, glob matches included, resolved against the simulated cwd. */
   operands: Operand[];
+  /** What tree-sitter recovered from a top-level syntax error: the tool runs the command as a script and bash
+   * aborts only the erroring line, so every complete line before it runs — the checks run over these, deny and
+   * ask rules match them, but the command still asks unparsed (§4.0 item 7; QUESTIONS Q99). */
+  recovered?: { commands: Subcommand[]; operands: Operand[] };
 };
 
 export const MAX_COMMAND_CHARS = 10_000;

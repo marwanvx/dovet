@@ -7,7 +7,7 @@ import type { Os } from "../../src/platform/index.ts";
 import { canonicalizePath } from "../../src/platform/index.ts";
 import type { Decision, Env, State } from "../../src/policy/index.ts";
 import { decide, loadRules } from "../../src/policy/index.ts";
-import { analyzeShell } from "../../src/policy/shell-parse/analyze.ts";
+import { type Analysis, analyzeShell } from "../../src/policy/shell-parse/analyze.ts";
 import { expandGlob, isDirectory } from "../../src/policy/shell-parse/glob.ts";
 import { loadShellParsers, type ShellParsers } from "../../src/policy/shell-parse/load.ts";
 import type { PermissionMode } from "../../src/schema/index.ts";
@@ -48,15 +48,26 @@ const state = (mode: PermissionMode, over: Partial<State> & { allow?: string[] }
   const { allow, ...rest } = over;
   return { mode, rules: rulesFor(allow), env: env(), ...rest };
 };
-const shell = (command: string, st: State, sandboxed = false): Decision => {
-  const analysis = analyzeShell(parsers, "bash", command, {
-    cwd: st.env.cwd,
-    workingDirs: st.env.workingDirs,
-    home: st.env.home,
-    glob: expandGlob,
-    isDirectory,
-  });
-  return decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed } }, st);
+const shell = (
+  command: string,
+  st: State,
+  sandboxed = false,
+  over: { language?: "bash" | "powershell"; analysis?: Analysis } = {},
+): Decision => {
+  const language = over.language ?? "bash";
+  const analysis =
+    over.analysis ??
+    analyzeShell(parsers, language, command, {
+      cwd: st.env.cwd,
+      workingDirs: st.env.workingDirs,
+      home: st.env.home,
+      glob: expandGlob,
+      isDirectory,
+    });
+  return decide(
+    { tool: language === "bash" ? "Bash" : "PowerShell", action: { kind: "shell", analysis, sandboxed } },
+    st,
+  );
 };
 
 // Every mode that keeps the guarantees (bypassPermissions skips §4.1/§4.7/§4.8 by design, §2).
@@ -782,8 +793,14 @@ describe("F32 over unusual inputs", () => {
     ] as const) {
       const started = performance.now();
       const d = shell(command, state("bypassPermissions"));
-      expect(d.behavior).toBe(behavior);
-      if (behavior === "ask") expect(d.findings.map((f) => f.kind)).toContain("critical");
+      // Under CPU contention the budget misses and §5 (Q99) asks unparsed, with no findings; both outcomes are safe.
+      if (behavior === "ask") {
+        expect(d.behavior, command).toBe("ask");
+        expect(
+          d.findings.map((f) => f.kind).includes("critical") || d.reason.startsWith("not fully checkable"),
+          command,
+        ).toBe(true);
+      } else expect(d.behavior === "allow" || d.reason.startsWith("not fully checkable"), command).toBe(true);
       expect(performance.now() - started).toBeLessThan(2000);
     }
   });
@@ -1122,5 +1139,114 @@ describe("every exec wrapper shows the command it runs to the checks (FOLLOWUPS 
       "sem echo hi",
     ])
       expect(shell(command, state("default", { allow: ["Bash"] })).behavior).toBe("allow");
+  });
+});
+
+describe("a command the analyzer could not parse asks even in bypassPermissions (FOLLOWUPS F51)", () => {
+  // spec: permissions §4.0 item 7
+  const unparsed = (reason: string): Analysis => ({
+    commands: undefined,
+    understood: false,
+    literalNames: false,
+    reasons: [reason],
+    operands: [],
+  });
+
+  test("an unparsed analysis asks in bypassPermissions and denies in dontAsk, untainted or not", () => {
+    for (const reason of ["parsing took longer than 200 ms or failed", "analysis failed: out of memory"]) {
+      for (const tainted of [false, true]) {
+        const d = shell("git push origin main", state("bypassPermissions", { tainted }), false, {
+          analysis: unparsed(reason),
+        });
+        expect(d.behavior, `${reason} tainted=${tainted}`).toBe("ask");
+        expect(d.reason, reason).toStartWith("not fully checkable");
+        expect(d.by, reason).toBe("the analyzer (§4.0)");
+        expect(d.findings, reason).toEqual([]);
+      }
+      expect(
+        shell("git push origin main", state("dontAsk"), false, { analysis: unparsed(reason) }).behavior,
+        reason,
+      ).toBe("deny");
+    }
+  });
+
+  // spec: permissions §4.0 item 7
+  test("the budget miss reaches the same ask end to end, and an allow rule does not apply", () => {
+    const analysis = analyzeShell(parsers, "bash", "echo a; ".repeat(1200), {
+      cwd: root,
+      workingDirs: [root],
+      home: HOME(),
+      glob: expandGlob,
+      isDirectory,
+      budgetMs: 1,
+    });
+    expect(analysis.commands).toBeUndefined();
+    const d = decide(
+      { tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } },
+      state("bypassPermissions", { allow: ["Bash(echo *)" as const] }),
+    );
+    expect(d.behavior).toBe("ask");
+  });
+
+  // spec: permissions §4.0 (QUESTIONS Q41)
+  test("a syntax error gives no commands, so PowerShell's parallel asks in bypassPermissions", () => {
+    for (const command of ["parallel -iXX git XX origin ::: push", "parallel echo hi", "echo ))("]) {
+      const language = command.startsWith("parallel") ? ("powershell" as const) : ("bash" as const);
+      expect(shell(command, state("bypassPermissions"), false, { language }).behavior, command).toBe("ask");
+      expect(shell(command, state("default"), false, { language }).behavior, command).toBe("ask");
+    }
+  });
+
+  // spec: permissions §3.2 "Stripped wrappers" (QUESTIONS Q97)
+  test("a dropped declaration leaves a trace: the word-scan sees it and the parallel asks", () => {
+    const command = "typeset PARALLEL${PWD##*}=-iXX; parallel git XX origin ::: push";
+    for (const mode of [...GUARDED, "bypassPermissions" as const])
+      notAllowed(shell(command, state(mode, { allow: ["Bash"] })));
+    expect(shell(command, state("bypassPermissions")).reason).toStartWith("a word of the script holds PARALLEL");
+  });
+
+  // spec: permissions §5 (QUESTIONS Q99: the checks run over the lines tree-sitter recovers)
+  test("a recovered line keeps its hard guarantees, with the unparsed ask beneath", () => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const])
+      expect(shell("git push origin +main\n)", state(mode)).behavior, mode).toBe("deny");
+    const rm = shell("rm -rf /\n)", state("bypassPermissions"));
+    expect(rm.behavior).toBe("ask");
+    expect(rm.countdown).toBe(true);
+    expect(shell("git push origin main\n)", state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    const denied = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [], ask: [], deny: [{ text: "Bash(git push*)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    expect(shell("git push origin main\n)", state("bypassPermissions", { rules: denied })).behavior).toBe("deny");
+    const paths = loadRules(
+      [
+        {
+          file: "/p/s.json",
+          baseDir: root,
+          allow: [],
+          ask: [],
+          deny: [{ text: "Read(a.ts)" }, { text: "Edit(src/x.ts)" }],
+        },
+      ],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    // Recovered read operands get the sensitive check, and path rules see recovered reads and write targets.
+    expect(shell("cat .env\n)", state("bypassPermissions")).findings.map((f) => f.kind)).toContain("sensitive");
+    for (const command of ["cat a.ts\n)", "rm src/x.ts\n)"]) {
+      const r = shell(command, state("bypassPermissions", { rules: paths }));
+      expect(r.behavior, command).toBe("deny");
+      expect(r.by, command).toStartWith("rule ");
+    }
+    // The erroring line itself runs nothing and carries no finding: the unparsed ask decides it.
+    const d = shell("echo ok\n)", state("bypassPermissions"));
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toStartWith("not fully checkable");
+  });
+
+  // spec: permissions §2 (the bypassPermissions row: only §5 stops a parsed command)
+  test("a parsed command keeps today's bypass behavior: the plain form and exports still run", () => {
+    expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
+    expect(shell("export FOO=bar; echo ok", state("bypassPermissions")).behavior).toBe("allow");
+    expect(shell("echo $HOME", state("bypassPermissions")).behavior).toBe("allow");
   });
 });

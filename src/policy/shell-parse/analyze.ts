@@ -30,12 +30,17 @@ export function analyzeShell(
   const deadline = performance.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS);
   ctx.deadline.at = deadline;
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
+  // Only the top-level tree counts: a nested script's error already fails the analysis as "parse error".
+  let topError = false;
   const run = (text: string, st: State): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
     return (
       parsers.withTree("bash", text, left, (root) => {
-        if (root.hasError) ctx.fail("parse error");
+        if (root.hasError) {
+          ctx.fail("parse error");
+          if (st === state) topError = true;
+        }
         walkBash(root, { ctx, script: run }, st);
         return true;
       }) ?? false
@@ -54,7 +59,10 @@ export function analyzeShell(
     if (language === "bash") parsed = run(command, state);
     else
       parsed = parsers.withTree("powershell", command, opts.budgetMs ?? DEFAULT_BUDGET_MS, (root) => {
-        if (root.hasError) ctx.fail("parse error");
+        if (root.hasError) {
+          ctx.fail("parse error");
+          topError = true;
+        }
         walkPowerShell(root, ctx, { cwd: opts.cwd, stack: [] });
         return true;
       });
@@ -62,6 +70,16 @@ export function analyzeShell(
     return unparsed(`analysis failed: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (parsed && performance.now() > deadline) parsed = false;
+  if (topError)
+    return {
+      commands: undefined,
+      understood: false,
+      literalNames: false,
+      reasons: ["the parser reported a syntax error"],
+      operands: [],
+      // The lines before the erroring one run (the tool executes a script file): the checks see them, the ask stands.
+      recovered: { commands: ctx.commands, operands: ctx.operands },
+    };
   if (!parsed) return unparsed(`parsing took longer than ${opts.budgetMs ?? DEFAULT_BUDGET_MS} ms or failed`);
   return {
     commands: ctx.commands,

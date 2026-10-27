@@ -429,6 +429,29 @@ describe("fail-closed analysis", () => {
       expect(a.reasons.join()).toContain("10000");
     }
   });
+
+  // spec: permissions §4.0 (QUESTIONS Q41)
+  test("a syntax error gives no commands, in Bash and PowerShell alike", () => {
+    for (const [text, language] of [
+      ["echo ok &&", "bash"],
+      ["parallel echo hi", "powershell"],
+    ] as const) {
+      const a = analyze(text, language);
+      expect(a.commands, text).toBeUndefined();
+      expect(a.understood, text).toBe(false);
+      expect(a.reasons.join(), text).toContain("syntax error");
+    }
+  });
+
+  // spec: permissions §3.2 "Stripped wrappers" (QUESTIONS Q97)
+  test("a declaration the grammar reads as bare words still leaves its words in the commands", () => {
+    const a = analyze("typeset PARALLEL${PWD##*}=-iXX");
+    expect(a.commands?.map((c) => c.argv)).toEqual([["PARALLEL"], ["${PWD##*}=-iXX"]]);
+    expect(a.understood).toBe(false);
+    // The assignment form keeps its shape: one command holding the whole assignment, and the declaration reason.
+    expect(analyze("export FOO=bar").commands?.map((c) => c.argv)).toEqual([["FOO=bar"]]);
+    expect(analyze("export FOO=bar").reasons.join()).toContain("unsupported syntax declaration_command");
+  });
 });
 
 describe("PowerShell", () => {

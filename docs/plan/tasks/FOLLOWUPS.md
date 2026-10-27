@@ -70,11 +70,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `scripts/check-docs.ts` `CONTEXT_BUDGET`, `scripts/next.ts`
 - `main`'s `bun run next M1-23c` measured ~14970 of 15000 tokens on CI, so any follow-up extension or progress entry can push `docs:check` over and fail CI (this PR failed on it; locally the failure was masked by the skip-worktree instruction-budget overrun). The reading mixes a growing header (the owner block, the open majors, the last two progress entries) with the task's sections. Decide the structural answer: cap the header separately from the task sections, or raise the ceiling.
 
-### F51 (F40 review): an unparseable command is allowed in tainted bypass
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
-- Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
-- Extended (F63 security review): an unparsed analysis (`commands` undefined) makes `shellFindings` produce no findings, so **untainted** `bypassPermissions` allows too — every built-in check skipped (§5, countdown included); under CPU contention the 200 ms budget actually misses (`guarantees.test.ts:794` received `allow` on `main` under 6 CPU hogs). Fix: ask in bypass (deny in `dontAsk`) when `!analysis.understood`/`commands === undefined` before the early return, or push an `unchecked` ask in `shellFindings` (not in `BYPASS_SKIPS`).
-- Extended (F50 round-4 review, two more shapes): tree-sitter-powershell treats `parallel` as a reserved word, so every parallel form there parses as an error (`commands: []`) and `decide.ts:593` allows in bypass before the understood check; and a declaration holding an expansion (`typeset PARALLEL${PWD##*}=-iXX; parallel …`) is dropped from `commands`, so the assignment leaves no trace. The planned fix covers both.
+### F74 (F51 security review): tree-sitter-powershell errors on a comment-only, empty or bare-`param` script, so bypass prompts where main allowed
+- **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`topError`), `load.ts` grammar
+- Verified on main's grammar: `# just a comment`, `""` and `param($x)` all report `hasError`, so since F51's parse-error→unparsed rule they ask in every mode, `bypassPermissions` included (a trailing comment after a real command is fine). Fail-closed and decided by Q99, but a Windows bypass user gets prompted for a bare comment. Fix in the analyzer: treat a tree whose only error node wraps no command as recovered-but-empty (empty `commands`/`recovered`, still **not** understood — `understood: true` would fire the read-only allow vacuously in every mode), or teach the walk to ignore a pure-comment/`param` error.
+
+### F75 (F51 round-3 security review): `recovered` also holds the lines after a syntax error, which never run
+- **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`recovered`), permissions §5
+- `echo hi\n)\ngit push origin +main` is denied as a force-push in `default`, though bash stops at the `)` line; in PowerShell a parse error runs nothing, yet `git push origin +main\n)` denies. Fail-closed (spurious denies, no bypass), but §5's "from before the erroring line" and "those lines run" overclaim. Fix: keep only commands whose node ends before the first error node's row in Bash; drop `recovered` for PowerShell.
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
@@ -209,6 +211,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F51 (F40 review): an unparseable command is allowed in tainted bypass
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
+- Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).
+- Extended (F63 security review): an unparsed analysis (`commands` undefined) makes `shellFindings` produce no findings, so **untainted** `bypassPermissions` allows too — every built-in check skipped (§5, countdown included); under CPU contention the 200 ms budget actually misses (`guarantees.test.ts:794` received `allow` on `main` under 6 CPU hogs). Fix: ask in bypass (deny in `dontAsk`) when `!analysis.understood`/`commands === undefined` before the early return, or push an `unchecked` ask in `shellFindings` (not in `BYPASS_SKIPS`).
+- Extended (F50 round-4 review, two more shapes): tree-sitter-powershell treats `parallel` as a reserved word, so every parallel form there parses as an error (`commands: []`) and `decide.ts:593` allows in bypass before the understood check; and a declaration holding an expansion (`typeset PARALLEL${PWD##*}=-iXX; parallel …`) is dropped from `commands`, so the assignment leaves no trace. The planned fix covers both.
+- **Fixed (#198):** an unparsed analysis (`commands` undefined: a syntax error, the budget, a crash) asks in every mode, `bypassPermissions` included, and `dontAsk` denies; a syntax error gives `commands: undefined` in both languages, with `recovered` carrying what tree-sitter read so the §5 checks, the countdown, the taint deny and deny/ask rules still apply to the lines that run; a declaration whose name holds an expansion keeps its words. Q99 and §5 carry the rule; F74, F75 logged.
 
 ### F50 (F40 review): wrappers outside §3.2's list hide the command
 - **Severity:** major · `src/policy/rules/shell.ts` `DEEP_WRAPPERS`, `decide.ts` `PEELED`

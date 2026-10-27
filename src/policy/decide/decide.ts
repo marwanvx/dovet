@@ -361,7 +361,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
   const out: Finding[] = [];
   const branches = ["main", "master", ...(st.defaultBranch === undefined ? [] : [st.defaultBranch])];
   const sandboxedRead = st.sandboxAutoAllow === true && a.sandboxed;
-  const subs = a.analysis.commands ?? [];
+  const subs = [...(a.analysis.commands ?? []), ...(a.analysis.recovered?.commands ?? [])];
   // A `PARALLEL`/`PARALLEL_HOME` assignment anywhere in the script reaches every parallel in it, so none of them is
   // plain while it stands (`export PARALLEL=-i; parallel …`, `env PARALLEL=-i parallel …`). Any word holding
   // `PARALLEL` counts: bash builds the assignment without a `PARALLEL=`-shaped word (`printf -v PARALLEL …`).
@@ -501,7 +501,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     if (force !== undefined && !explicitAllow(st, tool, sub, true))
       out.push(finding("force-push", `force-push to the default branch: ${force}`, "deny"));
   }
-  for (const o of a.analysis.operands) out.push(...pathFindings(st, { ...o, cwd: env.cwd }, false, sandboxedRead));
+  for (const o of [...a.analysis.operands, ...(a.analysis.recovered?.operands ?? [])])
+    out.push(...pathFindings(st, { ...o, cwd: env.cwd }, false, sandboxedRead));
   return out;
 }
 
@@ -522,10 +523,13 @@ function ruleCall(req: Request, st: State): RuleCall {
   else if (a.kind === "network") call.host = a.host;
   else if (a.kind === "shell") {
     call.checkable = a.analysis.understood;
+    // Recovered commands match deny and ask rules but never allow ones: checkable stays false on a syntax error.
     if (a.analysis.commands !== undefined) call.commands = a.analysis.commands;
+    else if (a.analysis.recovered !== undefined) call.commands = a.analysis.recovered.commands;
     call.paths = [
       ...a.analysis.operands,
-      ...(a.analysis.commands ?? []).flatMap((s) =>
+      ...(a.analysis.recovered?.operands ?? []),
+      ...[...(a.analysis.commands ?? []), ...(a.analysis.recovered?.commands ?? [])].flatMap((s) =>
         shellTargets(s, st.env.cwd).filter((t) => !s.redirects?.some((r) => r.target === t.path)),
       ),
     ].map(({ access, path }) => ({ access, path }));
@@ -595,7 +599,12 @@ function shellDefault(
   const done = (behavior: Behavior, reason: string, by: string): Decision =>
     finish(st, { reason, by }, findings, behavior);
   const understood = analysis.understood && subs !== undefined;
-  if (st.mode === "bypassPermissions") return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
+  if (st.mode === "bypassPermissions") {
+    // An unparsed analysis yields no findings, so every check was skipped: bypass asks instead of allowing (§4.0 item 7).
+    if (subs === undefined)
+      return done("ask", `not fully checkable: ${analysis.reasons.join("; ") || "unparsed"}`, "the analyzer (§4.0)");
+    return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
+  }
   if (understood && subs.every((s) => s.readOnly === true))
     return done("allow", "read-only command", "the read-only command list (§4.6)");
   const why = understood
