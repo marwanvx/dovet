@@ -98,6 +98,30 @@ function backticks(body: string): string[] {
   return start < 0 ? out : [...out, body.slice(start)];
 }
 
+/** A backtick substitution's body, or undefined when its first unescaped closing backtick isn't where the grammar ends it
+ * (no input seen so far does that without a parse error too: a second guard). */
+function backtickBody(text: string): string | undefined {
+  for (let i = 1; i < text.length; i++) {
+    if (text[i] === "\\") i++;
+    else if (text[i] === "`") return i === text.length - 1 ? text.slice(1, i) : undefined;
+  }
+  return undefined;
+}
+
+/** bash removes the backslash of `\\`, `\``, `\$` (and `\"` inside double quotes) in a backtick body, then parses it. */
+const unescapeBackticks = (body: string, quoted: boolean): string =>
+  body.replace(quoted ? /\\([\\`$"])/g : /\\([\\`$])/g, "$1");
+
+/** Whether `\"` loses its backslash: directly inside one quoted word, yes; under a construct or a second string inside
+ * one, bash's answer depends on the construct (`"$[ ]"` yes, `"$(( ))"` and `"${x:-"…"}"` no), so undefined. */
+function inQuotes(n: Node): boolean | undefined {
+  let strings = 0;
+  for (let p = n.parent; p !== null && p.type !== "command_substitution"; p = p.parent)
+    if (p.type === "string") strings++;
+  if (strings === 0) return false;
+  return strings === 1 && n.parent?.type === "string" ? true : undefined;
+}
+
 /** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error
  * (`then git push`, `{ {` as one word): the reading isn't bash's. */
 const misread = (n: Node): boolean => {
@@ -167,6 +191,19 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
     for (const c of n.namedChildren) statement(c, fresh(st), true);
   }
 
+  /** A backtick body is read again from its unescaped text, as bash does (FOLLOWUPS F84). */
+  function substitution(n: Node, st: State): void {
+    if (!n.text.startsWith("`")) {
+      inner(n, st);
+      return;
+    }
+    const body = backtickBody(n.text);
+    const quoted = inQuotes(n);
+    // Past the depth cap the body isn't read, so its commands would be missing: unparsed, not merely not understood.
+    if (body === undefined || quoted === undefined || st.depth >= MAX_DEPTH) ctx.state.misread = true;
+    else if (!walk.script(unescapeBackticks(body, quoted), fresh(st))) ctx.fail("nested script not parsed");
+  }
+
   function word(n: Node, st: State): Word {
     switch (n.type) {
       case "word": {
@@ -185,7 +222,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         for (const p of n.namedChildren) {
           if (p.type === "string_content") continue;
           literal = false;
-          if (p.type === "command_substitution") inner(p, st);
+          if (p.type === "command_substitution") substitution(p, st);
           else {
             ctx.fail(`${p.type} in a quoted word`);
             inner(p, st);
@@ -204,7 +241,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         };
       }
       case "command_substitution":
-        inner(n, st);
+        substitution(n, st);
         return { ...opaque(n), split: true };
       case "process_substitution":
         ctx.fail("process substitution");
@@ -249,7 +286,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
             // tree-sitter leaves backticks in an unquoted body as plain text.
             for (const script of backticks(c.text)) {
               ctx.fail("here-document with command substitution");
-              walk.script(script, fresh(st));
+              walk.script(unescapeBackticks(script, false), fresh(st));
             }
           }
         } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
@@ -397,7 +434,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       ctx.state.literalNames = false;
       return;
     }
-    if (st.depth >= MAX_DEPTH || !walk.script(script.text, fresh(st))) ctx.fail("nested script not parsed");
+    if (st.depth >= MAX_DEPTH) ctx.state.misread = true;
+    else if (!walk.script(script.text, fresh(st))) ctx.fail("nested script not parsed");
   }
 
   function forLoop(n: Node, st: State): void {
@@ -488,7 +526,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
         return;
       default:
         ctx.fail(`unsupported syntax ${n.type}`);
-        for (const c of n.namedChildren) if (c.childCount > 0) statement(c, fresh(st), true);
+        if (n.type === "command_substitution" && n.text.startsWith("`")) substitution(n, st);
+        else for (const c of n.namedChildren) if (c.childCount > 0) statement(c, fresh(st), true);
     }
   }
 

@@ -890,3 +890,9 @@ Done: unquoted `\<newline>` is removed before parsing as bash does (kept in sing
 Review: deep, 3 rounds (reviewer ×3, security-reviewer ×3); 5 fixed, 0 dropped, 3 logged (F82 extended, F83, F84); round 3: 1 minor.
 Learned: bash unescapes and rereads a backtick body (F84). `docs:check` locally stops at the owner's AGENTS.md budget first and hides the `bun run next` budget: run `bun scripts/check-docs.ts` and read every line.
 Next: F84, then F82, F77, F78, F42.
+
+## 2026-10-28 — F84: a backtick body is unescaped and parsed again as bash does
+Done: a backtick body loses the backslash of `\\`, `` \` ``, `\$` (and `\"` directly inside double quotes) and is parsed again as a nested script; the depth cap, a backtick under a construct or second string inside double quotes, and a misplaced closing backtick make the analysis unparsed. F84 fixed. PR: #201 (merged).
+Review: deep, 3 rounds (reviewer ×2, security-reviewer ×3); 6 fixed, 0 dropped, 3 logged (F85, F86, F82 extended); round 3: 1 minor (fixed).
+Learned: a differential fuzz against real bash (`printf '<%s>'` over random bodies) found F85 in minutes: tree-sitter splits `pu''\sh` into two words at top level. `bun run next` prints open follow-ups, so long FOLLOWUPS entries push the M1-23c context budget over: keep them to three short lines.
+Next: F85 (blocker), then F82, F77, F78, F42.

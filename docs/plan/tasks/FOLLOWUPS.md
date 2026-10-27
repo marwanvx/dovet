@@ -14,9 +14,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
-- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)
-- `` echo `git pu\\sh` `` and `` echo `\`git push\`` `` run `git push` and allow past a deny rule; `` echo `cat .e\\nv` `` passes the `.env` check. Unescape `\\`, `` \` ``, `\$` and analyze the body as a nested script, or fail closed.
+### F86 (F84 security review): an array subscript left of `=` is never walked
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
+- `a[$(git push)]=1` and `declare a[$(git push)]=1` allow in bypass past a deny rule. Walk the subscript or fail closed.
+
+### F85 (F84 fuzz): a quote then a backslash-escape splits one word in the grammar
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`)
+- `git pu''\sh` reads `git pu sh` (bash: `git push`), past a deny rule; `cat .e''\nv` passes the `.env` check; `printf x \  a` loses `\ `. Join the split parts or fail closed.
 
 ### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
@@ -25,7 +29,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
 - `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
-- Extended (F76 rethink 3): `echo "${x:-'$(git push)'}"` too (single quotes are literal there).
+- Extended (F76 rethink 3, F84): `echo "${x:-'$(git push)'}"` and a backtick there too (single quotes are literal there).
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
@@ -232,6 +236,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)
+- `` echo `git pu\\sh` `` and `` echo `\`git push\`` `` run `git push` and allow past a deny rule; `` echo `cat .e\\nv` `` passes the `.env` check. Unescape `\\`, `` \` ``, `\$` and analyze the body as a nested script, or fail closed.
+- **Fixed (#201):** a backtick body is unescaped as bash does (`\\`, `` \` ``, `\$`, and `\"` inside double quotes; in here-documents too) and parsed again as a nested script; a body whose first unescaped closing backtick isn't where the grammar ends it is unparsed.
 
 ### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
