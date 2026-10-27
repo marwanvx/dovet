@@ -886,7 +886,7 @@ Next: rethink the approach to F76 (PR #200, see Learned), then F82, F42.
 
 
 ## 2026-10-28 — F76 rethink 3: join line continuations as bash's lexer does
-Done: before parsing, every unquoted `\<newline>` is removed (not in single quotes, `$'…'`, comments or quoted here-documents, all removed in backtick bodies) and the joined text is parsed; a joined text whose quoted regions moved, or a `\<CR><LF>`, is unparsed (Q102). F80 fixed; the per-node continuation checks are gone. PR: #200 (merged).
-Review: deep, 3 rounds (reviewer ×3, security-reviewer ×3); 5 fixed (round 1: a quoted here-document joined into being, `\<CR><LF>`, two untested checks; round 2: single quotes in backticks), 0 dropped, 3 logged (F82 extended, F83, F84); round 3 found only 1 minor in the diff (logged with F83).
-Learned: bash removes every `\<newline>` from a backtick body, even inside single quotes, and then unescapes and rereads that body (F84, a pre-existing blocker). Locally, the sandbox, SPIKE-5 file-fallback and ripgrep tests fail as on `main`; `docs:check` fails only on the owner's skip-worktree AGENTS.md budget.
-Next: F84 (backtick bodies), then F82, F77, F78, F42.
+Done: unquoted `\<newline>` is removed before parsing as bash does (kept in single quotes, `$'…'`, comments, quoted here-documents, but not in backticks); a joined text whose quoted parts moved, or `\<CR><LF>`, is unparsed (Q102). F80 fixed. PR: #200 (merged).
+Review: deep, 3 rounds (reviewer ×3, security-reviewer ×3); 5 fixed, 0 dropped, 3 logged (F82 extended, F83, F84); round 3: 1 minor.
+Learned: bash unescapes and rereads a backtick body (F84). `docs:check` locally stops at the owner's AGENTS.md budget first and hides the `bun run next` budget: run `bun scripts/check-docs.ts` and read every line.
+Next: F84, then F82, F77, F78, F42.
