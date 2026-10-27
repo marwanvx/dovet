@@ -36,11 +36,13 @@ const STATEMENTS = new Set([
 
 const VERBATIM = new Set(["raw_string", "ansi_c_string", "comment"]);
 
-/** Single quotes, `$'…'`, comments and quoted here-document bodies: where bash keeps a `\<newline>` as written. */
+/** Single quotes, `$'…'`, comments and quoted here-document bodies: where bash keeps a `\<newline>` as written.
+ * Not inside backticks: bash removes every `\<newline>` from a backtick body before it parses it. */
 export function verbatimRanges(root: Node): [number, number][] {
   const kept: [number, number][] = [];
   const todo = [root];
   for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
+    if (n.type === "command_substitution" && n.text.startsWith("`")) continue;
     if (VERBATIM.has(n.type)) kept.push([n.startIndex, n.endIndex]);
     else if (
       n.type === "heredoc_redirect" &&

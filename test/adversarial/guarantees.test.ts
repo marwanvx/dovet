@@ -749,6 +749,12 @@ describe("git runs no hidden push through a command its arguments or environment
     ["echo 'a\\\n'git push", "echo 'a\\\n'git push"],
     ["echo a\\\\\ngit push", "echo 'a\\'\ngit push"],
     ["e\\\ncho \\\n'x' \\\n\\\n; git p\\\nush", "echo 'x'; git push"],
+    ["echo `cat '.e\\\nnv'`", "echo `cat '.env'`"],
+    ["echo \"`cat '.e\\\nnv'`\"", "echo \"`cat '.env'`\""],
+    ["echo `echo $(cat '.e\\\nnv')`", "echo `echo $(cat '.env')`"],
+    ["echo `git 'pu\\\nsh'`", "echo `git 'push'`"],
+    ["echo \"`git pu'\\\n'sh`\"", "echo \"`git pu''sh`\""],
+    ["echo $(cat '.e\\\nnv')", "echo $(cat '.e\\\nnv')"],
   ])("%s reads as bash joins its line continuations", (command, joined) => {
     const opts = { cwd: root, workingDirs: [root], home: "/home/u", glob: expandGlob, isDirectory };
     const read = analyzeShell(parsers, "bash", command, opts);
