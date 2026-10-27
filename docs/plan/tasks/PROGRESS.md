@@ -871,3 +871,9 @@ Review: deep, 3 rounds (reviewer tests/spec/scope ×2; security-reviewer ×3); 2
 Learned: listing spellings keeps leaking. Round 3 found `less -R--lesskey-file=x` (less reads a long option inside an option group; a lesskey `#env LESSOPEN=|cmd` runs a command), PowerShell split readings led by `time -p`, `coproc` or a redirection (`2>&1 git push`), and the `Environment::`/`Microsoft.PowerShell.Core\Environment::` provider paths. Rethink: (1) a quiet pager is an allowlist of display flags (`-R`, `-F`, `-X`, `-S`, `-r` clusters), never "any option but k"; (2) under PowerShell, run the bash analyzer on a `sh -c` reading (git runs these through sh) instead of splitting the text; (3) match a git variable name after any `:`, `\` or `/` in a word of a setting command. A reviewer's probe block slipped into a commit once: give reviewers a /tmp probe path explicitly.
 Next: rethink the approach to F76 (PR #200: apply the three changes above, re-review the diff), then F42.
 
+
+## 2026-10-27 — F76 rethink: git runs a command its arguments or environment name
+Done: the rethink reviewed and fixed further (here-strings, doubled quotes, any-case PowerShell names, nested parse errors fail the analysis, keyword-led commands read without the keyword). PR: #200 (open, not merged).
+Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 8 fixed, 0 dropped, 2 logged (F80, F81); round 3 still found 1 major, 1 minor (PR comment).
+Learned: tree-sitter-bash misreads compounds after `coproc`/`time`/`!` with no parse error (`then git push`, `{ {` as one word); patching readings leaks. Rethink: a simple command led by a keyword or brace-only word, or a word with `\<newline>`, makes the analysis unparsed; and the heredoc backtick extractor (`bash.ts:167`) must skip escaped backticks.
+Next: rethink the approach to F76 (PR #200, see Learned), then F42.
