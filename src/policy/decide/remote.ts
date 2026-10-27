@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName, gitInvocation, isLongOption } from "../rules/index.ts";
+import { commandName, gitInvocation, gitOptionValues, isLongOption } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 import { unresolvedTarget } from "./targets.ts";
 
@@ -56,19 +56,46 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
   return { kind: "push", label: `git ${a} (not a git command: an alias or add-on could push)` };
 }
 
-/** Environment variables git reads configuration or a program to run from; a pager or editor set to one that only
- * shows text is quiet. */
-const GIT_ENV =
-  /^(GIT_CONFIG\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|PAGER|EDITOR|VISUAL|SSH_ASKPASS)=(.*)$/s;
+/** Environment variables git (or its pager) reads configuration or a program to run from. */
+const GIT_ENV_NAMES =
+  "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESSOPEN|LESSCLOSE";
+const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
+const GIT_ENV_NAME = new RegExp(`^(?:env:)?(${GIT_ENV_NAMES})$`, "i");
 const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
+/** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
+const NAME_SETTERS = new Set([
+  ...["export", "declare", "typeset", "local", "readonly", "printf", "read", "mapfile", "readarray"],
+  ...[
+    "set-item",
+    "si",
+    "new-item",
+    "ni",
+    "set-content",
+    "sc",
+    "add-content",
+    "ac",
+    "copy-item",
+    "move-item",
+    "rename-item",
+  ],
+]);
 
-/** The git environment variable a command sets (`GIT_CONFIG_COUNT=1 git log`, `export GIT_SSH_COMMAND=…`), if any. */
+/** The git environment variable a command sets (`GIT_CONFIG_COUNT=1 git log`, `export GIT_SSH_COMMAND=…`), if any; a
+ * pager or editor whose value is one program and its options is quiet unless that program runs others. */
 function gitEnvironment(argv: string[]): string | undefined {
-  if (!(ENV_SETTERS.has(commandName(argv[0])) || /^\w+=/.test(argv[0] ?? ""))) return undefined;
+  const name = commandName(argv[0]);
+  if (NAME_SETTERS.has(name)) {
+    const hit = argv.slice(1).find((w) => GIT_ENV_NAME.test(w));
+    if (hit !== undefined) return hit;
+  }
+  if (!(ENV_SETTERS.has(name) || /^\w+=/.test(argv[0] ?? ""))) return undefined;
   for (const w of argv) {
     const m = GIT_ENV.exec(w);
-    if (m !== null && !(/PAGER|EDITOR|VISUAL/.test(m[1] ?? "") && /^(cat|less|more|true|:)?$/.test(m[2] ?? "")))
-      return m[1];
+    if (m === null) continue;
+    const quiet =
+      /PAGER|EDITOR|VISUAL/.test(m[1] ?? "") &&
+      /^(?:(?:cat|less|more|true|:|vim?|nano)(?:\s+-[\w=-]*)*)?$/.test(m[2] ?? "");
+    if (!quiet) return m[1];
   }
   return undefined;
 }
@@ -154,6 +181,13 @@ export function remoteAction(argv: string[]): Remote | undefined {
       if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
       if (GIT_UPLOADS.has(a)) return is("upload", `git ${a}`);
       if (a === "subtree" && w("push")) return is("push", "git subtree push");
+      // clone sets its `-c`/`--config` configuration before it fetches.
+      if (a === "clone") {
+        const key = gitOptionValues(gitArgs(rest).slice(1), "c", "--config")
+          .map((kv) => kv.split("=", 1)[0] ?? "")
+          .find((k) => !QUIET_GIT_CONFIG.test(k));
+        if (key !== undefined) return is("push", `git clone -c ${key} (configuration that can run a command)`);
+      }
       return gitHidden(rest, a);
     case "npm":
     case "pnpm":

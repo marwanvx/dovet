@@ -646,7 +646,7 @@ function gitAlias(argv: string[], budget: Budget): string[][] {
 }
 
 /** `--long=v`, `--long v` and (with `short`) `-xv`, `-x v`, `-ix v` among a git subcommand's options. */
-function gitOptionValues(args: string[], short: string | undefined, long: string): string[] {
+export function gitOptionValues(args: string[], short: string | undefined, long: string): string[] {
   const out: string[] = [];
   for (let j = 0; j < args.length && args[j] !== "--"; j++)
     if ((args[j] ?? "").startsWith("-") && (short !== undefined || (args[j] ?? "").startsWith("--")))
@@ -654,7 +654,17 @@ function gitOptionValues(args: string[], short: string | undefined, long: string
   return out;
 }
 
-const shellReadings = (cmd: string[]): string[][] => (cmd.length === 0 ? [] : [cmd, ["sh", "-c", cmd.join(" ")]]);
+/** `sh -c script`, and each command of the script split at shell separators for an analyzer that doesn't parse
+ * `sh -c` (PowerShell). */
+const scriptReadings = (script: string): string[][] => [
+  ["sh", "-c", script],
+  ...script
+    .split(/\$\(|[;&|\n(){}`]/)
+    .map(splitAlias)
+    .filter((w) => w.length > 0),
+];
+
+const shellReadings = (cmd: string[]): string[][] => (cmd.length === 0 ? [] : [cmd, ...scriptReadings(cmd.join(" "))]);
 
 /** What a git subcommand runs from its own arguments: `submodule foreach`, `bisect run`, `rebase --exec`, a pager,
  * difftool or upload-pack program, or the git command `for-each-repo` runs in each repository. */
@@ -662,9 +672,10 @@ function gitRuns(argv: string[]): string[][] {
   const { at } = gitInvocation(argv.slice(1));
   const sub = argv[at + 1] ?? "";
   const rest = argv.slice(at + 2);
-  const sh = (values: string[]): string[][] => values.map((v) => ["sh", "-c", v]);
+  const sh = (values: string[]): string[][] => values.flatMap(scriptReadings);
   switch (sub) {
-    case "submodule": {
+    case "submodule":
+    case "submodule--helper": {
       const f = rest.findIndex((a) => !a.startsWith("-"));
       if (rest[f] !== "foreach") return [];
       const cmd = rest.slice(f + 1);
@@ -692,8 +703,12 @@ function gitRuns(argv: string[]): string[][] {
     case "pull":
       return sh(gitOptionValues(rest, undefined, "--upload-pack"));
     case "clone":
-    case "ls-remote":
       return sh(gitOptionValues(rest, "u", "--upload-pack"));
+    case "ls-remote":
+      // `--exec` is ls-remote's and fetch-pack's old name for `--upload-pack`.
+      return sh([...gitOptionValues(rest, "u", "--upload-pack"), ...gitOptionValues(rest, undefined, "--exec")]);
+    case "fetch-pack":
+      return sh([...gitOptionValues(rest, undefined, "--upload-pack"), ...gitOptionValues(rest, undefined, "--exec")]);
     case "archive":
       return sh(gitOptionValues(rest, undefined, "--exec"));
     case "for-each-repo": {

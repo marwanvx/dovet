@@ -580,9 +580,44 @@ describe("git runs no hidden push through a command its arguments or environment
     "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push'; git log",
     "GIT_CONFIG_COUNT=1; git log",
     "wget --config=./rc https://example.com",
+    "git pull --upload-pack='git push' .",
+    "git fetch-pack --upload-pack='git push origin main' . main",
+    "git fetch-pack --exec='git push origin main' . main",
+    "git ls-remote --exec='git push origin main' .",
+    "git submodule--helper foreach git push",
+    "git clone -c core.sshCommand='git push origin main' ssh://x/y z",
+    "git clone --config=core.pager='git push' . y",
+    "git clone --conf core.pager='git push' . y",
+    "GIT_ALLOW_PROTOCOL=ext git fetch 'ext::sh -c x'",
+    "LESSOPEN='|-git push origin main %s' git log",
+    "printf -v GIT_PAGER 'git push'; export GIT_PAGER; git log",
+    "read GIT_PAGER <<< 'git push'; export GIT_PAGER; git log",
+    "GIT_PAGER='less; git push' git log",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git rebase -x 'git push origin main' HEAD~1",
+    "git rebase --exec 'cd x; git push' HEAD~1",
+    "git difftool -x 'git push' HEAD",
+    "git ls-remote --upload-pack 'git push' .",
+    "git submodule foreach 'cd x && git push'",
+    "Set-Item env:GIT_PAGER 'git push'; git log",
+  ])("%s is a remote action while tainted in PowerShell", (command) => {
+    expect(
+      shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
+    ).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("a removal a git subcommand runs is a critical-path removal in PowerShell", () => {
+    for (const command of ["git rebase -x 'rm -rf /' HEAD~1", "git submodule foreach 'rm -rf /'"])
+      expect(shell(command, state("bypassPermissions"), false, { language: "powershell" }).countdown, command).toBe(
+        true,
+      );
   });
 
   // spec: permissions §0 guarantee 4
@@ -600,6 +635,9 @@ describe("git runs no hidden push through a command its arguments or environment
     "GIT_PAGER=cat git log",
     "GIT_PAGER= git log",
     "PAGER=cat git log",
+    "GIT_PAGER='less -R' git log",
+    "PAGER='less -FRX' git log",
+    "EDITOR=vim git commit",
     "GIT_AUTHOR_NAME=x GIT_COMMITTER_NAME=x git commit -m x",
     "GIT_TERMINAL_PROMPT=0 git status",
     "git submodule status",
