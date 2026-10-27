@@ -703,24 +703,11 @@ describe("git runs no hidden push through a command its arguments or environment
     "! { { git push; }; }",
     "time { { git push; } }",
     "time { git push; }",
-    "gi\\\nt push",
     "git rebase -x 'coproc X { { git push; }; }' HEAD~1",
     "time if true; then git push; fi",
     "! if true; then git push; fi",
     "time while true; do git push; done",
     "time ( git push )",
-    "export GIT_PAGE\\\nR='sh -c \"git push\"'; git log",
-    "readonly GIT_PAGE\\\nR='sh -c \"git push\"'; git log",
-    "git rebase -x 'export GIT_PAGE\\\nR=\"sh -c git-push\"; git log' HEAD~1",
-    "cat < .en\\\nv",
-    "echo > .en\\\nv",
-    "for f in .en\\\nv; do cat $f; done",
-    'echo "$(cat .en\\\nv)"',
-    'echo "`gi\\\nt push`"',
-    "cat <<EOF\n$(cat .en\\\nv)\nEOF",
-    "sh -c 'echo \"$(gi\\\nt push)\"'",
-    'echo "$\\\n(git push)"',
-    "cat <<EOF\n$\\\n(cat .env)\nEOF",
   ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
     const analysis = analyzeShell(parsers, "bash", command, {
       cwd: root,
@@ -734,6 +721,69 @@ describe("git runs no hidden push through a command its arguments or environment
     expect(shell(command, state("bypassPermissions")).behavior).toBe("ask");
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
     expect(shell(command, state("dontAsk")).behavior).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["gi\\\nt push", "git push"],
+    ["export GIT_PAGE\\\nR='sh -c \"git push\"'; git log", "export GIT_PAGER='sh -c \"git push\"'; git log"],
+    ["cat < .en\\\nv", "cat < .env"],
+    ["echo > .en\\\nv", "echo > .env"],
+    ["for f in .en\\\nv; do cat $f; done", "for f in .env; do cat $f; done"],
+    ['echo "$(cat .en\\\nv)"', 'echo "$(cat .env)"'],
+    ['echo "`gi\\\nt push`"', 'echo "`git push`"'],
+    ["cat <<EOF\n$(cat .en\\\nv)\nEOF", "cat <<EOF\n$(cat .env)\nEOF"],
+    ['echo "$\\\n(git push)"', 'echo "$(git push)"'],
+    ["cat <<EOF\n$\\\n(cat .env)\nEOF", "cat <<EOF\n$(cat .env)\nEOF"],
+    ["echo ${x:-$\\\n(git push)}", "echo ${x:-$(git push)}"],
+    ["[[ x =~ $\\\n(git push) ]]", "[[ x =~ $(git push) ]]"],
+    ["echo a # c\\\ngit push", "echo a\ngit push"],
+    ["cat <<'EOF'\nx\\\nEOF\ngit push", "cat <<'EOF'\nx\nEOF\ngit push"],
+    ["echo 'a\\\n'git push", "echo 'a\\\n'git push"],
+    ["echo a\\\\\ngit push", "echo 'a\\'\ngit push"],
+    ["e\\\ncho \\\n'x' \\\n\\\n; git p\\\nush", "echo 'x'; git push"],
+  ])("%s reads as bash joins its line continuations", (command, joined) => {
+    const opts = { cwd: root, workingDirs: [root], home: "/home/u", glob: expandGlob, isDirectory };
+    const read = analyzeShell(parsers, "bash", command, opts);
+    const want = analyzeShell(parsers, "bash", joined, opts);
+    expect(want.commands).toBeDefined();
+    expect(read.commands?.map((c) => c.argv)).toEqual(want.commands?.map((c) => c.argv) ?? []);
+    expect(read.operands).toEqual(want.operands);
+    const deny = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    for (const mode of ["bypassPermissions", "default"] as const)
+      expect(shell(command, { mode, rules: deny, env: env() }).behavior).toBe(
+        shell(joined, { mode, rules: deny, env: env() }).behavior,
+      );
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["sh -c 'gi\\\nt push'", "sh -c 'echo \"$(gi\\\nt push)\"'", 'bash -c "gi\\\\\\\nt push"'])(
+    "%s, a nested script, reads as bash joins its line continuations",
+    (command) => {
+      const read = analyzeShell(parsers, "bash", command, {
+        cwd: root,
+        workingDirs: [root],
+        home: "/home/u",
+        glob: expandGlob,
+        isDirectory,
+      });
+      expect(read.commands?.map((c) => c.argv)).toContainEqual(["git", "push"]);
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test("a git rebase -x script joins its line continuations", () => {
+    const command = "git rebase -x 'export GIT_PAGE\\\nR=\"sh -c git-push\"; git log' HEAD~1";
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a line continuation inside what a first reading took for a comment is unparsed", () => {
+    expect(shell("x\\\n#y\\\ngit push", state("bypassPermissions")).behavior).toBe("ask");
   });
 
   // spec: permissions §0 guarantee 3

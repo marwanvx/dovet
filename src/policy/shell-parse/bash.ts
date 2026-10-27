@@ -36,25 +36,34 @@ const STATEMENTS = new Set([
 
 const VERBATIM = new Set(["raw_string", "ansi_c_string", "comment"]);
 
-/** Two words anywhere in the tree that only a line continuation separates: bash joins them into one
- * (`gi\<newline>t`, `export GIT_PAGE\<newline>R=…`, `< .en\<newline>v`), and `"$\<newline>(…)"`, which bash runs
- * but the grammar reads as text. */
-export function continuationJoins(root: Node): boolean {
+/** The text bash's lexer reads (QUESTIONS Q102): every unquoted `\<newline>` removed, except in single quotes, `$'…'`,
+ * comments and quoted here-document bodies, which this reading of the text locates. */
+export function joinContinuations(root: Node, text: string): string {
+  if (!text.includes("\\\n")) return text;
+  const kept: [number, number][] = [];
   const todo = [root];
   for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
-    const kids = n.children;
-    for (const [i, c] of kids.entries()) {
-      const prev = kids[i - 1];
-      if (prev?.isNamed && c.isNamed) {
-        const gap = n.text.slice(prev.endIndex - n.startIndex, c.startIndex - n.startIndex);
-        if (gap.includes("\\\n") && gap.replaceAll("\\\n", "") === "") return true;
-      }
-      if ((c.type === "string" || c.type === "heredoc_body") && /\$(\\\n)+[({[]/.test(c.text)) return true;
-      if (!VERBATIM.has(c.type)) todo.push(c);
-    }
+    if (VERBATIM.has(n.type)) kept.push([n.startIndex, n.endIndex]);
+    else if (
+      n.type === "heredoc_redirect" &&
+      /['"\\]/.test(n.namedChildren.find((c) => c.type === "heredoc_start")?.text ?? "")
+    )
+      for (const b of n.namedChildren) if (b.type === "heredoc_body") kept.push([b.startIndex, b.endIndex]);
+    todo.push(...n.children);
   }
-  return false;
+  kept.sort((a, b) => a[0] - b[0]);
+  let out = "";
+  let i = 0;
+  for (const [start, end] of kept) {
+    if (end <= i) continue;
+    out += unescaped(text.slice(i, Math.max(i, start)));
+    out += text.slice(Math.max(i, start), end);
+    i = end;
+  }
+  return out + unescaped(text.slice(i));
 }
+
+const unescaped = (s: string): string => s.replace(/\\(.|$)/gs, (m, c) => (c === "\n" ? "" : m));
 
 /** The `…` substitutions of an unquoted here-document body; `\`` there is a literal backtick. */
 function backticks(body: string): string[] {

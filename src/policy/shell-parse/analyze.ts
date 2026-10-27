@@ -1,6 +1,6 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
-import { continuationJoins, type State, walkBash } from "./bash.ts";
+import { joinContinuations, type State, walkBash } from "./bash.ts";
 import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
 import { walkPowerShell } from "./powershell.ts";
@@ -32,17 +32,20 @@ export function analyzeShell(
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
   // A nested script's error counts too: the grammar can lose a whole command to one (`coproc X if(true)then …`).
   let topError = false;
-  const run = (text: string, st: State): boolean => {
+  // The tree of the joined text must locate its quotes and comments where the first reading did, or it misread one.
+  const run = (text: string, st: State, joined = false): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
     return (
       parsers.withTree("bash", text, left, (root) => {
+        const bashText = joinContinuations(root, text);
+        if (bashText !== text && !joined) return run(bashText, st, true);
+        if (bashText !== text) ctx.state.misread = true;
         if (root.hasError) {
           ctx.fail("parse error");
           topError = true;
         }
-        if (continuationJoins(root)) ctx.state.misread = true;
-        walkBash(root, { ctx, script: run }, st);
+        walkBash(root, { ctx, script: (t, s) => run(t, s) }, st);
         return true;
       }) ?? false
     );

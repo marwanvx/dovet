@@ -14,11 +14,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
-- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
-- **Partly fixed (#200, open):** two words anywhere that only a line continuation separates, and `"$\<newline>("` in a string or here-document, make the analysis unparsed (Q102). Still open (F76 round-3 security review): `echo ${x:-$\<newline>(git push)}` and `[[ x =~ $\<newline>(git push) ]]` allow in bypass past a deny rule. Fix the class: remove `\<newline>` from the text as bash's lexer does (not in single quotes, quoted here-documents or comments) before parsing.
-
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
 - `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
@@ -228,6 +223,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
+- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
+- **Fixed (#200):** before parsing, the analyzer removes every unquoted `\<newline>` the way bash's lexer does (not in single quotes, `$'…'`, comments or quoted here-document bodies) and parses the joined text; a joined text whose quotes or comments read differently is unparsed (QUESTIONS Q102).
 
 ### F81 (F76 rethink round-3 security review): the grammar merges `{ {` into one word and hides the command
 - **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`inner`, `KEYWORDS`)
