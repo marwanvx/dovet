@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F76 (F41 review): git runs a command its arguments or environment name, out of the remote-action check's sight
+- **Severity:** major · `src/policy/rules/shell.ts` (`inner`, `gitAlias`), `src/policy/decide/remote.ts`
+- `git submodule foreach git push`, `git rebase -x 'git push origin main' HEAD~1`, `git bisect run git push` and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log` are allowed in tainted `bypassPermissions`: git is not read as an exec wrapper, and inline assignments are stripped before `gitHidden` sees the configuration. Fix as F41 did for `!` aliases: give `inner` readings for these (`sh -c` of foreach/`--exec`'s string, `bisect run`'s argv), and count a `GIT_CONFIG*` assignment on a git command like inline `-c` configuration. Same class (minor, F41 round-2 security review, not probed): `wget --config=<file>` reads `method`/`post_data` from a file the agent wrote.
+
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
 - `git push origin +!BRANCH!` allows in `bypassPermissions`: `!` is in no unresolved class, while the `cmd /c` spelling asks since F59 (delayed expansion is in its metacharacter set). In a shell where `!` expands (zsh/fish history, cmd with `/v:on` without the layer) the destination is known only at run time. Add `!` to `unresolvedTarget` like F64's `%`, or name the limit where the class is claimed.
@@ -77,10 +81,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F75 (F51 round-3 security review): `recovered` also holds the lines after a syntax error, which never run
 - **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`recovered`), permissions §5
 - `echo hi\n)\ngit push origin +main` is denied as a force-push in `default`, though bash stops at the `)` line; in PowerShell a parse error runs nothing, yet `git push origin +main\n)` denies. Fail-closed (spurious denies, no bypass), but §5's "from before the erroring line" and "those lines run" overclaim. Fix: keep only commands whose node ends before the first error node's row in Bash; drop `recovered` for PowerShell.
-
-### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
-- **Severity:** major · `src/policy/decide/remote.ts:22-30`
-- `test.failing`: allowed in tainted bypass. Same gap (minor): `git send-pack`, `gh release upload`, `wget --method=POST`, `npx npm publish`.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
@@ -211,6 +211,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
+- **Severity:** major · `src/policy/decide/remote.ts:22-30`
+- `test.failing`: allowed in tainted bypass. Same gap (minor): `git send-pack`, `gh release upload`, `wget --method=POST`, `npx npm publish`.
+- **Fixed (#199):** an inline `-c alias.*` is expanded as git does (a `!` alias reads as `sh -c` of its body), any subcommand outside git's own list counts as a possible push (config-file aliases, add-ons, remote helpers), inline configuration that can run a program counts too, and `send-pack`, `http-push`, `imap-send`, `subtree push`, `gh release upload`, `wget --method`/`--body-*` and `npx`/`bunx`/`pnpx` joined the list. Q100 and §4.8 carry the rule; F76 logged.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`

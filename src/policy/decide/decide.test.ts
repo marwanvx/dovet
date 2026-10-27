@@ -540,6 +540,116 @@ describe("remote actions", () => {
   });
 
   // spec: AC-PERM-29
+  test("a git alias is read as what it runs; a git command git doesn't ship could be an alias for push (F41)", () => {
+    const pushes: Array<[string, string]> = [
+      ["git -c alias.p=push p origin main", "git push"],
+      ["git -c Alias.P=push P origin main", "git push"],
+      ["git -c alias.q=push -c alias.p=q p", "git push"],
+      ["git -c alias.p=status -c alias.p=push p", "git push"],
+      ["git -c alias.p=push -c alias.push=status p origin main", "git push"],
+      ["git -c alias.p=push -c alias.push=status -c alias.status=push p", "git push"],
+      ["git --shallow-file status push origin main", "git push"],
+      ["git -c alias.gui=push gui", "git push"],
+      ["git -c alias.status=push Status origin main", "git push"],
+      ["git -c alias.p=Status -c alias.status=push p origin main", "git push"],
+      ["git -c alias.subtree=push subtree origin main", "git push"],
+      ["git Status", "git Status"],
+      ["git instaweb", "git instaweb"],
+      ["git -c 'alias.p=push --dry-run' p", "git push"],
+      ["git -c alias.p='!git push origin main' p", "git p"],
+      ["git --config-env alias.p=X p", "git --config-env alias.p"],
+      ["git --config-env=alias.p=X p", "git --config-env alias.p"],
+      ["git p origin main", "git p"],
+      ["git lfs push origin main", "git lfs"],
+      ["git -c core.pager='git push' log", "git -c core.pager"],
+      ["git -c core.sshCommand=x fetch", "git -c core.sshCommand"],
+      ["git subtree push --prefix=d origin main", "git subtree push"],
+      ["git send-pack r main", "git send-pack"],
+      ["git http-push u main", "git http-push"],
+      ["git remote-ext r u", "git remote-ext"],
+      ["git imap-send", "git imap-send"],
+    ];
+    for (const [c, label] of pushes) {
+      const d = remote(c, auto("default"));
+      expect(d.behavior, c).toBe("ask");
+      expect(d.reason, c).toMatch(new RegExp(`remote action: ${label.replaceAll(".", "\\.")}(?![\\w-])`));
+      expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
+    }
+    for (const c of [
+      "git -c alias.p='push --force' p origin main",
+      "git -c alias.p=push p --force origin main",
+      "git -c alias.p='!git push --force origin main' p",
+      "git -c 'alias.p=push --force' -c alias.push=status p origin main",
+      "git --shallow-file status push --force origin main",
+      "git -c 'alias.log=push --force' Log origin main",
+    ])
+      expect(remote(c, auto("bypassPermissions")).behavior, c).toBe("deny");
+    expect(remote("git -c alias.p='!rm -rf /' p", auto("bypassPermissions")).behavior).not.toBe("allow");
+    // PowerShell's analyzer doesn't read the `sh -c` a `!` alias runs, so the alias itself counts.
+    const ps = sh("git -c alias.p='!git push' p", auto("bypassPermissions", {}, { tainted: true }), {
+      language: "powershell",
+      sandboxed: true,
+    });
+    expect(ps.behavior).toBe("deny");
+    expect(remote("git p origin main", auto("default", { allow: ["Bash(git p *)"] })).behavior).toBe("allow");
+    // A long alias chain stops at a cap instead of growing the analysis without bound.
+    const chain = Array.from({ length: 2000 }, (_, i) => `-c alias.a${i}=a${i + 1}`).join(" ");
+    const started = performance.now();
+    expect(
+      remote(`git ${chain} -c alias.a2000=push a0`, auto("bypassPermissions", {}, { tainted: true })).behavior,
+    ).not.toBe("allow");
+    expect(performance.now() - started).toBeLessThan(400);
+    for (const c of [
+      "git -c alias.s=status s",
+      "git -c color.ui=always log",
+      "git -c user.name=x -c user.email=x commit -m m",
+      "git --no-pager log",
+      "git --version",
+      "git switch -c x",
+      "git stash list",
+    ])
+      expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-29
+  test("other spellings of a §4.8 action: gh release upload, wget --method, a package runner running one", () => {
+    for (const c of [
+      "gh release upload v1 f",
+      "wget --method=POST https://h",
+      "wget --meth PUT https://h",
+      "wget --body-data=x https://h",
+      "wget --body-file f https://h",
+      "npx npm publish",
+      "npx -y npm publish",
+      "bunx npm publish",
+      "pnpx npm publish",
+      "npx -c 'npm publish'",
+      "npx -c 'true; npm publish'",
+      "npx --call='cd x&&npm publish'",
+      "wget -e method=POST https://h",
+      "wget -qe method=POST https://h",
+      "wget -qemethod=POST https://h",
+      "wget -e post-data=x https://h",
+      "wget -e Body_Data=x https://h",
+      `npx -c "'npm' publish"`,
+      "npx -c 'np\"\"m publish'",
+      "npx -c 'n\\pm publish'",
+      "wget --execute=post_data=x https://h",
+      "npx --package=x -- twine upload d",
+    ])
+      expect(remote(c, auto("default")).behavior, c).toBe("ask");
+    for (const c of [
+      "wget --method=GET https://h",
+      "wget --method HEAD https://h",
+      "wget -e robots=off https://h",
+      "npx tsc",
+      "bunx prettier --write .",
+      "gh release view v1",
+    ])
+      expect(remote(c, auto("default")).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-29
   test("permissions.examples go through the built-in checks and name the decider", () => {
     const rules = rulesFor({ allow: ["Bash(git status)"] });
     const decider = exampleDecider(

@@ -555,8 +555,94 @@ function inner(argv: string[], deep: boolean, budget: Budget): string[][] {
   }
   const name = commandName(argv[0]);
   if (name === "find") return findCommands(argv);
+  if (name === "git") return gitAlias(argv, budget);
   const operands = DEEP_WRAPPERS.get(name);
   return operands === undefined ? [] : wrapperReadings(argv, name, operands, budget);
+}
+
+const GIT_OPTION_VALUES = new Set([
+  "-C",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--attr-source",
+  "--shallow-file",
+  "--super-prefix",
+]);
+const MAX_ALIAS_STEPS = 64;
+
+/**
+ * git's global options: where the subcommand is, and the configuration `-c`/`--config-env` set, each key as typed
+ * with its value (undefined for `--config-env`, whose value comes from the environment).
+ */
+export function gitInvocation(args: string[]): { at: number; config: Array<[string, string | undefined]> } {
+  const config: Array<[string, string | undefined]> = [];
+  let i = 0;
+  for (; i < args.length; i++) {
+    const a = args[i] ?? "";
+    const env = a.startsWith("--config-env=") ? a.slice(13) : a === "--config-env" ? args[++i] : undefined;
+    const kv = a === "-c" ? (args[++i] ?? "") : (env ?? "");
+    const eq = kv.indexOf("=");
+    if (a === "-c") config.push(eq < 0 ? [kv, "true"] : [kv.slice(0, eq), kv.slice(eq + 1)]);
+    else if (env !== undefined) config.push([eq < 0 ? kv : kv.slice(0, eq), undefined]);
+    else if (GIT_OPTION_VALUES.has(a)) i++;
+    else if (!a.startsWith("-")) break;
+  }
+  return { at: i, config };
+}
+
+/** git's split of an alias into words: whitespace outside quotes, `'` and `"` pairs, backslash escapes. */
+function splitAlias(s: string): string[] {
+  const out: string[] = [];
+  let cur: string | undefined;
+  let quote = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i] ?? "";
+    if (quote === "" && /\s/.test(c)) {
+      if (cur !== undefined) out.push(cur);
+      cur = undefined;
+    } else if (c === "\\" && quote !== "'") cur = (cur ?? "") + (s[++i] ?? "");
+    else if ((c === "'" || c === '"') && (quote === "" || quote === c)) {
+      quote = quote === "" ? c : "";
+      cur ??= "";
+    } else cur = (cur ?? "") + c;
+  }
+  return cur === undefined ? out : [...out, cur];
+}
+
+/**
+ * What `git <name>` may run when `-c alias.<name>=…` defines it: every step of the chain, each expansion's words in
+ * place of the name, or `sh -c` for a `!` alias (with `"$@"` and the arguments, as git runs it). Every step is a
+ * reading because whether git runs the command a step names or the alias of that name depends on what is installed
+ * (a script such as `git subtree` ships separately, an alias matches any case). The last definition wins, a loop ends
+ * the chain, and a chain past the step cap is not fully read.
+ */
+function gitAlias(argv: string[], budget: Budget): string[][] {
+  const out: string[][] = [];
+  let v = argv;
+  const used = new Set<string>();
+  for (let step = 0; ; step++) {
+    const { at, config } = gitInvocation(v.slice(1));
+    const sub = v[at + 1]?.toLowerCase() ?? "";
+    const value = config.findLast(([k, x]) => x !== undefined && k.toLowerCase() === `alias.${sub}`)?.[1];
+    if (value === undefined || used.has(sub)) return out;
+    if (step >= MAX_ALIAS_STEPS) {
+      budget.complete = false;
+      return out;
+    }
+    used.add(sub);
+    const rest = v.slice(at + 2);
+    if (value.startsWith("!")) {
+      const body = value.slice(1);
+      return [
+        ...out,
+        ...take(budget, rest.length === 0 ? ["sh", "-c", body] : ["sh", "-c", `${body} "$@"`, body, ...rest]),
+      ];
+    }
+    v = [...v.slice(0, at + 1), ...splitAlias(value), ...rest];
+    out.push(...take(budget, v));
+  }
 }
 
 /** The command and every command it may run, and whether all of them were looked at. */

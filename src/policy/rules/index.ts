@@ -11,6 +11,7 @@ export {
   commandName,
   findCommands,
   findCommandsAt,
+  gitInvocation,
   isExecWrapper,
   isLongOption,
   isSafeEnv,
