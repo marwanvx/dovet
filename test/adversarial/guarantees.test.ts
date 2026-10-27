@@ -1218,6 +1218,25 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
       { os, home: "/home/u", canonicalize: (p) => p },
     ).rules;
     expect(shell("git push origin main\n)", state("bypassPermissions", { rules: denied })).behavior).toBe("deny");
+    const paths = loadRules(
+      [
+        {
+          file: "/p/s.json",
+          baseDir: root,
+          allow: [],
+          ask: [],
+          deny: [{ text: "Read(a.ts)" }, { text: "Edit(src/x.ts)" }],
+        },
+      ],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    // Recovered read operands get the sensitive check, and path rules see recovered reads and write targets.
+    expect(shell("cat .env\n)", state("bypassPermissions")).findings.map((f) => f.kind)).toContain("sensitive");
+    for (const command of ["cat a.ts\n)", "rm src/x.ts\n)"]) {
+      const r = shell(command, state("bypassPermissions", { rules: paths }));
+      expect(r.behavior, command).toBe("deny");
+      expect(r.by, command).toStartWith("rule ");
+    }
     // The erroring line itself runs nothing and carries no finding: the unparsed ask decides it.
     const d = shell("echo ok\n)", state("bypassPermissions"));
     expect(d.behavior).toBe("ask");
