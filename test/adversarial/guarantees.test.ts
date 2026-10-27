@@ -1660,6 +1660,7 @@ describe("a backtick body is read as bash reads it (FOLLOWUPS F84)", () => {
     ["echo `echo a\\\\b`", ["echo", "ab"]],
     ["echo `echo 'a\\\\b'`", ["echo", "a\\b"]],
     ['echo "`ls src`"', ["ls", "src"]],
+    ['echo "$(echo "`echo a`")"', ["echo", "a"]],
   ])("%s, a plain backtick substitution, stays understood", (command, argv) => {
     const read = analyzeShell(parsers, "bash", command, {
       cwd: root,

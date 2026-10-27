@@ -240,7 +240,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)
 - `` echo `git pu\\sh` `` and `` echo `\`git push\`` `` run `git push` and allow past a deny rule; `` echo `cat .e\\nv` `` passes the `.env` check. Unescape `\\`, `` \` ``, `\$` and analyze the body as a nested script, or fail closed.
-- **Fixed (#PR):** a backtick body is unescaped as bash does (`\\`, `` \` ``, `\$`, and `\"` inside double quotes; in here-documents too) and parsed again as a nested script; a body whose first unescaped closing backtick isn't where the grammar ends it is unparsed.
+- **Fixed (#201):** a backtick body is unescaped as bash does (`\\`, `` \` ``, `\$`, and `\"` inside double quotes; in here-documents too) and parsed again as a nested script; a body whose first unescaped closing backtick isn't where the grammar ends it is unparsed.
 
 ### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
