@@ -34,10 +34,11 @@ const STATEMENTS = new Set([
   ...["c_style_for_statement", "function_definition", "pipeline", "list", "negated_command", "test_command"],
 ]);
 
-const VERBATIM = new Set(["string", "raw_string", "ansi_c_string", "heredoc_body", "comment"]);
+const VERBATIM = new Set(["raw_string", "ansi_c_string", "comment"]);
 
 /** Two words anywhere in the tree that only a line continuation separates: bash joins them into one
- * (`gi\<newline>t`, `export GIT_PAGE\<newline>R=…`, `< .en\<newline>v`). */
+ * (`gi\<newline>t`, `export GIT_PAGE\<newline>R=…`, `< .en\<newline>v`), and `"$\<newline>(…)"`, which bash runs
+ * but the grammar reads as text. */
 export function continuationJoins(root: Node): boolean {
   const todo = [root];
   for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
@@ -48,6 +49,7 @@ export function continuationJoins(root: Node): boolean {
         const gap = n.text.slice(prev.endIndex - n.startIndex, c.startIndex - n.startIndex);
         if (gap.includes("\\\n") && gap.replaceAll("\\\n", "") === "") return true;
       }
+      if ((c.type === "string" || c.type === "heredoc_body") && /\$(\\\n)+[({[]/.test(c.text)) return true;
       if (!VERBATIM.has(c.type)) todo.push(c);
     }
   }

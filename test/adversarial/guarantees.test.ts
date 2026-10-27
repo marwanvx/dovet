@@ -715,6 +715,12 @@ describe("git runs no hidden push through a command its arguments or environment
     "cat < .en\\\nv",
     "echo > .en\\\nv",
     "for f in .en\\\nv; do cat $f; done",
+    'echo "$(cat .en\\\nv)"',
+    'echo "`gi\\\nt push`"',
+    "cat <<EOF\n$(cat .en\\\nv)\nEOF",
+    "sh -c 'echo \"$(gi\\\nt push)\"'",
+    'echo "$\\\n(git push)"',
+    "cat <<EOF\n$\\\n(cat .env)\nEOF",
   ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
     const analysis = analyzeShell(parsers, "bash", command, {
       cwd: root,
