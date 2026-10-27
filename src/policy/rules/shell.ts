@@ -650,7 +650,12 @@ export function gitOptionValues(args: string[], short: string | undefined, long:
   const out: string[] = [];
   for (let j = 0; j < args.length && args[j] !== "--"; j++)
     if ((args[j] ?? "").startsWith("-") && (short !== undefined || (args[j] ?? "").startsWith("--")))
-      out.push(...optionValues(args, j, short ?? "\0", long).map(([v]) => v));
+      // parse-options takes the next word only for a bare option, never after an attached value.
+      out.push(
+        ...optionValues(args, j, short ?? "\0", long)
+          .slice(0, 1)
+          .map(([v]) => v),
+      );
   return out;
 }
 

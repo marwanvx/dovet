@@ -86,15 +86,16 @@ function gitEnvironment(argv: string[]): string | undefined {
   const name = commandName(argv[0]);
   if (NAME_SETTERS.has(name)) {
     const hit = argv.slice(1).find((w) => GIT_ENV_NAME.test(w));
-    if (hit !== undefined) return hit;
+    if (hit !== undefined) return hit.replace(/^env:/i, "");
   }
   if (!(ENV_SETTERS.has(name) || /^\w+=/.test(argv[0] ?? ""))) return undefined;
   for (const w of argv) {
     const m = GIT_ENV.exec(w);
     if (m === null) continue;
+    // A pager's display options only; less's `-k`/`--lesskey*` and any editor option can load commands from a file.
     const quiet =
       /PAGER|EDITOR|VISUAL/.test(m[1] ?? "") &&
-      /^(?:(?:cat|less|more|true|:|vim?|nano)(?:\s+-[\w=-]*)*)?$/.test(m[2] ?? "");
+      /^(?:(?:cat|less|more)(?:\s+-(?!\w*k)(?!-lesskey)[\w=-]*)*|true|:|vim?|nano)?$/.test(m[2] ?? "");
     if (!quiet) return m[1];
   }
   return undefined;
@@ -175,7 +176,7 @@ export function remoteAction(argv: string[]): Remote | undefined {
     return hit === undefined ? undefined : is("deploy", `${tool} ${hit}`);
   };
   const env = gitEnvironment(argv);
-  if (env !== undefined) return is("push", `${env}= (git configuration or a program git runs, from the environment)`);
+  if (env !== undefined) return is("push", `${env} (git configuration or a program git runs, from the environment)`);
   switch (name) {
     case "git":
       if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
