@@ -72,12 +72,16 @@ export function analyzeShell(
     return unparsed(`analysis failed: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (parsed && performance.now() > deadline) parsed = false;
-  if (topError)
+  if (topError || ctx.state.misread)
     return {
       commands: undefined,
       understood: false,
       literalNames: false,
-      reasons: ["the parser reported a syntax error"],
+      reasons: [
+        topError
+          ? "the parser reported a syntax error"
+          : "the parser misread a compound command or a line continuation",
+      ],
       operands: [],
       // The lines before the erroring one run (the tool executes a script file): the checks see them, the ask stands.
       recovered: { commands: ctx.commands, operands: ctx.operands },

@@ -26,14 +26,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/remote.ts` (`GIT_ENV_NAMES`)
 - `PATH=./bin:$PATH git log` lets a written `./bin/less` or `git-merge-<strategy>` run, the class `GIT_EXEC_PATH` covers; left out because a `PATH` prefix on build commands is common. Decide with a measured false-positive cost: count `PATH=` only when the command is git.
 
-### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
-- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
-
-### F81 (F76 rethink round-3 security review): the grammar merges `{ {` into one word and hides the command
-- **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`inner`, `KEYWORDS`)
-- `! { { git push; }; }` parses as argv `{ { git push` and allows in tainted bypass.
-
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
 - `git push origin +!BRANCH!` allows in `bypassPermissions`: `!` is in no unresolved class, while the `cmd /c` spelling asks since F59 (delayed expansion is in its metacharacter set). In a shell where `!` expands (zsh/fish history, cmd with `/v:on` without the layer) the destination is known only at run time. Add `!` to `unresolvedTarget` like F64's `%`, or name the limit where the class is claimed.
@@ -227,6 +219,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
+- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
+- **Fixed (#200):** a word joined to the next only by a line continuation makes the analysis unparsed (asks in every mode, QUESTIONS Q102).
+
+### F81 (F76 rethink round-3 security review): the grammar merges `{ {` into one word and hides the command
+- **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`inner`, `KEYWORDS`)
+- `! { { git push; }; }` parses as argv `{ { git push` and allows in tainted bypass.
+- **Fixed (#200):** a simple command led by a reserved or brace-only word, or holding a compound command, makes the analysis unparsed (QUESTIONS Q102).
 
 ### F76 (F41 review): git runs a command its arguments or environment name, out of the remote-action check's sight
 - **Severity:** major · `src/policy/rules/shell.ts` (`inner`, `gitAlias`), `src/policy/decide/remote.ts`

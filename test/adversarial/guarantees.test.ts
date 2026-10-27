@@ -698,6 +698,37 @@ describe("git runs no hidden push through a command its arguments or environment
   });
 
   // spec: permissions §0 guarantee 3
+  test.each([
+    "coproc X { { git push; }; }",
+    "! { { git push; }; }",
+    "time { { git push; } }",
+    "time { git push; }",
+    "gi\\\nt push",
+    "git rebase -x 'coproc X { { git push; }; }' HEAD~1",
+  ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
+    const analysis = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(analysis.commands).toBeUndefined();
+    expect(analysis.recovered).toBeDefined();
+    expect(shell(command, state("bypassPermissions")).behavior).toBe("ask");
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+    expect(shell(command, state("dontAsk")).behavior).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["git log \\\n  --oneline", "cat > notes.md <<EOF\nUse \\`npm test\\` first\nEOF", "echo 'a\\\nb'"])(
+    "%s, a line continuation between words or an escaped backtick, stays allowed in bypass",
+    (command) => {
+      expect(shell(command, state("bypassPermissions")).behavior).toBe("allow");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
   test("a coproc keyword in an argument or a pattern adds no command", () => {
     const d = shell("grep -rn coproc src", state("default"));
     expect(d.behavior).toBe("allow");

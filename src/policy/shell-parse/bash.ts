@@ -25,6 +25,48 @@ const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "
 export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
+const RESERVED = new Set([
+  ...["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"],
+  ...["function", "!", "[[", "]]"],
+]);
+const STATEMENTS = new Set([
+  ...["subshell", "compound_statement", "if_statement", "while_statement", "for_statement", "case_statement"],
+  ...["c_style_for_statement", "function_definition", "pipeline", "list", "negated_command", "test_command"],
+]);
+
+/** A line continuation is all that separates two children: bash joins them into one word (`gi\<newline>t`). */
+const joined = (n: Node): boolean =>
+  n.children.some((c, i) => {
+    const prev = n.children[i - 1];
+    const gap = prev === undefined ? "" : n.text.slice(prev.endIndex - n.startIndex, c.startIndex - n.startIndex);
+    return (gap.includes("\\\n") && gap.replaceAll("\\\n", "") === "") || (c.type === "concatenation" && joined(c));
+  });
+
+/** The `…` substitutions of an unquoted here-document body; `\`` there is a literal backtick. */
+function backticks(body: string): string[] {
+  const out: string[] = [];
+  let start = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "\\") i++;
+    else if (body[i] === "`" && start < 0) start = i + 1;
+    else if (body[i] === "`") {
+      out.push(body.slice(start, i));
+      start = -1;
+    }
+  }
+  return start < 0 ? out : [...out, body.slice(start)];
+}
+
+/** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error
+ * (`then git push`, `{ {` as one word), and splits a word at a line continuation: the reading isn't bash's. */
+const misread = (n: Node): boolean => {
+  const name = n.namedChildren.find((c) => c.type === "command_name")?.text;
+  return (
+    (name !== undefined && (RESERVED.has(name) || /^[{}\s]+$/.test(name))) ||
+    n.namedChildren.some((c) => STATEMENTS.has(c.type)) ||
+    joined(n)
+  );
+};
 
 const fresh = (st: State): State => ({ ...st, stack: [...st.stack], loops: new Map(st.loops), depth: st.depth + 1 });
 
@@ -165,9 +207,9 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
               statement(p, fresh(st), true);
             }
             // tree-sitter leaves backticks in an unquoted body as plain text.
-            for (const m of c.text.matchAll(/`([^`]*)`/g)) {
+            for (const script of backticks(c.text)) {
               ctx.fail("here-document with command substitution");
-              walk.script(m[1] ?? "", fresh(st));
+              walk.script(script, fresh(st));
             }
           }
         } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
@@ -222,6 +264,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
   }
 
   function command(n: Node, st: State, cond: boolean, preset: Node[]): void {
+    if (misread(n)) ctx.state.misread = true;
     const sub: Subcommand = { argv: [], cwd: st.cwd };
     const args: Word[] = [];
     let name: Word | undefined;

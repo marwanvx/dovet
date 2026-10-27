@@ -41,7 +41,7 @@ export function createContext(opts: AnalyzeOptions) {
   const commands: Subcommand[] = [];
   const operands: Operand[] = [];
   const reasons: string[] = [];
-  const state = { literalNames: true };
+  const state = { literalNames: true, misread: false };
   const deadline = { at: Number.POSITIVE_INFINITY };
   const fail = (reason: string): void => {
     if (!reasons.includes(reason)) reasons.push(reason);
