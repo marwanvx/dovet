@@ -20,7 +20,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
-- `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink security review): a computed command or script word in PowerShell — `& "gi$()t" push`, `sh -c "gi$()t push"`, ``git rebase -x "g`it push"`` — sets `literalNames: false` but still allows in tainted bypass.
+- `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too.
 
 ### F79 (F76 security review): `PATH=…` on a git command picks the programs git runs
 - **Severity:** minor · `src/policy/decide/remote.ts` (`GIT_ENV_NAMES`)
@@ -28,7 +28,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
-- `gi\<newline>t push` and `git pu\<newline>sh` analyze as `understood: true` with argv `gi t push` / `git pu sh`, but bash removes the line continuation before splitting words and runs `git push`; the same splits `co\<newline>proc`. Remove unquoted (and double-quoted) `\<newline>` pairs before parsing, mapping positions back, or fail closed on a word that contains one.
+- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
 
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
