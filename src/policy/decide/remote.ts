@@ -60,7 +60,7 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
 const GIT_ENV_NAMES =
   "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESSOPEN|LESSCLOSE";
 const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
-const GIT_ENV_NAME = new RegExp(`^(?:env:)?(${GIT_ENV_NAMES})$`, "i");
+const GIT_ENV_NAME = new RegExp(`^(?:env:[\\\\/]?|-v)?(${GIT_ENV_NAMES})$`, "i");
 const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
 /** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
 const NAME_SETTERS = new Set([
@@ -84,11 +84,21 @@ const NAME_SETTERS = new Set([
  * pager or editor whose value is one program and its options is quiet unless that program runs others. */
 function gitEnvironment(argv: string[]): string | undefined {
   const name = commandName(argv[0]);
-  if (NAME_SETTERS.has(name)) {
-    const hit = argv.slice(1).find((w) => GIT_ENV_NAME.test(w));
-    if (hit !== undefined) return hit.replace(/^env:/i, "");
+  const assigns = /^\w+=/.test(argv[0] ?? "");
+  // The analyzer reads `declare -n r=GIT_PAGER` as the assignment `r=GIT_PAGER`.
+  if (NAME_SETTERS.has(name) || assigns) {
+    // `declare -n r=GIT_PAGER` makes `r` a name for the variable.
+    const hit = argv
+      .slice(assigns ? 0 : 1)
+      .map(
+        (w) =>
+          (assigns ? undefined : GIT_ENV_NAME.exec(w)?.[1]) ??
+          (w.includes("=") ? GIT_ENV_NAME.exec(w.slice(w.indexOf("=") + 1))?.[1] : undefined),
+      )
+      .find((n) => n !== undefined);
+    if (hit !== undefined) return hit;
   }
-  if (!(ENV_SETTERS.has(name) || /^\w+=/.test(argv[0] ?? ""))) return undefined;
+  if (!(ENV_SETTERS.has(name) || assigns)) return undefined;
   for (const w of argv) {
     const m = GIT_ENV.exec(w);
     if (m === null) continue;
@@ -182,6 +192,12 @@ export function remoteAction(argv: string[]): Remote | undefined {
       if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
       if (GIT_UPLOADS.has(a)) return is("upload", `git ${a}`);
       if (a === "subtree" && w("push")) return is("push", "git subtree push");
+      // A template directory brings hooks that run on checkout and commit.
+      if (
+        (a === "clone" || a === "init") &&
+        gitOptionValues(gitArgs(rest).slice(1), undefined, "--template").length > 0
+      )
+        return is("push", `git ${a} --template (its hooks can run a command)`);
       // clone sets its `-c`/`--config` configuration before it fetches.
       if (a === "clone") {
         const key = gitOptionValues(gitArgs(rest).slice(1), "c", "--config")

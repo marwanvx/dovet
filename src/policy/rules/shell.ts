@@ -659,13 +659,19 @@ export function gitOptionValues(args: string[], short: string | undefined, long:
   return out;
 }
 
+const SCRIPT_KEYWORDS = new Set(["if", "then", "elif", "else", "while", "until", "do", "!", "{", "time"]);
+
 /** `sh -c script`, and each command of the script split at shell separators for an analyzer that doesn't parse
  * `sh -c` (PowerShell). */
 const scriptReadings = (script: string): string[][] => [
   ["sh", "-c", script],
   ...script
     .split(/\$\(|[;&|\n(){}`]/)
-    .map(splitAlias)
+    .map((part) => {
+      const words = splitAlias(part);
+      while (SCRIPT_KEYWORDS.has(words[0] ?? "")) words.shift();
+      return words;
+    })
     .filter((w) => w.length > 0),
 ];
 

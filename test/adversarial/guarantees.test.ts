@@ -597,6 +597,10 @@ describe("git runs no hidden push through a command its arguments or environment
     "GIT_EDITOR='vim --cmd x' git commit",
     "GIT_PAGER='less -Rk keys' git log",
     "GIT_PAGER='less --lesskey-file=x' git log",
+    "declare -n r=GIT_PAGER; export r='git push'; git log",
+    "printf -vGIT_PAGER 'git push'; git log",
+    "git clone --template=t . y",
+    "git init --template=t y",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
@@ -610,6 +614,12 @@ describe("git runs no hidden push through a command its arguments or environment
     "git ls-remote --upload-pack 'git push' .",
     "git submodule foreach 'cd x && git push'",
     "Set-Item env:GIT_PAGER 'git push'; git log",
+    "Set-Item Env:\\GIT_PAGER 'git push'; git log",
+    "Set-Item -Path Env:/GIT_PAGER -Value 'git push'; git log",
+    "git rebase -x 'if true; then git push; fi' HEAD~1",
+    "git rebase -x 'while true; do git push; done' HEAD~1",
+    "git rebase -x '! git push' HEAD~1",
+    "git submodule foreach 'then git push'",
   ])("%s is a remote action while tainted in PowerShell", (command) => {
     expect(
       shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
@@ -618,7 +628,11 @@ describe("git runs no hidden push through a command its arguments or environment
 
   // spec: permissions §0 guarantee 4
   test("a removal a git subcommand runs is a critical-path removal in PowerShell", () => {
-    for (const command of ["git rebase -x 'rm -rf /' HEAD~1", "git submodule foreach 'rm -rf /'"])
+    for (const command of [
+      "git rebase -x 'rm -rf /' HEAD~1",
+      "git submodule foreach 'rm -rf /'",
+      "git rebase -x 'if true; then rm -rf /; fi' HEAD~1",
+    ])
       expect(shell(command, state("bypassPermissions"), false, { language: "powershell" }).countdown, command).toBe(
         true,
       );
@@ -643,6 +657,7 @@ describe("git runs no hidden push through a command its arguments or environment
     "PAGER='less -FRX' git log",
     "EDITOR=vim git commit",
     "git clone -cuser.name=x x",
+    "FOO=1 grep EDITOR x",
     "GIT_AUTHOR_NAME=x GIT_COMMITTER_NAME=x git commit -m x",
     "GIT_TERMINAL_PROMPT=0 git status",
     "git submodule status",
@@ -1371,40 +1386,4 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
     expect(shell("export FOO=bar; echo ok", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("echo $HOME", state("bypassPermissions")).behavior).toBe("allow");
   });
-});
-
-describe("ZZPROBE", () => {
-  const sh = [
-    "EDITOR='vim -S' git commit",
-    "EDITOR='vim -uk' git commit",
-    "GIT_PAGER='less --lesskey-src=k' git log",
-    "GIT_PAGER='less -kk' git log",
-    "PAGER='less --lesskey-file=k' git log",
-    "declare -n r=GIT_PAGER; r='git push'; git log",
-    "declare -n r=GIT_PAGER; export r='git push'; git log",
-    "printf -vGIT_PAGER 'git push'; export -p >/dev/null; git log",
-    "git clone --template=t . y",
-    "git init --template=t y",
-    "git clone -c Core.Pager='git push' . y",
-    "git clone --confi=core.pager='git push' . y",
-  ];
-  const ps = [
-    "Set-Item Env:\\GIT_PAGER 'git push'; git log",
-    "Set-Item -Path Env:/GIT_PAGER -Value 'git push'; git log",
-    "git rebase -x 'if true; then git push; fi' HEAD~1",
-    "git rebase -x 'while true; do git push; done' HEAD~1",
-    "git rebase -x '! git push' HEAD~1",
-    "git rebase -x 'time git push' HEAD~1",
-    "git rebase -x 'g\\it push' HEAD~1",
-    "git rebase -x 'x=1 git push' HEAD~1",
-    "git rebase -x 'exec git push' HEAD~1",
-    "git rebase -x 'command git push' HEAD~1",
-    "git rebase -x 'git pu\"\"sh' HEAD~1",
-    "git rebase -x 'case x in x) git push;; esac' HEAD~1",
-    "git rebase -x 'true\\\n git push' HEAD~1",
-    "git rebase -x 'if true; then rm -rf /; fi' HEAD~1",
-    "git submodule foreach 'then git push'",
-  ];
-  for (const c of sh) test(`bash ${c}`, () => { console.log("BASH", shell(c, state("bypassPermissions", { tainted: true })).behavior, c); });
-  for (const c of ps) test(`ps ${c}`, () => { const d = shell(c, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }); console.log("PS", d.behavior, d.countdown, c); });
 });
