@@ -22,7 +22,7 @@ export type Walk = {
 
 const MAX_DEPTH = 8;
 const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
 

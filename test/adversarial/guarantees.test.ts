@@ -601,6 +601,13 @@ describe("git runs no hidden push through a command its arguments or environment
     "printf -vGIT_PAGER 'git push'; git log",
     "git clone --template=t . y",
     "git init --template=t y",
+    "GIT_PAGER='less -R--lesskey-file=keys' git log",
+    "GIT_PAGER='less -R--lesskey-src=f' git log",
+    "GIT_PAGER='less -R -+k' git log",
+    "LESS=--lesskey-file=keys git log",
+    "LESSKEYIN=keys git log",
+    "coproc git push",
+    "git rebase -x 'coproc git push' HEAD~1",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
@@ -619,7 +626,16 @@ describe("git runs no hidden push through a command its arguments or environment
     "git rebase -x 'if true; then git push; fi' HEAD~1",
     "git rebase -x 'while true; do git push; done' HEAD~1",
     "git rebase -x '! git push' HEAD~1",
-    "git submodule foreach 'then git push'",
+    "git rebase -x 'time -p git push' HEAD~1",
+    "git rebase -x 'coproc git push' HEAD~1",
+    "git rebase -x '>/dev/null git push' HEAD~1",
+    "git rebase -x '<x git push' HEAD~1",
+    "git rebase -x '2>&1 git push' HEAD~1",
+    "git rebase -x 'X=\"$(git push)\"' HEAD~1",
+    "sh -c 'git push'",
+    "Set-Item Environment::GIT_PAGER 'git push'; git log",
+    "Set-Item Microsoft.PowerShell.Core\\Environment::GIT_PAGER 'git push'; git log",
+    "Set-Item Env:\\\\GIT_PAGER 'git push'; git log",
   ])("%s is a remote action while tainted in PowerShell", (command) => {
     expect(
       shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
@@ -655,6 +671,8 @@ describe("git runs no hidden push through a command its arguments or environment
     "PAGER=cat git log",
     "GIT_PAGER='less -R' git log",
     "PAGER='less -FRX' git log",
+    "LESS=-FRX git log",
+    "LESS=FRX git log",
     "EDITOR=vim git commit",
     "git clone -cuser.name=x x",
     "FOO=1 grep EDITOR x",

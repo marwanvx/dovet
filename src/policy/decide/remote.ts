@@ -58,9 +58,10 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
 
 /** Environment variables git (or its pager) reads configuration or a program to run from. */
 const GIT_ENV_NAMES =
-  "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESSOPEN|LESSCLOSE";
+  "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESS|LESSOPEN|LESSCLOSE|LESSKEY\\w*";
 const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
-const GIT_ENV_NAME = new RegExp(`^(?:env:[\\\\/]?|-v)?(${GIT_ENV_NAMES})$`, "i");
+// A provider path names the variable after its last `:`, `\` or `/` (`Env:\X`, `Microsoft.PowerShell.Core\Environment::X`).
+const GIT_ENV_NAME = new RegExp(`^(?:-v|.*[:\\\\/])?(${GIT_ENV_NAMES})$`, "i");
 const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
 /** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
 const NAME_SETTERS = new Set([
@@ -102,10 +103,13 @@ function gitEnvironment(argv: string[]): string | undefined {
   for (const w of argv) {
     const m = GIT_ENV.exec(w);
     if (m === null) continue;
-    // A pager's display options only; less's `-k`/`--lesskey*` and any editor option can load commands from a file.
+    // Only display flags: less reads long options inside a flag group and a lesskey file can run a command, and any
+    // editor option can load commands from a file.
     const quiet =
-      /PAGER|EDITOR|VISUAL/.test(m[1] ?? "") &&
-      /^(?:(?:cat|less|more)(?:\s+-(?!\w*k)(?!-lesskey)[\w=-]*)*|true|:|vim?|nano)?$/.test(m[2] ?? "");
+      m[1] === "LESS"
+        ? /^-?[FRSXr]*$/.test(m[2] ?? "")
+        : /PAGER|EDITOR|VISUAL/.test(m[1] ?? "") &&
+          /^(?:(?:cat|less|more)(?:\s+-[FRSXr]+)*|true|:|vim?|nano)?$/.test(m[2] ?? "");
     if (!quiet) return m[1];
   }
   return undefined;

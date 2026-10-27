@@ -1,6 +1,14 @@
 // Walks a PowerShell syntax tree: pipelines of plain commands only, with aliases canonicalized (permissions §3.2, §4.0).
 import type { Node } from "web-tree-sitter";
-import { canonicalCmdlet, type Redirect, type Subcommand } from "../rules/index.ts";
+import {
+  canonicalCmdlet,
+  commandName,
+  type Redirect,
+  type Subcommand,
+  shellScriptAt,
+  unwrapCommand,
+} from "../rules/index.ts";
+import { SHELLS } from "./bash.ts";
 import type { Context } from "./context.ts";
 import type { Word } from "./read-only.ts";
 
@@ -55,7 +63,8 @@ const isProviderPath = (text: string): boolean => text.includes("::") || /^[A-Za
 
 export type PowerShellState = { cwd: string; stack: string[] };
 
-export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): void {
+/** `script` parses and walks a bash script (what `sh -c` and git's own command options run); false when it couldn't. */
+export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState, script: (text: string) => boolean): void {
   function classify(name: string, parsed: Array<{ param?: string; word?: Word }>): Word[] | undefined {
     const spec = CMDLETS[name];
     if (spec === undefined) return undefined;
@@ -127,6 +136,15 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
       }
     }
     ctx.commands.push(sub);
+    const { argvs, complete } = unwrapCommand(sub.argv);
+    if (!complete) ctx.fail("a wrapper's options can't all be checked");
+    for (const v of argvs) {
+      if (!SHELLS.has(commandName(v[0]))) continue;
+      ctx.fail("sh -c runs a nested script");
+      const at = shellScriptAt(v.slice(1));
+      const text = at < 0 ? undefined : v[at + 1];
+      if (text !== undefined && !script(text)) ctx.fail("nested script not parsed");
+    }
     const lower = canonical.toLowerCase();
     if (lower === "set-location" || lower === "push-location" || lower === "pop-location") {
       const target = parsed.find((p) => p.word !== undefined)?.word;

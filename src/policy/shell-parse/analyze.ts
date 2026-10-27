@@ -63,7 +63,9 @@ export function analyzeShell(
           ctx.fail("parse error");
           topError = true;
         }
-        walkPowerShell(root, ctx, { cwd: opts.cwd, stack: [] });
+        walkPowerShell(root, ctx, { cwd: opts.cwd, stack: [] }, (text) =>
+          run(text, { cwd: opts.cwd, stack: [], loops: new Map(), depth: 1 }),
+        );
         return true;
       });
   } catch (e) {
