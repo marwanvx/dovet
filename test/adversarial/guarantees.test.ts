@@ -705,6 +705,16 @@ describe("git runs no hidden push through a command its arguments or environment
     "time { git push; }",
     "gi\\\nt push",
     "git rebase -x 'coproc X { { git push; }; }' HEAD~1",
+    "time if true; then git push; fi",
+    "! if true; then git push; fi",
+    "time while true; do git push; done",
+    "time ( git push )",
+    "export GIT_PAGE\\\nR='sh -c \"git push\"'; git log",
+    "readonly GIT_PAGE\\\nR='sh -c \"git push\"'; git log",
+    "git rebase -x 'export GIT_PAGE\\\nR=\"sh -c git-push\"; git log' HEAD~1",
+    "cat < .en\\\nv",
+    "echo > .en\\\nv",
+    "for f in .en\\\nv; do cat $f; done",
   ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
     const analysis = analyzeShell(parsers, "bash", command, {
       cwd: root,
@@ -721,12 +731,15 @@ describe("git runs no hidden push through a command its arguments or environment
   });
 
   // spec: permissions §0 guarantee 3
-  test.each(["git log \\\n  --oneline", "cat > notes.md <<EOF\nUse \\`npm test\\` first\nEOF", "echo 'a\\\nb'"])(
-    "%s, a line continuation between words or an escaped backtick, stays allowed in bypass",
-    (command) => {
-      expect(shell(command, state("bypassPermissions")).behavior).toBe("allow");
-    },
-  );
+  test.each([
+    "git log \\\n  --oneline",
+    "cat > notes.md <<EOF\nUse \\`npm test\\` first\nEOF",
+    "echo 'a\\\nb'",
+    "docker run \\\n  -e X=1 \\\n  img",
+    "for f in a \\\n  b; do echo $f; done",
+  ])("%s, a line continuation between words or an escaped backtick, stays allowed in bypass", (command) => {
+    expect(shell(command, state("bypassPermissions")).behavior).toBe("allow");
+  });
 
   // spec: permissions §0 guarantee 3
   test("a coproc keyword in an argument or a pattern adds no command", () => {

@@ -1,6 +1,6 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
-import { type State, walkBash } from "./bash.ts";
+import { continuationJoins, type State, walkBash } from "./bash.ts";
 import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
 import { walkPowerShell } from "./powershell.ts";
@@ -41,6 +41,7 @@ export function analyzeShell(
           ctx.fail("parse error");
           topError = true;
         }
+        if (continuationJoins(root)) ctx.state.misread = true;
         walkBash(root, { ctx, script: run }, st);
         return true;
       }) ?? false

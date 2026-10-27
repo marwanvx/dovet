@@ -34,13 +34,25 @@ const STATEMENTS = new Set([
   ...["c_style_for_statement", "function_definition", "pipeline", "list", "negated_command", "test_command"],
 ]);
 
-/** A line continuation is all that separates two children: bash joins them into one word (`gi\<newline>t`). */
-const joined = (n: Node): boolean =>
-  n.children.some((c, i) => {
-    const prev = n.children[i - 1];
-    const gap = prev === undefined ? "" : n.text.slice(prev.endIndex - n.startIndex, c.startIndex - n.startIndex);
-    return (gap.includes("\\\n") && gap.replaceAll("\\\n", "") === "") || (c.type === "concatenation" && joined(c));
-  });
+const VERBATIM = new Set(["string", "raw_string", "ansi_c_string", "heredoc_body", "comment"]);
+
+/** Two words anywhere in the tree that only a line continuation separates: bash joins them into one
+ * (`gi\<newline>t`, `export GIT_PAGE\<newline>R=…`, `< .en\<newline>v`). */
+export function continuationJoins(root: Node): boolean {
+  const todo = [root];
+  for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
+    const kids = n.children;
+    for (const [i, c] of kids.entries()) {
+      const prev = kids[i - 1];
+      if (prev?.isNamed && c.isNamed) {
+        const gap = n.text.slice(prev.endIndex - n.startIndex, c.startIndex - n.startIndex);
+        if (gap.includes("\\\n") && gap.replaceAll("\\\n", "") === "") return true;
+      }
+      if (!VERBATIM.has(c.type)) todo.push(c);
+    }
+  }
+  return false;
+}
 
 /** The `…` substitutions of an unquoted here-document body; `\`` there is a literal backtick. */
 function backticks(body: string): string[] {
@@ -58,13 +70,12 @@ function backticks(body: string): string[] {
 }
 
 /** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error
- * (`then git push`, `{ {` as one word), and splits a word at a line continuation: the reading isn't bash's. */
+ * (`then git push`, `{ {` as one word): the reading isn't bash's. */
 const misread = (n: Node): boolean => {
   const name = n.namedChildren.find((c) => c.type === "command_name")?.text;
   return (
     (name !== undefined && (RESERVED.has(name) || /^[{}\s]+$/.test(name))) ||
-    n.namedChildren.some((c) => STATEMENTS.has(c.type)) ||
-    joined(n)
+    n.namedChildren.some((c) => STATEMENTS.has(c.type))
   );
 };
 
