@@ -72,7 +72,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F74 (F51 security review): tree-sitter-powershell errors on a comment-only, empty or bare-`param` script, so bypass prompts where main allowed
 - **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`topError`), `load.ts` grammar
-- Verified on main's grammar: `# just a comment`, `""` and `param($x)` all report `hasError`, so since F51's parse-error→unparsed rule they ask in every mode, `bypassPermissions` included (a trailing comment after a real command is fine). Fail-closed and decided by Q99, but a Windows bypass user gets prompted for a bare comment. Fix in the analyzer: treat a tree whose only error node wraps no command as parsed (empty `commands`, understood), or teach the walk to ignore a pure-comment/`param` error.
+- Verified on main's grammar: `# just a comment`, `""` and `param($x)` all report `hasError`, so since F51's parse-error→unparsed rule they ask in every mode, `bypassPermissions` included (a trailing comment after a real command is fine). Fail-closed and decided by Q99, but a Windows bypass user gets prompted for a bare comment. Fix in the analyzer: treat a tree whose only error node wraps no command as recovered-but-empty (empty `commands`/`recovered`, still **not** understood — `understood: true` would fire the read-only allow vacuously in every mode), or teach the walk to ignore a pure-comment/`param` error.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`

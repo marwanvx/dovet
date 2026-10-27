@@ -70,7 +70,16 @@ export function analyzeShell(
     return unparsed(`analysis failed: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (parsed && performance.now() > deadline) parsed = false;
-  if (topError) return unparsed("the parser reported a syntax error");
+  if (topError)
+    return {
+      commands: undefined,
+      understood: false,
+      literalNames: false,
+      reasons: ["the parser reported a syntax error"],
+      operands: [],
+      // The lines before the erroring one run (the tool executes a script file): the checks see them, the ask stands.
+      recovered: { commands: ctx.commands, operands: ctx.operands },
+    };
   if (!parsed) return unparsed(`parsing took longer than ${opts.budgetMs ?? DEFAULT_BUDGET_MS} ms or failed`);
   return {
     commands: ctx.commands,

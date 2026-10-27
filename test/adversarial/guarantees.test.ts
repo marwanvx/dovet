@@ -1205,7 +1205,26 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
     expect(shell(command, state("bypassPermissions")).reason).toStartWith("a word of the script holds PARALLEL");
   });
 
-  // spec: permissions §0b (the bypass contract: only §5 stops a parsed command)
+  // spec: permissions §5 (QUESTIONS Q99: the checks run over the lines tree-sitter recovers)
+  test("a recovered line keeps its hard guarantees, with the unparsed ask beneath", () => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const])
+      expect(shell("git push origin +main\n)", state(mode)).behavior, mode).toBe("deny");
+    const rm = shell("rm -rf /\n)", state("bypassPermissions"));
+    expect(rm.behavior).toBe("ask");
+    expect(rm.countdown).toBe(true);
+    expect(shell("git push origin main\n)", state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    const denied = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [], ask: [], deny: [{ text: "Bash(git push*)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    expect(shell("git push origin main\n)", state("bypassPermissions", { rules: denied })).behavior).toBe("deny");
+    // The erroring line itself runs nothing and carries no finding: the unparsed ask decides it.
+    const d = shell("echo ok\n)", state("bypassPermissions"));
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toStartWith("not fully checkable");
+  });
+
+  // spec: permissions §2 (the bypassPermissions row: only §5 stops a parsed command)
   test("a parsed command keeps today's bypass behavior: the plain form and exports still run", () => {
     expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("export FOO=bar; echo ok", state("bypassPermissions")).behavior).toBe("allow");
