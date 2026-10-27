@@ -11,6 +11,7 @@ export {
   commandName,
   findCommands,
   findCommandsAt,
+  GIT_COMMANDS,
   gitInvocation,
   isExecWrapper,
   isLongOption,

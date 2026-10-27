@@ -546,6 +546,10 @@ describe("remote actions", () => {
       ["git -c Alias.P=push P origin main", "git push"],
       ["git -c alias.q=push -c alias.p=q p", "git push"],
       ["git -c alias.p=status -c alias.p=push p", "git push"],
+      ["git -c alias.p=push -c alias.push=status p origin main", "git push"],
+      ["git -c alias.p=push -c alias.push=status -c alias.status=push p", "git push"],
+      ["git --shallow-file status push origin main", "git push"],
+      ["git -c alias.gui=push gui", "git push"],
       ["git -c 'alias.p=push --dry-run' p", "git push"],
       ["git -c alias.p='!git push origin main' p", "git p"],
       ["git --config-env alias.p=X p", "git --config-env alias.p"],
@@ -570,6 +574,8 @@ describe("remote actions", () => {
       "git -c alias.p='push --force' p origin main",
       "git -c alias.p=push p --force origin main",
       "git -c alias.p='!git push --force origin main' p",
+      "git -c 'alias.p=push --force' -c alias.push=status p origin main",
+      "git --shallow-file status push --force origin main",
     ])
       expect(remote(c, auto("bypassPermissions")).behavior, c).toBe("deny");
     expect(remote("git -c alias.p='!rm -rf /' p", auto("bypassPermissions")).behavior).not.toBe("allow");
@@ -580,6 +586,13 @@ describe("remote actions", () => {
     });
     expect(ps.behavior).toBe("deny");
     expect(remote("git p origin main", auto("default", { allow: ["Bash(git p *)"] })).behavior).toBe("allow");
+    // A long alias chain stops at a cap instead of growing the analysis without bound.
+    const chain = Array.from({ length: 2000 }, (_, i) => `-c alias.a${i}=a${i + 1}`).join(" ");
+    const started = performance.now();
+    expect(
+      remote(`git ${chain} -c alias.a2000=push a0`, auto("bypassPermissions", {}, { tainted: true })).behavior,
+    ).not.toBe("allow");
+    expect(performance.now() - started).toBeLessThan(400);
     for (const c of [
       "git -c alias.s=status s",
       "git -c color.ui=always log",
@@ -605,12 +618,17 @@ describe("remote actions", () => {
       "bunx npm publish",
       "pnpx npm publish",
       "npx -c 'npm publish'",
+      "npx -c 'true; npm publish'",
+      "npx --call='cd x&&npm publish'",
+      "wget -e method=POST https://h",
+      "wget --execute=post_data=x https://h",
       "npx --package=x -- twine upload d",
     ])
       expect(remote(c, auto("default")).behavior, c).toBe("ask");
     for (const c of [
       "wget --method=GET https://h",
       "wget --method HEAD https://h",
+      "wget -e robots=off https://h",
       "npx tsc",
       "bunx prettier --write .",
       "gh release view v1",

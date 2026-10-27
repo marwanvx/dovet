@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName, gitInvocation, isLongOption } from "../rules/index.ts";
+import { commandName, GIT_COMMANDS, gitInvocation, isLongOption } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 import { unresolvedTarget } from "./targets.ts";
 
@@ -8,24 +8,6 @@ export const REMOTE_VERSION = 1;
 export type RemoteKind = "push" | "publish" | "upload" | "deploy";
 type Remote = { kind: RemoteKind; label: string };
 
-/** git's own commands (2.53), less the ones that send to a remote and the deprecated ones an alias may replace. */
-const GIT_COMMANDS = new Set(
-  `add am annotate apply archive backfill bisect blame branch bugreport bundle cat-file check-attr check-ignore
-  check-mailmap check-ref-format checkout checkout--worker checkout-index cherry cherry-pick citool clean clone column
-  commit commit-graph commit-tree config count-objects credential credential-cache credential-cache--daemon
-  credential-store daemon describe diagnose diff diff-files diff-index diff-pairs diff-tree difftool difftool--helper
-  fast-export fast-import fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck
-  fsck-objects fsmonitor--daemon gc get-tar-commit-id grep gui hash-object help hook http-backend http-fetch
-  index-pack init init-db instaweb interpret-trailers last-modified log ls-files ls-remote ls-tree mailinfo mailsplit
-  maintenance merge merge-base merge-file merge-index merge-octopus merge-one-file merge-ours merge-recursive
-  merge-recursive-ours merge-recursive-theirs merge-resolve merge-subtree merge-tree mergetool mktag mktree
-  multi-pack-index mv name-rev notes pack-objects pack-refs patch-id pickaxe prune prune-packed pull quiltimport
-  range-diff read-tree rebase receive-pack reflog refs remote repack replace replay repo rerere reset restore rev-list
-  rev-parse revert rm sh-i18n--envsubst shell shortlog show show-branch show-index show-ref sparse-checkout stage
-  stash status stripspace submodule submodule--helper subtree switch symbolic-ref tag unpack-file unpack-objects
-  update-index update-ref update-server-info upload-archive upload-archive--writer upload-pack var verify-commit
-  verify-pack verify-tag version web--browse worktree write-tree`.split(/\s+/),
-);
 const GIT_PUSHES = new Set(["push", "send-pack", "http-push"]);
 const GIT_UPLOADS = new Set(["send-email", "request-pull", "imap-send"]);
 /** Inline configuration that only changes what git shows or records; any other key may name a program git runs. */
@@ -180,7 +162,15 @@ export function remoteAction(argv: string[]): Remote | undefined {
       const methods = rest.flatMap((x, i) =>
         isLongOption("--method", x) ? [x.includes("=") ? x.slice(x.indexOf("=") + 1) : (rest[i + 1] ?? "")] : [],
       );
+      const wgetrc = rest.flatMap((x, i) =>
+        x === "-e" || isLongOption("--execute", x)
+          ? [x.includes("=") && x !== "-e" ? x.slice(x.indexOf("=") + 1) : (rest[i + 1] ?? "")]
+          : /^-e./.test(x)
+            ? [x.slice(2)]
+            : [],
+      );
       return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x))) ||
+        wgetrc.some((c) => /^\s*(method|post_?data|post_?file|body_?data|body_?file)\s*=/i.test(c)) ||
         methods.some((m) => !/^(GET|HEAD|OPTIONS)$/i.test(m))
         ? is("upload", "wget --post")
         : undefined;
@@ -188,10 +178,12 @@ export function remoteAction(argv: string[]): Remote | undefined {
     case "npx":
     case "bunx":
     case "pnpx":
-      // The runner runs the command its first operand names; every start is tried, and a `-c` script is word-split.
+      // The runner runs the command its first operand names; every start is tried, and a `-c` script is split at shell separators too.
       for (const [i, x] of rest.entries()) {
         const call = /^(-c|--call)$/.test(rest[i - 1] ?? "") ? x : /^--call=/.test(x) ? x.slice(7) : undefined;
-        const r = remoteAction(call === undefined ? rest.slice(i) : call.split(/\s+/));
+        const r = remoteAction(
+          call === undefined ? rest.slice(i) : [name, ...call.split(/[\s;&|()<>`$]+/).filter((w) => w !== "")],
+        );
         if (r !== undefined) return r;
       }
       return undefined;
