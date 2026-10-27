@@ -14,6 +14,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F86 (F84 security review): a substitution in an array subscript left of `=` is never walked
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
+- `a[$(git push)]=1`, `` a[`git push`]=1 ``, `a[…]+=1`, `declare a[$(git push)]=1` and `a[$(git push)]=1 true` record no `git push` and allow in bypass past a deny rule; bash runs the subscript. Walk the `name` field's subscript through `word()`, or fail closed on it.
+
 ### F85 (F84 differential fuzz): a quote followed by a backslash-escape splits one word in the bash grammar
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`, `concatenation`)
 - `git pu''\sh` and `git pu""\sh` read as argv `git pu sh` (`understood: true`), bash runs `git push`: past a deny rule; `cat .e''\nv` reads `cat .e nv` and passes the `.env` check. Also `printf x \  a` loses the `\ ` word. Join the parts the grammar split (no whitespace between them in the text), or fail closed on adjacent words.

@@ -98,7 +98,8 @@ function backticks(body: string): string[] {
   return start < 0 ? out : [...out, body.slice(start)];
 }
 
-/** A backtick substitution's body, or undefined when its first unescaped closing backtick isn't where the grammar ends it. */
+/** A backtick substitution's body, or undefined when its first unescaped closing backtick isn't where the grammar ends it
+ * (no input seen so far does that without a parse error too: a second guard). */
 function backtickBody(text: string): string | undefined {
   for (let i = 1; i < text.length; i++) {
     if (text[i] === "\\") i++;
@@ -110,6 +111,15 @@ function backtickBody(text: string): string | undefined {
 /** bash removes the backslash of `\\`, `\``, `\$` (and `\"` inside double quotes) in a backtick body, then parses it. */
 const unescapeBackticks = (body: string, quoted: boolean): string =>
   body.replace(quoted ? /\\([\\`$"])/g : /\\([\\`$])/g, "$1");
+
+/** Whether `\"` loses its backslash: inside a quoted word, yes; under a construct inside one, bash's answer depends on the
+ * construct (`"$[ ]"` yes, `"$(( ))"` no), so undefined. */
+function inQuotes(n: Node): boolean | undefined {
+  if (n.parent?.type === "string") return true;
+  for (let p = n.parent; p !== null && p.type !== "command_substitution"; p = p.parent)
+    if (p.type === "string") return undefined;
+  return false;
+}
 
 /** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error
  * (`then git push`, `{ {` as one word): the reading isn't bash's. */
@@ -187,9 +197,10 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       return;
     }
     const body = backtickBody(n.text);
-    if (body === undefined) ctx.state.misread = true;
-    else if (st.depth >= MAX_DEPTH || !walk.script(unescapeBackticks(body, n.parent?.type === "string"), fresh(st)))
-      ctx.fail("nested script not parsed");
+    const quoted = inQuotes(n);
+    // Past the depth cap the body isn't read, so its commands would be missing: unparsed, not merely not understood.
+    if (body === undefined || quoted === undefined || st.depth >= MAX_DEPTH) ctx.state.misread = true;
+    else if (!walk.script(unescapeBackticks(body, quoted), fresh(st))) ctx.fail("nested script not parsed");
   }
 
   function word(n: Node, st: State): Word {
@@ -422,7 +433,8 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       ctx.state.literalNames = false;
       return;
     }
-    if (st.depth >= MAX_DEPTH || !walk.script(script.text, fresh(st))) ctx.fail("nested script not parsed");
+    if (st.depth >= MAX_DEPTH) ctx.state.misread = true;
+    else if (!walk.script(script.text, fresh(st))) ctx.fail("nested script not parsed");
   }
 
   function forLoop(n: Node, st: State): void {

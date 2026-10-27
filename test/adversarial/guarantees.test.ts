@@ -790,61 +790,6 @@ describe("git runs no hidden push through a command its arguments or environment
 
   // spec: permissions §0 guarantee 3
   test.each([
-    ["echo `git pu\\\\sh`", ["git", "push"]],
-    ["echo `\\`git push\\``", ["git", "push"]],
-    ['echo "`git pu\\\\sh`"', ["git", "push"]],
-    ['echo "`git \\"push\\"`"', ["git", "push"]],
-    ['echo `git \\"push\\"`', ["git", '"push"']],
-    ["echo `echo \\$HOME; git pu\\\\sh`", ["git", "push"]],
-    ["echo `cat .e\\\\nv`", ["cat", ".env"]],
-    ["[[ -n `git pu\\\\sh` ]]", ["git", "push"]],
-    ["cat <<EOF\n`git pu\\\\sh`\nEOF", ["git", "push"]],
-    ["cat <<EOF\n`\\`git push\\``\nEOF", ["git", "push"]],
-    ['cat <<EOF\n`git \\"push\\"`\nEOF', ["git", '"push"']],
-  ])("%s, a backtick body, is unescaped and read again as bash does", (command, argv) => {
-    const read = analyzeShell(parsers, "bash", command, {
-      cwd: root,
-      workingDirs: [root],
-      home: "/home/u",
-      glob: expandGlob,
-      isDirectory,
-    });
-    expect(read.commands?.map((c) => c.argv)).toContainEqual(argv);
-    const deny = loadRules(
-      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
-      { os, home: "/home/u", canonicalize: (p) => p },
-    ).rules;
-    if (argv.join(" ") === "git push")
-      expect(shell(command, { mode: "bypassPermissions", rules: deny, env: env() }).behavior).toBe("deny");
-    else if (argv[1] === ".env") expect(shell(command, state("default")).behavior).not.toBe("allow");
-  });
-
-  // spec: permissions §0 guarantee 3
-  test("an escaped $( in a backtick body, which the grammar can't parse, is never allowed", () => {
-    const command = "echo `echo \\$(git push)`";
-    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
-    expect(shell(command, state("dontAsk")).behavior).toBe("deny");
-  });
-
-  // spec: permissions §0 guarantee 3
-  test.each([
-    ["echo `echo a\\\\b`", ["echo", "ab"]],
-    ["echo `echo 'a\\\\b'`", ["echo", "a\\b"]],
-    ['echo "`ls src`"', ["ls", "src"]],
-  ])("%s, a plain backtick substitution, stays understood", (command, argv) => {
-    const read = analyzeShell(parsers, "bash", command, {
-      cwd: root,
-      workingDirs: [root],
-      home: "/home/u",
-      glob: expandGlob,
-      isDirectory,
-    });
-    expect(read.understood).toBe(true);
-    expect(read.commands?.map((c) => c.argv)).toContainEqual(argv);
-  });
-
-  // spec: permissions §0 guarantee 3
-  test.each([
     ["grep 'a\\\nb' .env", ["grep", "a\\\nb", ".env"]],
     ["echo $'gi\\\nt'", ["echo", "$'gi\\\nt'"]],
     ["echo \\\n'a\\\nb'", ["echo", "a\\\nb"]],
@@ -1668,5 +1613,77 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
     expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("export FOO=bar; echo ok", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("echo $HOME", state("bypassPermissions")).behavior).toBe("allow");
+  });
+});
+
+describe("a backtick body is read as bash reads it (FOLLOWUPS F84)", () => {
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["echo `git pu\\\\sh`", ["git", "push"]],
+    ["echo `\\`git push\\``", ["git", "push"]],
+    ['echo "`git pu\\\\sh`"', ["git", "push"]],
+    ['echo "`git \\"push\\"`"', ["git", "push"]],
+    ['echo `git \\"push\\"`', ["git", '"push"']],
+    ["echo `echo \\$HOME; git pu\\\\sh`", ["git", "push"]],
+    ["echo `cat .e\\\\nv`", ["cat", ".env"]],
+    ["[[ -n `git pu\\\\sh` ]]", ["git", "push"]],
+    ["cat <<EOF\n`git pu\\\\sh`\nEOF", ["git", "push"]],
+    ["cat <<EOF\n`\\`git push\\``\nEOF", ["git", "push"]],
+    ['cat <<EOF\n`git \\"push\\"`\nEOF', ["git", '"push"']],
+  ])("%s, a backtick body, is unescaped and read again as bash does", (command, argv) => {
+    const read = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(read.commands?.map((c) => c.argv)).toContainEqual(argv);
+    const deny = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    if (argv.join(" ") === "git push")
+      expect(shell(command, { mode: "bypassPermissions", rules: deny, env: env() }).behavior).toBe("deny");
+    else if (argv[1] === ".env") expect(shell(command, state("default")).behavior).not.toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("an escaped $( in a backtick body, which the grammar can't parse, is never allowed", () => {
+    const command = "echo `echo \\$(git push)`";
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+    expect(shell(command, state("dontAsk")).behavior).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["echo `echo a\\\\b`", ["echo", "ab"]],
+    ["echo `echo 'a\\\\b'`", ["echo", "a\\b"]],
+    ['echo "`ls src`"', ["ls", "src"]],
+  ])("%s, a plain backtick substitution, stays understood", (command, argv) => {
+    const read = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(read.understood).toBe(true);
+    expect(read.commands?.map((c) => c.argv)).toContainEqual(argv);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo `git push`))))))))",
+    "( ( ( ( ( ( ( ( echo `git push` ) ) ) ) ) ) ) )",
+    "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(sh -c 'git push'))))))))",
+    'echo "$[ `git \\"push\\"` ]"',
+  ])("%s, a backtick body or script the analyzer can't read as bash does, is never allowed", (command) => {
+    const deny = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    expect(shell(command, { mode: "bypassPermissions", rules: deny, env: env() }).behavior).not.toBe("allow");
+    expect(shell(command, state("dontAsk")).behavior).toBe("deny");
   });
 });
