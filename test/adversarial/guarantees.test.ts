@@ -547,6 +547,77 @@ describe("a git alias hides no push from the taint deny (FOLLOWUPS F41)", () => 
   });
 });
 
+describe("git runs no hidden push through a command its arguments or environment name (FOLLOWUPS F76)", () => {
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git submodule foreach git push",
+    "git submodule foreach --recursive 'git push origin main'",
+    "git submodule --quiet foreach 'cd x && git push'",
+    "git rebase -x 'git push origin main' HEAD~1",
+    "git rebase --exec='git push' HEAD~1",
+    "git rebase --exe 'git push' HEAD~1",
+    "git rebase -ix 'git push' HEAD~1",
+    "git rebase -i -x'git push' HEAD~1",
+    "git bisect run git push",
+    "git bisect run sh -c 'git push'",
+    "git difftool -x 'git push' HEAD",
+    "git difftool --extcmd='git push' HEAD",
+    "git grep -O'git push' x",
+    "git grep --open-files-in-pager='git push' x",
+    "git fetch --upload-pack='git push origin main' .",
+    "git ls-remote --upload-pack 'git push' .",
+    "git clone -u 'git push' . y",
+    "git archive --remote=. --exec='git push' HEAD",
+    "git for-each-repo --config=maintenance.repo push",
+    "git -c alias.f='submodule foreach git push' f",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log",
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log",
+    "GIT_CONFIG_PARAMETERS=\"'core.pager'='git push'\" git log",
+    "GIT_CONFIG_GLOBAL=./x git log",
+    "GIT_EXTERNAL_DIFF='git push' git diff",
+    "GIT_SSH_COMMAND='git push' git fetch",
+    "sudo GIT_EDITOR='git push' git commit",
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push'; git log",
+    "GIT_CONFIG_COUNT=1; git log",
+    "wget --config=./rc https://example.com",
+  ])("%s is a remote action while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("a removal a git subcommand runs is a critical-path removal", () => {
+    for (const command of [
+      "git submodule foreach 'rm -rf /'",
+      "git rebase -x 'rm -rf /' HEAD~1",
+      "git bisect run rm -rf /",
+    ])
+      expect(shell(command, state("bypassPermissions")).countdown, command).toBe(true);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "GIT_PAGER=cat git log",
+    "GIT_PAGER= git log",
+    "PAGER=cat git log",
+    "GIT_AUTHOR_NAME=x GIT_COMMITTER_NAME=x git commit -m x",
+    "GIT_TERMINAL_PROMPT=0 git status",
+    "git submodule status",
+    "git submodule foreach",
+    "git bisect start",
+    "git rebase main",
+    "git grep -O x",
+    "git rebase -x",
+    "git bisect run",
+    "git for-each-repo --config",
+    "git submodule foreach ''",
+    "git submodule foreach 'echo \u{1F600}'",
+    "wget https://example.com",
+  ])("%s stays allowed while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
+  });
+});
+
 // Found by the M2 exit check and logged in FOLLOWUPS (F42); `test.failing` passes while the bug is there and
 // fails the day it is fixed, which is the cue to turn it into a plain test.
 describe("known gaps (FOLLOWUPS F42)", () => {

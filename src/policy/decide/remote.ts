@@ -56,6 +56,23 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
   return { kind: "push", label: `git ${a} (not a git command: an alias or add-on could push)` };
 }
 
+/** Environment variables git reads configuration or a program to run from; a pager or editor set to one that only
+ * shows text is quiet. */
+const GIT_ENV =
+  /^(GIT_CONFIG\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|PAGER|EDITOR|VISUAL|SSH_ASKPASS)=(.*)$/s;
+const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
+
+/** The git environment variable a command sets (`GIT_CONFIG_COUNT=1 git log`, `export GIT_SSH_COMMAND=…`), if any. */
+function gitEnvironment(argv: string[]): string | undefined {
+  if (!(ENV_SETTERS.has(commandName(argv[0])) || /^\w+=/.test(argv[0] ?? ""))) return undefined;
+  for (const w of argv) {
+    const m = GIT_ENV.exec(w);
+    if (m !== null && !(/PAGER|EDITOR|VISUAL/.test(m[1] ?? "") && /^(cat|less|more|true|:)?$/.test(m[2] ?? "")))
+      return m[1];
+  }
+  return undefined;
+}
+
 export const program = commandName;
 
 const positional = (args: string[]): string[] => args.filter((a) => !a.startsWith("-"));
@@ -130,6 +147,8 @@ export function remoteAction(argv: string[]): Remote | undefined {
     const hit = verbs.find((v) => w(v));
     return hit === undefined ? undefined : is("deploy", `${tool} ${hit}`);
   };
+  const env = gitEnvironment(argv);
+  if (env !== undefined) return is("push", `${env}= (git configuration or a program git runs, from the environment)`);
   switch (name) {
     case "git":
       if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
@@ -188,7 +207,8 @@ export function remoteAction(argv: string[]): Remote | undefined {
         const m = /^-[^-e]*e(.*)$/s.exec(x);
         return m === null ? [] : [m[1] || (rest[i + 1] ?? "")];
       });
-      return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x))) ||
+      // A wgetrc file (`--config`) may set the method or the body.
+      return rest.some((x) => [...WGET_POST_LONGS, "--config"].some((n) => isLongOption(n, x))) ||
         wgetrc.some((c) =>
           /^(method|postdata|postfile|bodydata|bodyfile)=/.test(c.replace(/[\s_-]/g, "").toLowerCase()),
         ) ||
