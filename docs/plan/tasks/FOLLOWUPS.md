@@ -14,9 +14,13 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F84 (F76 rethink 3 round-3 security review): a backtick body is read once, bash unescapes and reads it again
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution` in `word`)
+- Bash turns `\\`, `` \` `` and `\$` in a backtick body into `\`, a backtick and `$`, then parses the body. `` echo `git pu\\sh` `` runs `git push` (argv read `git pu\sh`) and `` echo `\`git push\`` `` runs `git push` (read as words): both allow in bypass past a `Bash(git push *)` deny rule; `` echo `cat .e\\nv` `` and `` echo `echo \`cat .env\`` `` allow in default mode past the `.env` check. Unescape the body as bash does and analyze it as a nested script, or fail closed on `\\`/`` \` `` in it.
+
 ### F83 (F76 rethink 3 security review): a `#` inside `$(( ))` or `$[ ]` hides a substitution as a comment
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (comment nodes in arithmetic)
-- `echo $(( 1 #$(git push)\n))` and `echo $[ 1 #$(cat .env)\n]`: tree-sitter-bash reads `#…` as a comment, bash expands the substitution before evaluating; allows in bypass past a deny rule. Fail closed on a comment inside an arithmetic expansion.
+- `echo $(( 1 #$(git push)\n))` and `echo $[ 1 #$(cat .env)\n]`: tree-sitter-bash reads `#…` as a comment, bash expands the substitution before evaluating; allows in bypass past a deny rule. Fail closed on a comment inside an arithmetic expansion. Same family (minor, F76 rethink 3): `#` in a backtick body is a comment to tree-sitter, not to bash's backtick scan (`` echo `: # `; git push `` is a parse error that asks, with no recovered `git push`).
 
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
