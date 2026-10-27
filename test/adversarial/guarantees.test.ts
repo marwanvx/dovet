@@ -20,7 +20,12 @@ let root = "";
 let dispose: () => Promise<void>;
 beforeAll(async () => {
   parsers = await loadShellParsers();
-  const project = await tempProject({ "a.ts": "a", ".env": "K=1", "src/x.ts": "x", ".git/HEAD": "ref: refs/heads/main\n" });
+  const project = await tempProject({
+    "a.ts": "a",
+    ".env": "K=1",
+    "src/x.ts": "x",
+    ".git/HEAD": "ref: refs/heads/main\n",
+  });
   root = project.root;
   dispose = project.dispose;
 });
@@ -602,6 +607,9 @@ describe("git runs no hidden push through a command its arguments or environment
     "git clone --template=t . y",
     "git init --template=t y",
     "GIT_PAGER='less -R--lesskey-file=keys' git log",
+    "GIT_PAGER='less -Rkkeys' git log",
+    "PAGER='less --lesskey-src' git log",
+    "GIT_PAGER='less -R -Xk' git log",
     "GIT_PAGER='less -R--lesskey-src=f' git log",
     "GIT_PAGER='less -R -+k' git log",
     "LESS=--lesskey-file=keys git log",
@@ -610,6 +618,11 @@ describe("git runs no hidden push through a command its arguments or environment
     "git rebase -x 'coproc git push' HEAD~1",
     "git rebase -x 'coproc { git push; }' HEAD~1",
     "git rebase -x 'coproc X { git push; }' HEAD~1",
+    "git rebase -x 'coproc X if true; then git push; fi' HEAD~1",
+    "git rebase -x 'coproc while true; do git push; done' HEAD~1",
+    "git rebase -x 'coproc for i in 1; do git push; done' HEAD~1",
+    "git rebase -x 'coproc X case a in a) git push;; esac' HEAD~1",
+    "git submodule foreach 'coproc X if true; then git push; fi'",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
@@ -643,6 +656,11 @@ describe("git runs no hidden push through a command its arguments or environment
     'git rebase -x @"\ngit push\n"@ HEAD~1',
     "sh -c @'\ngit push\n'@",
     'git rebase -x "git push $x" HEAD~1',
+    "New-Item -Path env: -Name git_pager -Value 'git push'; git log",
+    "Set-Item env:FOO 'git push'; Rename-Item env:FOO -NewName git_pager; git log",
+    "Set-Item env:FOO 'git push'; Rename-Item env:FOO git_pager; git log",
+    "git rebase -x 'coproc X if true; then git push; fi' HEAD~1",
+    "git rebase -x 'git push #''' HEAD~1",
   ])("%s is a remote action while tainted in PowerShell", (command) => {
     expect(
       shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
@@ -655,6 +673,14 @@ describe("git runs no hidden push through a command its arguments or environment
       language: "powershell",
     });
     expect(d.findings.map((f) => f.kind)).toContain("protected");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a doubled quote in a PowerShell sh -c script is one quote, not the end of the string", () => {
+    const d = shell("sh -c 'echo ''; git push'''", state("bypassPermissions", { tainted: true }), false, {
+      language: "powershell",
+    });
+    expect(d.behavior).toBe("allow");
   });
 
   // spec: permissions §0 guarantee 3

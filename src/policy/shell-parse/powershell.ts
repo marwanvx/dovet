@@ -52,7 +52,7 @@ const CMDLETS: Record<string, Cmdlet> = {
 
 function literal(n: Node): Word {
   const t = n.text;
-  const quoted = /^'([^']*)'$/.exec(t)?.[1] ?? /^"([^"$`]*)"$/.exec(t)?.[1];
+  const quoted = /^'((?:[^']|'')*)'$/.exec(t)?.[1]?.replaceAll("''", "'") ?? /^"([^"$`]*)"$/.exec(t)?.[1];
   if (quoted !== undefined) return { text: quoted, literal: true, glob: false };
   // A here-string's body: a verbatim one is literal, an expandable one only without `$` or a backtick.
   const here = /^@(['"])\r?\n([\s\S]*?)\r?\n\1@$/.exec(t);
@@ -120,6 +120,7 @@ export function walkPowerShell(
     sub.argv.push(canonical);
     const parsed: Array<{ param?: string; word?: Word }> = [];
     let redirectsOk = true;
+    let computed = false;
     for (const c of n.childForFieldName("command_elements")?.namedChildren ?? []) {
       if (c.type === "command_argument_sep") continue;
       if (c.type === "command_parameter") {
@@ -143,7 +144,10 @@ export function walkPowerShell(
         }
       } else {
         const w = literal(c);
-        if (!w.literal) ctx.fail(`${c.type} argument`);
+        if (!w.literal) {
+          ctx.fail(`${c.type} argument`);
+          computed = true;
+        }
         sub.argv.push(w.text);
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });
       }
@@ -156,6 +160,8 @@ export function walkPowerShell(
       ctx.fail("sh -c runs a nested script");
       const at = shellScriptAt(v.slice(1));
       const text = at < 0 ? undefined : v[at + 1];
+      // A script built from a computed word may read as more once PowerShell expands it.
+      if (computed) ctx.state.literalNames = false;
       if (text !== undefined && !script(text, st.cwd)) ctx.fail("nested script not parsed");
     }
     const lower = canonical.toLowerCase();

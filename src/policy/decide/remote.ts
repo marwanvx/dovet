@@ -61,26 +61,28 @@ const GIT_ENV_NAMES =
   "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESS|LESSOPEN|LESSCLOSE|LESSKEY\\w*";
 const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
 const GIT_ENV_NAME = new RegExp(`^(?:-v)?(${GIT_ENV_NAMES})$`);
-// PowerShell's environment provider (`env:X`, `Env:\X`, `Microsoft.PowerShell.Core\Environment::X`); Windows names
-// ignore case.
+const GIT_ENV_NAME_ANY_CASE = new RegExp(GIT_ENV_NAME.source, "i");
+// PowerShell's environment provider (`env:X`, `Env:\X`, `Microsoft.PowerShell.Core\Environment::X`, or a bare name to
+// `-Name`, `-NewName` or under `Set-Location env:`); Windows names ignore case.
 const GIT_ENV_PATH = new RegExp(`^(?:[\\w.\\\\]*::|env:)[\\\\/]*(${GIT_ENV_NAMES})$`, "i");
 const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
 /** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
+const POWERSHELL_SETTERS = new Set([
+  "set-item",
+  "si",
+  "new-item",
+  "ni",
+  "set-content",
+  "sc",
+  "add-content",
+  "ac",
+  "copy-item",
+  "move-item",
+  "rename-item",
+]);
 const NAME_SETTERS = new Set([
   ...["export", "declare", "typeset", "local", "readonly", "printf", "read", "mapfile", "readarray"],
-  ...[
-    "set-item",
-    "si",
-    "new-item",
-    "ni",
-    "set-content",
-    "sc",
-    "add-content",
-    "ac",
-    "copy-item",
-    "move-item",
-    "rename-item",
-  ],
+  ...POWERSHELL_SETTERS,
 ]);
 
 /** The git environment variable a command sets (`GIT_CONFIG_COUNT=1 git log`, `export GIT_SSH_COMMAND=…`), if any; a
@@ -95,7 +97,10 @@ function gitEnvironment(argv: string[]): string | undefined {
       .slice(assigns ? 0 : 1)
       .map(
         (w) =>
-          (assigns ? undefined : (GIT_ENV_NAME.exec(w) ?? GIT_ENV_PATH.exec(w))?.[1]) ??
+          (assigns
+            ? undefined
+            : ((POWERSHELL_SETTERS.has(name) ? GIT_ENV_NAME_ANY_CASE : GIT_ENV_NAME).exec(w) ??
+                GIT_ENV_PATH.exec(w))?.[1]) ??
           (w.includes("=") ? GIT_ENV_NAME.exec(w.slice(w.indexOf("=") + 1))?.[1] : undefined),
       )
       .find((n) => n !== undefined);

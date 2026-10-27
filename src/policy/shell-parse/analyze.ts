@@ -20,6 +20,8 @@ const BENIGN_EXIT_ONE = new Set([
 ]);
 
 /** A parse error, a timeout or a crash gives `commands: undefined` and `understood: false`: never an allow (§4.0 item 7). */
+const COPROC = /(^|[\s;&|(){}!`])coproc\s+(?:[A-Za-z_]\w*\s*(?=[{(]|(?:if|while|until|for|case|select|\[\[)\s))?/g;
+
 export function analyzeShell(
   parsers: ShellParsers,
   language: ShellLanguage,
@@ -35,15 +37,19 @@ export function analyzeShell(
   const run = (text: string, st: State): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
+    const stripped = text.replace(COPROC, "$1");
     return (
-      parsers.withTree("bash", text, left, (root) => {
+      (parsers.withTree("bash", text, left, (root) => {
         if (root.hasError) {
           ctx.fail("parse error");
           if (st === state) topError = true;
         }
         walkBash(root, { ctx, script: run }, st);
         return true;
-      }) ?? false
+      }) ??
+        false) &&
+      // The grammar misreads `coproc [NAME] compound-command`: walk the script again without the keyword.
+      (stripped === text || run(stripped, { ...st, stack: [...st.stack], loops: new Map(st.loops) }))
     );
   };
   const unparsed = (reason: string): Analysis => ({
