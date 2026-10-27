@@ -534,14 +534,22 @@ describe("a wrapper or program written as a path hides nothing (FOLLOWUPS F40)",
   });
 });
 
-// Found by the M2 exit check and logged in FOLLOWUPS (F41-F42); `test.failing` passes while the bug is there and
-// fails the day it is fixed, which is the cue to turn it into a plain test.
-describe("known gaps (FOLLOWUPS F41-F42)", () => {
+describe("a git alias hides no push from the taint deny (FOLLOWUPS F41)", () => {
   // spec: permissions §0 guarantee 3
-  test.failing("F41: a git alias for push is still a remote action while tainted", () => {
-    notAllowed(shell("git -c alias.p=push p origin main", state("bypassPermissions", { tainted: true })));
+  test("an inline, configured or shell alias for push is a remote action while tainted", () => {
+    for (const command of [
+      "git -c alias.p=push p origin main",
+      "git p origin main",
+      "git -c alias.p='!git push origin main' p",
+      "git -c core.pager='git push origin main' log",
+    ])
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior, command).toBe("deny");
   });
+});
 
+// Found by the M2 exit check and logged in FOLLOWUPS (F42); `test.failing` passes while the bug is there and
+// fails the day it is fixed, which is the cue to turn it into a plain test.
+describe("known gaps (FOLLOWUPS F42)", () => {
   // spec: permissions §0 guarantee 4
   test.failing("F42: other spellings of the working directory are critical in bypassPermissions", () => {
     for (const command of ['rm -rf "$PWD"', "rm -rf ~+"]) notAllowed(shell(command, state("bypassPermissions")));

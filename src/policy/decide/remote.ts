@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName, isLongOption } from "../rules/index.ts";
+import { commandName, gitInvocation, isLongOption } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 import { unresolvedTarget } from "./targets.ts";
 
@@ -8,25 +8,50 @@ export const REMOTE_VERSION = 1;
 export type RemoteKind = "push" | "publish" | "upload" | "deploy";
 type Remote = { kind: RemoteKind; label: string };
 
-const GIT_OPTION_VALUES = new Set([
-  "-C",
-  "-c",
-  "--git-dir",
-  "--work-tree",
-  "--namespace",
-  "--exec-path",
-  "--config-env",
-  "--attr-source",
-]);
+/** git's own commands (2.53), less the ones that send to a remote and the deprecated ones an alias may replace. */
+const GIT_COMMANDS = new Set(
+  `add am annotate apply archive backfill bisect blame branch bugreport bundle cat-file check-attr check-ignore
+  check-mailmap check-ref-format checkout checkout--worker checkout-index cherry cherry-pick citool clean clone column
+  commit commit-graph commit-tree config count-objects credential credential-cache credential-cache--daemon
+  credential-store daemon describe diagnose diff diff-files diff-index diff-pairs diff-tree difftool difftool--helper
+  fast-export fast-import fetch fetch-pack filter-branch fmt-merge-msg for-each-ref for-each-repo format-patch fsck
+  fsck-objects fsmonitor--daemon gc get-tar-commit-id grep gui hash-object help hook http-backend http-fetch
+  index-pack init init-db instaweb interpret-trailers last-modified log ls-files ls-remote ls-tree mailinfo mailsplit
+  maintenance merge merge-base merge-file merge-index merge-octopus merge-one-file merge-ours merge-recursive
+  merge-recursive-ours merge-recursive-theirs merge-resolve merge-subtree merge-tree mergetool mktag mktree
+  multi-pack-index mv name-rev notes pack-objects pack-refs patch-id pickaxe prune prune-packed pull quiltimport
+  range-diff read-tree rebase receive-pack reflog refs remote repack replace replay repo rerere reset restore rev-list
+  rev-parse revert rm sh-i18n--envsubst shell shortlog show show-branch show-index show-ref sparse-checkout stage
+  stash status stripspace submodule submodule--helper subtree switch symbolic-ref tag unpack-file unpack-objects
+  update-index update-ref update-server-info upload-archive upload-archive--writer upload-pack var verify-commit
+  verify-pack verify-tag version web--browse worktree write-tree`.split(/\s+/),
+);
+const GIT_PUSHES = new Set(["push", "send-pack", "http-push"]);
+const GIT_UPLOADS = new Set(["send-email", "request-pull", "imap-send"]);
+/** Inline configuration that only changes what git shows or records; any other key may name a program git runs. */
+const QUIET_GIT_CONFIG =
+  /^(?:(?:user|advice|i18n|column|status)\.[\w-]+|color\.[\w.-]+|core\.(?:quotepath|autocrlf|safecrlf|filemode|ignorecase|abbrev|longpaths)|init\.defaultbranch|safe\.directory|(?:commit|tag)\.gpgsign|pull\.(?:rebase|ff)|merge\.ff|log\.(?:decorate|date))$/i;
 
 /** `git -C dir -c k=v push …` → `["push", …]`. */
-function gitArgs(args: string[]): string[] {
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i] ?? "";
-    if (GIT_OPTION_VALUES.has(a)) i++;
-    else if (!a.startsWith("-")) return args.slice(i);
-  }
-  return [];
+const gitArgs = (args: string[]): string[] => args.slice(gitInvocation(args).at);
+
+/** A git command that could reach a remote without naming it: configuration that runs a program, an alias from
+ * `--config-env` or a config file, an add-on (`git lfs`), a remote helper or a `!` alias. */
+function gitHidden(rest: string[], a: string): Remote | undefined {
+  const { config } = gitInvocation(rest);
+  const opaque = config.find(
+    ([k, v]) => v === undefined || !(k.toLowerCase().startsWith("alias.") || QUIET_GIT_CONFIG.test(k)),
+  );
+  if (opaque !== undefined)
+    return {
+      kind: "push",
+      label: `git ${opaque[1] === undefined ? "--config-env" : "-c"} ${opaque[0]} (configuration that can run a command)`,
+    };
+  if (a === "" || GIT_COMMANDS.has(a)) return undefined;
+  // An inline alias is read through its expansion (`gitAlias`); only a `!` one stays opaque on PowerShell.
+  const alias = config.findLast(([k]) => k.toLowerCase() === `alias.${a.toLowerCase()}`)?.[1];
+  if (alias !== undefined && !alias.startsWith("!")) return undefined;
+  return { kind: "push", label: `git ${a} (not a git command: an alias or add-on could push)` };
 }
 
 export const program = commandName;
@@ -55,12 +80,12 @@ const REMOTE_TARGET = /^(?:[\w.-]+@)?[\w.-]{2,}:|^rsync:\/\//;
 
 /** git-push's long options that make a push force-like (`--branches` is git's alias of `--all`); git reads a unique prefix as the option, so the abbreviations deny too. */
 const FORCE_LONGS = ["--force", "--force-with-lease", "--force-if-includes", "--mirror", "--all", "--branches"];
-const WGET_POST_LONGS = ["--post-data", "--post-file"];
+const WGET_POST_LONGS = ["--post-data", "--post-file", "--body-data", "--body-file"];
 
 const GH_WRITES: Array<[string, string[]]> = [
   ["pr", ["create", "merge", "comment", "review"]],
   ["issue", ["create", "comment"]],
-  ["release", ["create"]],
+  ["release", ["create", "upload"]],
   ["repo", ["create", "delete"]],
   ["gist", ["create"]],
   ["workflow", ["run"]],
@@ -105,8 +130,10 @@ export function remoteAction(argv: string[]): Remote | undefined {
   };
   switch (name) {
     case "git":
-      if (a === "push") return is("push", "git push");
-      return a === "send-email" || a === "request-pull" ? is("upload", `git ${a}`) : undefined;
+      if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
+      if (GIT_UPLOADS.has(a)) return is("upload", `git ${a}`);
+      if (a === "subtree" && w("push")) return is("push", "git subtree push");
+      return gitHidden(rest, a);
     case "npm":
     case "pnpm":
     case "yarn":
@@ -149,10 +176,25 @@ export function remoteAction(argv: string[]): Remote | undefined {
       return verbOf(["install", "upgrade", "uninstall"], "helm");
     case "curl":
       return curlUpload(rest) ? is("upload", "curl upload") : undefined;
-    case "wget":
-      return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x)))
+    case "wget": {
+      const methods = rest.flatMap((x, i) =>
+        isLongOption("--method", x) ? [x.includes("=") ? x.slice(x.indexOf("=") + 1) : (rest[i + 1] ?? "")] : [],
+      );
+      return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x))) ||
+        methods.some((m) => !/^(GET|HEAD|OPTIONS)$/i.test(m))
         ? is("upload", "wget --post")
         : undefined;
+    }
+    case "npx":
+    case "bunx":
+    case "pnpx":
+      // The runner runs the command its first operand names; every start is tried, and a `-c` script is word-split.
+      for (const [i, x] of rest.entries()) {
+        const call = /^(-c|--call)$/.test(rest[i - 1] ?? "") ? x : /^--call=/.test(x) ? x.slice(7) : undefined;
+        const r = remoteAction(call === undefined ? rest.slice(i) : call.split(/\s+/));
+        if (r !== undefined) return r;
+      }
+      return undefined;
     case "scp":
     case "rsync": {
       const last = positional(rest).at(-1);
