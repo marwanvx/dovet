@@ -70,6 +70,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `scripts/check-docs.ts` `CONTEXT_BUDGET`, `scripts/next.ts`
 - `main`'s `bun run next M1-23c` measured ~14970 of 15000 tokens on CI, so any follow-up extension or progress entry can push `docs:check` over and fail CI (this PR failed on it; locally the failure was masked by the skip-worktree instruction-budget overrun). The reading mixes a growing header (the owner block, the open majors, the last two progress entries) with the task's sections. Decide the structural answer: cap the header separately from the task sections, or raise the ceiling.
 
+### F74 (F51 security review): tree-sitter-powershell errors on a comment-only, empty or bare-`param` script, so bypass prompts where main allowed
+- **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`topError`), `load.ts` grammar
+- Verified on main's grammar: `# just a comment`, `""` and `param($x)` all report `hasError`, so since F51's parse-error→unparsed rule they ask in every mode, `bypassPermissions` included (a trailing comment after a real command is fine). Fail-closed and decided by Q99, but a Windows bypass user gets prompted for a bare comment. Fix in the analyzer: treat a tree whose only error node wraps no command as parsed (empty `commands`, understood), or teach the walk to ignore a pure-comment/`param` error.
+
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`
 - Over 10,000 characters or the 200 ms budget, a command is unparseable and skips §4.8 (`env` + `-S x` ×10000 + `git push`).

@@ -437,7 +437,8 @@ describe("fail-closed analysis", () => {
       ["parallel echo hi", "powershell"],
     ] as const) {
       const a = analyze(text, language);
-      expect(a).toMatchObject({ commands: undefined, understood: false });
+      expect(a.commands, text).toBeUndefined();
+      expect(a.understood, text).toBe(false);
       expect(a.reasons.join(), text).toContain("syntax error");
     }
   });

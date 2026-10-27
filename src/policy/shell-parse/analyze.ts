@@ -30,7 +30,7 @@ export function analyzeShell(
   const deadline = performance.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS);
   ctx.deadline.at = deadline;
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
-  // Only the top-level tree counts: a nested script's error already fails "nested script not parsed".
+  // Only the top-level tree counts: a nested script's error already fails the analysis as "parse error".
   let topError = false;
   const run = (text: string, st: State): boolean => {
     const left = deadline - performance.now();

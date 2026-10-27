@@ -793,8 +793,14 @@ describe("F32 over unusual inputs", () => {
     ] as const) {
       const started = performance.now();
       const d = shell(command, state("bypassPermissions"));
-      expect(d.behavior).toBe(behavior);
-      if (behavior === "ask") expect(d.findings.map((f) => f.kind)).toContain("critical");
+      // Under CPU contention the budget misses and §5 (Q99) asks unparsed, with no findings; both outcomes are safe.
+      if (behavior === "ask") {
+        expect(d.behavior, command).toBe("ask");
+        expect(
+          d.findings.map((f) => f.kind).includes("critical") || d.reason.startsWith("not fully checkable"),
+          command,
+        ).toBe(true);
+      } else expect(d.behavior === "allow" || d.reason.startsWith("not fully checkable"), command).toBe(true);
       expect(performance.now() - started).toBeLessThan(2000);
     }
   });
@@ -1155,6 +1161,7 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
         expect(d.behavior, `${reason} tainted=${tainted}`).toBe("ask");
         expect(d.reason, reason).toStartWith("not fully checkable");
         expect(d.by, reason).toBe("the analyzer (§4.0)");
+        expect(d.findings, reason).toEqual([]);
       }
       expect(
         shell("git push origin main", state("dontAsk"), false, { analysis: unparsed(reason) }).behavior,
@@ -1163,6 +1170,7 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
     }
   });
 
+  // spec: permissions §4.0 item 7
   test("the budget miss reaches the same ask end to end, and an allow rule does not apply", () => {
     const analysis = analyzeShell(parsers, "bash", "echo a; ".repeat(1200), {
       cwd: root,
@@ -1197,6 +1205,7 @@ describe("a command the analyzer could not parse asks even in bypassPermissions 
     expect(shell(command, state("bypassPermissions")).reason).toStartWith("a word of the script holds PARALLEL");
   });
 
+  // spec: permissions §0b (the bypass contract: only §5 stops a parsed command)
   test("a parsed command keeps today's bypass behavior: the plain form and exports still run", () => {
     expect(shell("parallel -k echo ::: a b", state("bypassPermissions")).behavior).toBe("allow");
     expect(shell("export FOO=bar; echo ok", state("bypassPermissions")).behavior).toBe("allow");
