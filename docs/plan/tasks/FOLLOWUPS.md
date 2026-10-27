@@ -14,9 +14,14 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
+### F83 (F76 rethink 3 security review): a `#` inside `$(( ))` or `$[ ]` hides a substitution as a comment
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (comment nodes in arithmetic)
+- `echo $(( 1 #$(git push)\n))` and `echo $[ 1 #$(cat .env)\n]`: tree-sitter-bash reads `#…` as a comment, bash expands the substitution before evaluating; allows in bypass past a deny rule. Fail closed on a comment inside an arithmetic expansion.
+
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
 - `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
+- Extended (F76 rethink 3 security review): inside a double-quoted `${…}` operand single quotes are literal, so `echo "${x:-'$(git push)'}"` runs the substitution; the walk skips it as a single-quoted string (`VERBATIM`), and it allows in bypass past a deny rule.
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b

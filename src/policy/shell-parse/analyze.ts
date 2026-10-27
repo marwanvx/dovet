@@ -1,6 +1,6 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
-import { joinContinuations, type State, walkBash } from "./bash.ts";
+import { joinContinuations, type State, verbatimRanges, walkBash } from "./bash.ts";
 import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
 import { walkPowerShell } from "./powershell.ts";
@@ -32,15 +32,19 @@ export function analyzeShell(
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
   // A nested script's error counts too: the grammar can lose a whole command to one (`coproc X if(true)then …`).
   let topError = false;
-  // The tree of the joined text must locate its quotes and comments where the first reading did, or it misread one.
-  const run = (text: string, st: State, joined = false): boolean => {
+  // A continuation removed where the joined text's own reading keeps one (`<\<newline><'E'` makes a quoted
+  // here-document), or one that reading would still remove, means the two readings disagree: unparsed.
+  const run = (text: string, st: State, removedAt?: number[]): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
     return (
       parsers.withTree("bash", text, left, (root) => {
-        const bashText = joinContinuations(root, text);
-        if (bashText !== text && !joined) return run(bashText, st, true);
-        if (bashText !== text) ctx.state.misread = true;
+        const kept = verbatimRanges(root);
+        const joined = joinContinuations(text, kept);
+        if (joined.crlf) ctx.state.misread = true;
+        if (joined.text !== text && removedAt === undefined) return run(joined.text, st, joined.removed);
+        if (joined.text !== text || removedAt?.some((p) => kept.some(([s, e]) => s < p && p < e)))
+          ctx.state.misread = true;
         if (root.hasError) {
           ctx.fail("parse error");
           topError = true;

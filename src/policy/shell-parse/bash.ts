@@ -36,10 +36,8 @@ const STATEMENTS = new Set([
 
 const VERBATIM = new Set(["raw_string", "ansi_c_string", "comment"]);
 
-/** The text bash's lexer reads (QUESTIONS Q102): every unquoted `\<newline>` removed, except in single quotes, `$'…'`,
- * comments and quoted here-document bodies, which this reading of the text locates. */
-export function joinContinuations(root: Node, text: string): string {
-  if (!text.includes("\\\n")) return text;
+/** Single quotes, `$'…'`, comments and quoted here-document bodies: where bash keeps a `\<newline>` as written. */
+export function verbatimRanges(root: Node): [number, number][] {
   const kept: [number, number][] = [];
   const todo = [root];
   for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
@@ -51,19 +49,37 @@ export function joinContinuations(root: Node, text: string): string {
       for (const b of n.namedChildren) if (b.type === "heredoc_body") kept.push([b.startIndex, b.endIndex]);
     todo.push(...n.children);
   }
-  kept.sort((a, b) => a[0] - b[0]);
-  let out = "";
-  let i = 0;
-  for (const [start, end] of kept) {
-    if (end <= i) continue;
-    out += unescaped(text.slice(i, Math.max(i, start)));
-    out += text.slice(Math.max(i, start), end);
-    i = end;
-  }
-  return out + unescaped(text.slice(i));
+  return kept.sort((a, b) => a[0] - b[0]);
 }
 
-const unescaped = (s: string): string => s.replace(/\\(.|$)/gs, (m, c) => (c === "\n" ? "" : m));
+/** The text bash's lexer reads (QUESTIONS Q102): every unquoted `\<newline>` outside `kept` removed. `removed` holds
+ * where each one was, as offsets in the joined text; `crlf` is a `\<CR><LF>`, which bash doesn't join and the grammar does. */
+export function joinContinuations(
+  text: string,
+  kept: [number, number][],
+): { text: string; removed: number[]; crlf: boolean } {
+  const removed: number[] = [];
+  let crlf = false;
+  let out = "";
+  let r = 0;
+  for (let i = 0; i < text.length; i++) {
+    while ((kept[r]?.[1] ?? Infinity) <= i) r++;
+    const [start, end] = kept[r] ?? [Infinity, Infinity];
+    if (start <= i) {
+      out += text.slice(i, end);
+      i = end - 1;
+    } else if (text[i] !== "\\" || i + 1 === start) out += text[i];
+    else if (text[i + 1] === "\n") {
+      removed.push(out.length);
+      i++;
+    } else {
+      if (text[i + 1] === "\r" && text[i + 2] === "\n") crlf = true;
+      out += text.slice(i, i + 2);
+      i++;
+    }
+  }
+  return { text: out, removed, crlf };
+}
 
 /** The `…` substitutions of an unquoted here-document body; `\`` there is a literal backtick. */
 function backticks(body: string): string[] {

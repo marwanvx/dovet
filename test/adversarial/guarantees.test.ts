@@ -708,6 +708,13 @@ describe("git runs no hidden push through a command its arguments or environment
     "! if true; then git push; fi",
     "time while true; do git push; done",
     "time ( git push )",
+    "cat <\\\n<'E'\nA\\\nE\ngit push\nE\n",
+    "cat <\\\n<'E'\nA\\\nE\ncat .env\nE\n",
+    "cat <\\\n<\\\n'E'\nA\\\nE\ngit push\nE\n",
+    "sh -c 'cat <\\\n<\"E\"\nA\\\nE\ngit push\nE\n'",
+    "echo \\\r\ngit push",
+    "echo \\\r\ncat .env",
+    "echo $\\\n'x\\\ny' ; git push",
   ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
     const analysis = analyzeShell(parsers, "bash", command, {
       cwd: root,
@@ -774,6 +781,22 @@ describe("git runs no hidden push through a command its arguments or environment
       expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
     },
   );
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["grep 'a\\\nb' .env", ["grep", "a\\\nb", ".env"]],
+    ["echo $'gi\\\nt'", ["echo", "$'gi\\\nt'"]],
+    ["echo \\\n'a\\\nb'", ["echo", "a\\\nb"]],
+  ])("%s keeps the line continuation in single quotes as written", (command, argv) => {
+    const read = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(read.commands?.map((c) => c.argv)).toEqual([argv]);
+  });
 
   // spec: permissions §0 guarantee 3
   test("a git rebase -x script joins its line continuations", () => {
