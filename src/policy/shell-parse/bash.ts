@@ -112,13 +112,14 @@ function backtickBody(text: string): string | undefined {
 const unescapeBackticks = (body: string, quoted: boolean): string =>
   body.replace(quoted ? /\\([\\`$"])/g : /\\([\\`$])/g, "$1");
 
-/** Whether `\"` loses its backslash: inside a quoted word, yes; under a construct inside one, bash's answer depends on the
- * construct (`"$[ ]"` yes, `"$(( ))"` no), so undefined. */
+/** Whether `\"` loses its backslash: directly inside one quoted word, yes; under a construct or a second string inside
+ * one, bash's answer depends on the construct (`"$[ ]"` yes, `"$(( ))"` and `"${x:-"…"}"` no), so undefined. */
 function inQuotes(n: Node): boolean | undefined {
-  if (n.parent?.type === "string") return true;
+  let strings = 0;
   for (let p = n.parent; p !== null && p.type !== "command_substitution"; p = p.parent)
-    if (p.type === "string") return undefined;
-  return false;
+    if (p.type === "string") strings++;
+  if (strings === 0) return false;
+  return strings === 1 && n.parent?.type === "string" ? true : undefined;
 }
 
 /** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error

@@ -29,7 +29,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
 - `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
-- Extended (F76 rethink 3): `echo "${x:-'$(git push)'}"` too (single quotes are literal there).
+- Extended (F76 rethink 3, F84): `echo "${x:-'$(git push)'}"` and a backtick there too (single quotes are literal there).
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b

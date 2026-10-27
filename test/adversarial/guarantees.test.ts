@@ -1678,6 +1678,8 @@ describe("a backtick body is read as bash reads it (FOLLOWUPS F84)", () => {
     "( ( ( ( ( ( ( ( echo `git push` ) ) ) ) ) ) ) )",
     "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(sh -c 'git push'))))))))",
     'echo "$[ `git \\"push\\"` ]"',
+    'echo "$(( `echo \\"; git push; \\"` ))"',
+    'echo "${x:-"`echo \\"; git push origin main; : \\"`"}"',
   ])("%s, a backtick body or script the analyzer can't read as bash does, is never allowed", (command) => {
     const deny = loadRules(
       [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
