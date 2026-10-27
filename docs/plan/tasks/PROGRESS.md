@@ -877,3 +877,10 @@ Done: the rethink reviewed and fixed further (here-strings, doubled quotes, any-
 Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 8 fixed, 0 dropped, 2 logged (F80, F81); round 3 still found 1 major, 1 minor (PR comment).
 Learned: tree-sitter-bash misreads compounds after `coproc`/`time`/`!` with no parse error (`then git push`, `{ {` as one word); patching readings leaks. Rethink: a simple command led by a keyword or brace-only word, or a word with `\<newline>`, makes the analysis unparsed; and the heredoc backtick extractor (`bash.ts:167`) must skip escaped backticks.
 Next: rethink the approach to F76 (PR #200, see Learned), then F42.
+
+## 2026-10-27 — F76 rethink 2: fail closed from the tree
+Done: a simple command led by a reserved or brace-only word or holding a compound command, two words joined only by a line continuation anywhere in the tree, and `"$\<newline>("` in a string or here-document make the analysis unparsed (asks in every mode, Q102); a here-document's `\`` is literal. F81 fixed, F80 partly. PR: #200 (open, not merged).
+Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 5 fixed (round 1: 4, round 2: 2 incl. a regression of round 1's fix), 0 dropped, 1 logged (F82); round 3 still found 1 high (`${x:-$\<newline>(git push)}`, `[[ x =~ $\<newline>(…) ]]` allow in bypass), listed in a PR comment and not fixed.
+Learned: checking the tree for continuation shapes leaks node type by node type (strings, here-documents, `${…}` operands, `=~` regexes). Rethink: before parsing, remove `\<newline>` from the text the way bash's lexer does (everywhere but single quotes, `$'…'`, quoted here-document bodies and comments, counting backslashes), then parse the joined text; drop `continuationJoins` and the `$\<newline>(` regex. Keep the reserved-word/brace/compound misread check. `docs:check` fails locally only because the owner's skip-worktree edits to AGENTS.md exceed the instruction budget; the committed files pass.
+Next: rethink the approach to F76 (PR #200, see Learned), then F82, F42.
+
