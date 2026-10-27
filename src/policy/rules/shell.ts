@@ -127,6 +127,26 @@ const SAFE_WRAPPERS = new Map<string, Grammar>([
 ]);
 
 /** Every wrapper deny and ask rules and the built-in checks see past, with the operands before its command (`flock FILE`). */
+const KEYWORDS = new Set([
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "do",
+  "done",
+  "while",
+  "until",
+  "for",
+  "select",
+  "case",
+  "esac",
+  "in",
+  "{",
+  "}",
+  "!",
+  "coproc",
+]);
 const DEEP_WRAPPERS = new Map<string, number>([
   ...[...SAFE_WRAPPERS].map(([name, g]): [string, number] => [name, g.operands]),
   ...[
@@ -555,6 +575,14 @@ function inner(argv: string[], deep: boolean, budget: Budget): string[][] {
   }
   const name = commandName(argv[0]);
   if (name === "find") return findCommands(argv);
+  if (KEYWORDS.has(argv[0] ?? "")) {
+    // The grammar misreads a compound command (after `coproc [NAME]`, `time` or `!`) as simple commands its keywords
+    // lead: `then git push`.
+    const rest = argv.slice(1);
+    return [rest, ...(argv[0] === "coproc" ? [rest.slice(1)] : [])]
+      .filter((r) => r.length > 0)
+      .flatMap((r) => take(budget, r));
+  }
   if (name === "git") return [...gitAlias(argv, budget), ...gitRuns(argv).flatMap((r) => take(budget, r))];
   const operands = DEEP_WRAPPERS.get(name);
   return operands === undefined ? [] : wrapperReadings(argv, name, operands, budget);

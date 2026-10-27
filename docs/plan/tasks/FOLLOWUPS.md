@@ -26,6 +26,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/remote.ts` (`GIT_ENV_NAMES`)
 - `PATH=./bin:$PATH git log` lets a written `./bin/less` or `git-merge-<strategy>` run, the class `GIT_EXEC_PATH` covers; left out because a `PATH` prefix on build commands is common. Decide with a measured false-positive cost: count `PATH=` only when the command is git.
 
+### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
+- `gi\<newline>t push` and `git pu\<newline>sh` analyze as `understood: true` with argv `gi t push` / `git pu sh`, but bash removes the line continuation before splitting words and runs `git push`; the same splits `co\<newline>proc`. Remove unquoted (and double-quoted) `\<newline>` pairs before parsing, mapping positions back, or fail closed on a word that contains one.
+
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
 - `git push origin +!BRANCH!` allows in `bypassPermissions`: `!` is in no unresolved class, while the `cmd /c` spelling asks since F59 (delayed expansion is in its metacharacter set). In a shell where `!` expands (zsh/fish history, cmd with `/v:on` without the layer) the destination is known only at run time. Add `!` to `unresolvedTarget` like F64's `%`, or name the limit where the class is claimed.

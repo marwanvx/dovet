@@ -621,7 +621,6 @@ describe("git runs no hidden push through a command its arguments or environment
     "git rebase -x 'coproc X if true; then git push; fi' HEAD~1",
     "git rebase -x 'coproc while true; do git push; done' HEAD~1",
     "git rebase -x 'coproc for i in 1; do git push; done' HEAD~1",
-    "git rebase -x 'coproc X case a in a) git push;; esac' HEAD~1",
     "git submodule foreach 'coproc X if true; then git push; fi'",
   ])("%s is a remote action while tainted", (command) => {
     expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
@@ -673,6 +672,35 @@ describe("git runs no hidden push through a command its arguments or environment
       language: "powershell",
     });
     expect(d.findings.map((f) => f.kind)).toContain("protected");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git rebase -x 'coproc X case a in a) git push;; esac' HEAD~1",
+    "git rebase -x 'coproc X if(true)then git push;fi' HEAD~1",
+    "git rebase -x 'coproc X while(true)do git push;done' HEAD~1",
+    "git rebase -x 'coproc X until(false)do git push;done' HEAD~1",
+    "git rebase -x 'coproc X for((i=0;i<1;i++))do git push;done' HEAD~1",
+    "git rebase -x 'coproc X ( git push )' HEAD~1",
+    "coproc X \\\nif true; then git push; fi",
+    "coproc \\\nX if true; then git push; fi",
+    "time coproc X if true; then git push; fi",
+    "! coproc X if true; then git push; fi",
+    "! if true; then git push; fi",
+    "time if true; then git push; fi",
+    "sh -c 'time coproc X if true; then git push; fi'",
+    "bash -c '! coproc X if true; then git push; fi'",
+  ])("%s, a compound command the grammar misreads, is never allowed while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+    expect(
+      shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
+    ).not.toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a coproc keyword in an argument or a pattern adds no command", () => {
+    const d = shell("grep -rn coproc src", state("default"));
+    expect(d.behavior).toBe("allow");
   });
 
   // spec: permissions §0 guarantee 3

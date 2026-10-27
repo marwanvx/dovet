@@ -20,8 +20,6 @@ const BENIGN_EXIT_ONE = new Set([
 ]);
 
 /** A parse error, a timeout or a crash gives `commands: undefined` and `understood: false`: never an allow (§4.0 item 7). */
-const COPROC = /(^|[\s;&|(){}!`])coproc\s+(?:[A-Za-z_]\w*\s*(?=[{(]|(?:if|while|until|for|case|select|\[\[)\s))?/g;
-
 export function analyzeShell(
   parsers: ShellParsers,
   language: ShellLanguage,
@@ -32,24 +30,20 @@ export function analyzeShell(
   const deadline = performance.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS);
   ctx.deadline.at = deadline;
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
-  // Only the top-level tree counts: a nested script's error already fails the analysis as "parse error".
+  // A nested script's error counts too: the grammar can lose a whole command to one (`coproc X if(true)then …`).
   let topError = false;
   const run = (text: string, st: State): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
-    const stripped = text.replace(COPROC, "$1");
     return (
-      (parsers.withTree("bash", text, left, (root) => {
+      parsers.withTree("bash", text, left, (root) => {
         if (root.hasError) {
           ctx.fail("parse error");
-          if (st === state) topError = true;
+          topError = true;
         }
         walkBash(root, { ctx, script: run }, st);
         return true;
-      }) ??
-        false) &&
-      // The grammar misreads `coproc [NAME] compound-command`: walk the script again without the keyword.
-      (stripped === text || run(stripped, { ...st, stack: [...st.stack], loops: new Map(st.loops) }))
+      }) ?? false
     );
   };
   const unparsed = (reason: string): Analysis => ({
