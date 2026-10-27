@@ -14,9 +14,30 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F76 (F41 review): git runs a command its arguments or environment name, out of the remote-action check's sight
-- **Severity:** major · `src/policy/rules/shell.ts` (`inner`, `gitAlias`), `src/policy/decide/remote.ts`
-- `git submodule foreach git push`, `git rebase -x 'git push origin main' HEAD~1`, `git bisect run git push` and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log` are allowed in tainted `bypassPermissions`: git is not read as an exec wrapper, and inline assignments are stripped before `gitHidden` sees the configuration. Fix as F41 did for `!` aliases: give `inner` readings for these (`sh -c` of foreach/`--exec`'s string, `bisect run`'s argv), and count a `GIT_CONFIG*` assignment on a git command like inline `-c` configuration. Same class (minor, F41 round-2 security review, not probed): `wget --config=<file>` reads `method`/`post_data` from a file the agent wrote.
+### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)
+- `` echo `git pu\\sh` `` and `` echo `\`git push\`` `` run `git push` and allow past a deny rule; `` echo `cat .e\\nv` `` passes the `.env` check. Unescape `\\`, `` \` ``, `\$` and analyze the body as a nested script, or fail closed.
+
+### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
+- `echo $(( 1 #$(git push)\n))` allows past a deny rule. Fail closed on a comment inside an arithmetic expansion or a backtick body.
+
+### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
+- `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
+- Extended (F76 rethink 3): `echo "${x:-'$(git push)'}"` too (single quotes are literal there).
+
+### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
+- `git config core.pager 'git push'; git log` and `git config --global core.sshCommand …` are allowed in tainted `bypassPermissions`: a write to `.git/config` by path is protected (§7), but `git config` writing a key outside `QUIET_GIT_CONFIG` isn't checked, and the later built-in subcommand reads it. Count a `git config` (or `git config set`) write of a non-quiet key as a possible push, like inline `-c`.
+
+### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
+- **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
+- `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too.
+
+### F79 (F76 security review): `PATH=…` on a git command picks the programs git runs
+- **Severity:** minor · `src/policy/decide/remote.ts` (`GIT_ENV_NAMES`)
+- `PATH=./bin:$PATH git log` lets a written `./bin/less` or `git-merge-<strategy>` run, the class `GIT_EXEC_PATH` covers; left out because a `PATH` prefix on build commands is common. Decide with a measured false-positive cost: count `PATH=` only when the command is git.
 
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
@@ -211,6 +232,21 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F80 (F76 rethink security review): a backslash-newline inside a word splits it in the bash grammar
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (word text), `analyze.ts`
+- `gi\<newline>t push` reads as argv `gi t push` (`understood: true`); bash drops the continuation first and runs `git push`. Remove unquoted `\<newline>` before parsing, or fail closed on it.
+- **Fixed (#200):** before parsing, the analyzer removes every unquoted `\<newline>` the way bash's lexer does (not in single quotes, `$'…'`, comments or quoted here-document bodies) and parses the joined text; a joined text whose quotes or comments read differently is unparsed (QUESTIONS Q102).
+
+### F81 (F76 rethink round-3 security review): the grammar merges `{ {` into one word and hides the command
+- **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`inner`, `KEYWORDS`)
+- `! { { git push; }; }` parses as argv `{ { git push` and allows in tainted bypass.
+- **Fixed (#200):** a simple command led by a reserved or brace-only word, or holding a compound command, makes the analysis unparsed (QUESTIONS Q102).
+
+### F76 (F41 review): git runs a command its arguments or environment name, out of the remote-action check's sight
+- **Severity:** major · `src/policy/rules/shell.ts` (`inner`, `gitAlias`), `src/policy/decide/remote.ts`
+- `git submodule foreach git push`, `git rebase -x 'git push origin main' HEAD~1`, `git bisect run git push` and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log` are allowed in tainted `bypassPermissions`: git is not read as an exec wrapper, and inline assignments are stripped before `gitHidden` sees the configuration. Fix as F41 did for `!` aliases: give `inner` readings for these (`sh -c` of foreach/`--exec`'s string, `bisect run`'s argv), and count a `GIT_CONFIG*` assignment on a git command like inline `-c` configuration. Same class (minor, F41 round-2 security review, not probed): `wget --config=<file>` reads `method`/`post_data` from a file the agent wrote.
+- **Fixed (#200, open: round 3 found more; see the PR):** `gitRuns` reads `submodule foreach`, `bisect run`, `rebase --exec`, `difftool --extcmd`, `grep -O`, `--upload-pack`/`--exec`, `archive --exec` and `for-each-repo` as what they run (also split for PowerShell); `clone -c` counts as configuration; git environment variables set before a command, through `env`/`export`/`sudo` or named to `printf -v`/`read`/`Set-Item env:` count as a possible push; `wget --config` uploads. Q101 and §4.8 carry the rule; F77, F78, F79 logged.
 
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`

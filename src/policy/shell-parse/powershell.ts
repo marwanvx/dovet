@@ -1,6 +1,14 @@
 // Walks a PowerShell syntax tree: pipelines of plain commands only, with aliases canonicalized (permissions §3.2, §4.0).
 import type { Node } from "web-tree-sitter";
-import { canonicalCmdlet, type Redirect, type Subcommand } from "../rules/index.ts";
+import {
+  canonicalCmdlet,
+  commandName,
+  type Redirect,
+  type Subcommand,
+  shellScriptAt,
+  unwrapCommand,
+} from "../rules/index.ts";
+import { SHELLS } from "./bash.ts";
 import type { Context } from "./context.ts";
 import type { Word } from "./read-only.ts";
 
@@ -44,8 +52,16 @@ const CMDLETS: Record<string, Cmdlet> = {
 
 function literal(n: Node): Word {
   const t = n.text;
-  const quoted = /^'([^']*)'$/.exec(t)?.[1] ?? /^"([^"$`]*)"$/.exec(t)?.[1];
+  const quoted = /^'((?:[^']|'')*)'$/.exec(t)?.[1]?.replaceAll("''", "'") ?? /^"([^"$`]*)"$/.exec(t)?.[1];
   if (quoted !== undefined) return { text: quoted, literal: true, glob: false };
+  // A here-string's body: a verbatim one is literal, an expandable one only without `$` or a backtick.
+  const here = /^@(['"])\r?\n([\s\S]*?)\r?\n\1@$/.exec(t);
+  if (here !== null) {
+    const body = here[2] ?? "";
+    return { text: body, literal: here[1] === "'" || !/[$`]/.test(body), glob: false };
+  }
+  const expandable = /^"([\s\S]*)"$/.exec(t)?.[1];
+  if (expandable !== undefined) return { text: expandable, literal: false, glob: false };
   const plain = n.type === "generic_token" || /^-?\d+$/.test(t);
   return { text: t, literal: plain, glob: plain && /[*?[]/.test(t) };
 }
@@ -55,7 +71,13 @@ const isProviderPath = (text: string): boolean => text.includes("::") || /^[A-Za
 
 export type PowerShellState = { cwd: string; stack: string[] };
 
-export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): void {
+/** `script` parses and walks a bash script (what `sh -c` and git's own command options run); false when it couldn't. */
+export function walkPowerShell(
+  root: Node,
+  ctx: Context,
+  st: PowerShellState,
+  script: (text: string, cwd: string) => boolean,
+): void {
   function classify(name: string, parsed: Array<{ param?: string; word?: Word }>): Word[] | undefined {
     const spec = CMDLETS[name];
     if (spec === undefined) return undefined;
@@ -98,6 +120,7 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
     sub.argv.push(canonical);
     const parsed: Array<{ param?: string; word?: Word }> = [];
     let redirectsOk = true;
+    let computed = false;
     for (const c of n.childForFieldName("command_elements")?.namedChildren ?? []) {
       if (c.type === "command_argument_sep") continue;
       if (c.type === "command_parameter") {
@@ -121,12 +144,26 @@ export function walkPowerShell(root: Node, ctx: Context, st: PowerShellState): v
         }
       } else {
         const w = literal(c);
-        if (!w.literal) ctx.fail(`${c.type} argument`);
+        if (!w.literal) {
+          ctx.fail(`${c.type} argument`);
+          computed = true;
+        }
         sub.argv.push(w.text);
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });
       }
     }
     ctx.commands.push(sub);
+    const { argvs, complete } = unwrapCommand(sub.argv);
+    if (!complete) ctx.fail("a wrapper's options can't all be checked");
+    for (const v of argvs) {
+      if (!SHELLS.has(commandName(v[0]))) continue;
+      ctx.fail("sh -c runs a nested script");
+      const at = shellScriptAt(v.slice(1));
+      const text = at < 0 ? undefined : v[at + 1];
+      // A script built from a computed word may read as more once PowerShell expands it.
+      if (computed) ctx.state.literalNames = false;
+      if (text !== undefined && !script(text, st.cwd)) ctx.fail("nested script not parsed");
+    }
     const lower = canonical.toLowerCase();
     if (lower === "set-location" || lower === "push-location" || lower === "pop-location") {
       const target = parsed.find((p) => p.word !== undefined)?.word;

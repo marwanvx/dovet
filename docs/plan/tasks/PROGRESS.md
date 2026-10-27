@@ -864,3 +864,29 @@ Done: an inline `-c alias.*` is read as every step of its expansion (a `!` alias
 Review: deep, 3 rounds (reviewer tests/spec/scope ×1: 0 findings; security-reviewer ×3); 8 fixed (round 1: alias chains through a built-in name, the same through a loop, `--shallow-file`, quadratic chains, `npx -c` separators, `wget -e`; round 2: case-variant names and uninstalled script commands, `npx -c` quotes and `wget -qe` spellings), 0 dropped, 1 logged (F76, major: git commands that run a command — `submodule foreach`, `rebase --exec`, `bisect run`, `GIT_CONFIG_*` env; plus `wget --config`).
 Learned: git runs a built-in before an alias of its name, but script commands may be missing and alias lookup ignores case, so any "stop at a built-in" rule guesses wrong; emitting every chain step as a reading is the fail-closed form. Locally AGENTS.md is a skip-worktree OpenCode variant ~155 tokens over the instruction-file ceiling, so `docs:check` must run in a clean worktree of the branch.
 Next: F76 (major, logged here), then F42.
+
+## 2026-10-27 — F76 git runs a command its arguments or environment name
+Done: commands git runs from its arguments (`submodule foreach`, `bisect run`, `rebase --exec`, `difftool -x`, `grep -O`, `--upload-pack`/`--exec`, `archive --exec`, `for-each-repo`) are read as what they run (split at separators for PowerShell too); `clone -c`, `clone`/`init --template`, git environment variables set on or before a command (assignment, `env`/`export`/`sudo`, `printf -v`, `read`, `declare -n`, `Set-Item env:`) and `wget --config` count as remote actions (Q101). PR: #200 (open, not merged).
+Review: deep, 3 rounds (reviewer tests/spec/scope ×2; security-reviewer ×3); 20 fixed (round 1: 9, round 2: 11), 0 dropped, 3 logged (F77 `git config` writes, F78 `understood: false` allowed in bypass, F79 `PATH=`); round 3 still found 1 high and 2 medium, listed in a PR comment and not fixed.
+Learned: listing spellings keeps leaking. Round 3 found `less -R--lesskey-file=x` (less reads a long option inside an option group; a lesskey `#env LESSOPEN=|cmd` runs a command), PowerShell split readings led by `time -p`, `coproc` or a redirection (`2>&1 git push`), and the `Environment::`/`Microsoft.PowerShell.Core\Environment::` provider paths. Rethink: (1) a quiet pager is an allowlist of display flags (`-R`, `-F`, `-X`, `-S`, `-r` clusters), never "any option but k"; (2) under PowerShell, run the bash analyzer on a `sh -c` reading (git runs these through sh) instead of splitting the text; (3) match a git variable name after any `:`, `\` or `/` in a word of a setting command. A reviewer's probe block slipped into a commit once: give reviewers a /tmp probe path explicitly.
+Next: rethink the approach to F76 (PR #200: apply the three changes above, re-review the diff), then F42.
+
+
+## 2026-10-27 — F76 rethink: git runs a command its arguments or environment name
+Done: the rethink reviewed and fixed further (here-strings, doubled quotes, any-case PowerShell names, nested parse errors fail the analysis, keyword-led commands read without the keyword). PR: #200 (open, not merged).
+Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 8 fixed, 0 dropped, 2 logged (F80, F81); round 3 still found 1 major, 1 minor (PR comment).
+Learned: tree-sitter-bash misreads compounds after `coproc`/`time`/`!` with no parse error (`then git push`, `{ {` as one word); patching readings leaks. Rethink: a simple command led by a keyword or brace-only word, or a word with `\<newline>`, makes the analysis unparsed; and the heredoc backtick extractor (`bash.ts:167`) must skip escaped backticks.
+Next: rethink the approach to F76 (PR #200, see Learned), then F42.
+
+## 2026-10-27 — F76 rethink 2: fail closed from the tree
+Done: a simple command led by a reserved or brace-only word or holding a compound command, two words joined only by a line continuation anywhere in the tree, and `"$\<newline>("` in a string or here-document make the analysis unparsed (asks in every mode, Q102); a here-document's `\`` is literal. F81 fixed, F80 partly. PR: #200 (open, not merged).
+Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 5 fixed (round 1: 4, round 2: 2 incl. a regression of round 1's fix), 0 dropped, 1 logged (F82); round 3 still found 1 high (`${x:-$\<newline>(git push)}`, `[[ x =~ $\<newline>(…) ]]` allow in bypass), listed in a PR comment and not fixed.
+Learned: checking the tree for continuation shapes leaks node type by node type (strings, here-documents, `${…}` operands, `=~` regexes). Rethink: before parsing, remove `\<newline>` from the text the way bash's lexer does (everywhere but single quotes, `$'…'`, quoted here-document bodies and comments, counting backslashes), then parse the joined text; drop `continuationJoins` and the `$\<newline>(` regex. Keep the reserved-word/brace/compound misread check. `docs:check` fails locally only because the owner's skip-worktree edits to AGENTS.md exceed the instruction budget; the committed files pass.
+Next: rethink the approach to F76 (PR #200, see Learned), then F82, F42.
+
+
+## 2026-10-28 — F76 rethink 3: join line continuations as bash's lexer does
+Done: unquoted `\<newline>` is removed before parsing as bash does (kept in single quotes, `$'…'`, comments, quoted here-documents, but not in backticks); a joined text whose quoted parts moved, or `\<CR><LF>`, is unparsed (Q102). F80 fixed. PR: #200 (merged).
+Review: deep, 3 rounds (reviewer ×3, security-reviewer ×3); 5 fixed, 0 dropped, 3 logged (F82 extended, F83, F84); round 3: 1 minor.
+Learned: bash unescapes and rereads a backtick body (F84). `docs:check` locally stops at the owner's AGENTS.md budget first and hides the `bun run next` budget: run `bun scripts/check-docs.ts` and read every line.
+Next: F84, then F82, F77, F78, F42.

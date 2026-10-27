@@ -1,5 +1,5 @@
 // Remote actions (permissions §4.8) and self-protection (§4.4b), recognized from the analyzer's argv.
-import { commandName, gitInvocation, isLongOption } from "../rules/index.ts";
+import { commandName, gitInvocation, gitOptionValues, isLongOption } from "../rules/index.ts";
 import type { Env } from "./paths.ts";
 import { unresolvedTarget } from "./targets.ts";
 
@@ -54,6 +54,72 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
   const alias = config.findLast(([k]) => k.toLowerCase() === `alias.${a.toLowerCase()}`)?.[1];
   if (alias !== undefined && !alias.startsWith("!")) return undefined;
   return { kind: "push", label: `git ${a} (not a git command: an alias or add-on could push)` };
+}
+
+/** Environment variables git (or its pager) reads configuration or a program to run from. */
+const GIT_ENV_NAMES =
+  "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESS|LESSOPEN|LESSCLOSE|LESSKEY\\w*";
+const GIT_ENV = new RegExp(`^(${GIT_ENV_NAMES})=(.*)$`, "s");
+const GIT_ENV_NAME = new RegExp(`^(?:-v)?(${GIT_ENV_NAMES})$`);
+const GIT_ENV_NAME_ANY_CASE = new RegExp(GIT_ENV_NAME.source, "i");
+// PowerShell's environment provider (`env:X`, `Env:\X`, `Microsoft.PowerShell.Core\Environment::X`, or a bare name to
+// `-Name`, `-NewName` or under `Set-Location env:`); Windows names ignore case.
+const GIT_ENV_PATH = new RegExp(`^(?:[\\w.\\\\]*::|env:)[\\\\/]*(${GIT_ENV_NAMES})$`, "i");
+const ENV_SETTERS = new Set(["env", "export", "declare", "typeset", "local", "readonly", "sudo", "doas"]);
+/** Commands that set a variable a word names (`printf -v NAME`, `read NAME`, `export NAME`, `Set-Item env:NAME`). */
+const POWERSHELL_SETTERS = new Set([
+  "set-item",
+  "si",
+  "new-item",
+  "ni",
+  "set-content",
+  "sc",
+  "add-content",
+  "ac",
+  "copy-item",
+  "move-item",
+  "rename-item",
+]);
+const NAME_SETTERS = new Set([
+  ...["export", "declare", "typeset", "local", "readonly", "printf", "read", "mapfile", "readarray"],
+  ...POWERSHELL_SETTERS,
+]);
+
+/** The git environment variable a command sets (`GIT_CONFIG_COUNT=1 git log`, `export GIT_SSH_COMMAND=…`), if any; a
+ * pager or editor whose value is one program and its options is quiet unless that program runs others. */
+function gitEnvironment(argv: string[]): string | undefined {
+  const name = commandName(argv[0]);
+  const assigns = /^\w+=/.test(argv[0] ?? "");
+  // The analyzer reads `declare -n r=GIT_PAGER` as the assignment `r=GIT_PAGER`.
+  if (NAME_SETTERS.has(name) || assigns) {
+    // `declare -n r=GIT_PAGER` makes `r` a name for the variable.
+    const hit = argv
+      .slice(assigns ? 0 : 1)
+      .map(
+        (w) =>
+          (assigns
+            ? undefined
+            : ((POWERSHELL_SETTERS.has(name) ? GIT_ENV_NAME_ANY_CASE : GIT_ENV_NAME).exec(w) ??
+                GIT_ENV_PATH.exec(w))?.[1]) ??
+          (w.includes("=") ? GIT_ENV_NAME.exec(w.slice(w.indexOf("=") + 1))?.[1] : undefined),
+      )
+      .find((n) => n !== undefined);
+    if (hit !== undefined) return hit;
+  }
+  if (!(ENV_SETTERS.has(name) || assigns)) return undefined;
+  for (const w of argv) {
+    const m = GIT_ENV.exec(w);
+    if (m === null) continue;
+    // Only display flags: less reads long options inside a flag group and a lesskey file can run a command, and any
+    // editor option can load commands from a file.
+    const quiet =
+      m[1] === "LESS"
+        ? /^-?[FRSXr]*$/.test(m[2] ?? "")
+        : /PAGER|EDITOR|VISUAL/.test(m[1] ?? "") &&
+          /^(?:(?:cat|less|more)(?:\s+-[FRSXr]+)*|true|:|vim?|nano)?$/.test(m[2] ?? "");
+    if (!quiet) return m[1];
+  }
+  return undefined;
 }
 
 export const program = commandName;
@@ -130,11 +196,26 @@ export function remoteAction(argv: string[]): Remote | undefined {
     const hit = verbs.find((v) => w(v));
     return hit === undefined ? undefined : is("deploy", `${tool} ${hit}`);
   };
+  const env = gitEnvironment(argv);
+  if (env !== undefined) return is("push", `${env} (git configuration or a program git runs, from the environment)`);
   switch (name) {
     case "git":
       if (GIT_PUSHES.has(a)) return is("push", `git ${a}`);
       if (GIT_UPLOADS.has(a)) return is("upload", `git ${a}`);
       if (a === "subtree" && w("push")) return is("push", "git subtree push");
+      // A template directory brings hooks that run on checkout and commit.
+      if (
+        (a === "clone" || a === "init") &&
+        gitOptionValues(gitArgs(rest).slice(1), undefined, "--template").length > 0
+      )
+        return is("push", `git ${a} --template (its hooks can run a command)`);
+      // clone sets its `-c`/`--config` configuration before it fetches.
+      if (a === "clone") {
+        const key = gitOptionValues(gitArgs(rest).slice(1), "c", "--config")
+          .map((kv) => kv.split("=", 1)[0] ?? "")
+          .find((k) => !QUIET_GIT_CONFIG.test(k));
+        if (key !== undefined) return is("push", `git clone -c ${key} (configuration that can run a command)`);
+      }
       return gitHidden(rest, a);
     case "npm":
     case "pnpm":
@@ -188,7 +269,8 @@ export function remoteAction(argv: string[]): Remote | undefined {
         const m = /^-[^-e]*e(.*)$/s.exec(x);
         return m === null ? [] : [m[1] || (rest[i + 1] ?? "")];
       });
-      return rest.some((x) => WGET_POST_LONGS.some((n) => isLongOption(n, x))) ||
+      // A wgetrc file (`--config`) may set the method or the body.
+      return rest.some((x) => [...WGET_POST_LONGS, "--config"].some((n) => isLongOption(n, x))) ||
         wgetrc.some((c) =>
           /^(method|postdata|postfile|bodydata|bodyfile)=/.test(c.replace(/[\s_-]/g, "").toLowerCase()),
         ) ||

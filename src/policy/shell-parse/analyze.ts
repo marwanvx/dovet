@@ -1,6 +1,6 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
-import { type State, walkBash } from "./bash.ts";
+import { joinContinuations, type State, verbatimRanges, walkBash } from "./bash.ts";
 import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
 import { walkPowerShell } from "./powershell.ts";
@@ -30,18 +30,26 @@ export function analyzeShell(
   const deadline = performance.now() + (opts.budgetMs ?? DEFAULT_BUDGET_MS);
   ctx.deadline.at = deadline;
   const state: State = { cwd: opts.cwd, stack: [], loops: new Map(), depth: 0 };
-  // Only the top-level tree counts: a nested script's error already fails the analysis as "parse error".
+  // A nested script's error counts too: the grammar can lose a whole command to one (`coproc X if(true)then …`).
   let topError = false;
-  const run = (text: string, st: State): boolean => {
+  // A continuation removed where the joined text's own reading keeps one (`<\<newline><'E'` makes a quoted
+  // here-document), or one that reading would still remove, means the two readings disagree: unparsed.
+  const run = (text: string, st: State, removedAt?: number[]): boolean => {
     const left = deadline - performance.now();
     if (left <= 0) return false;
     return (
       parsers.withTree("bash", text, left, (root) => {
+        const kept = verbatimRanges(root);
+        const joined = joinContinuations(text, kept);
+        if (joined.crlf) ctx.state.misread = true;
+        if (joined.text !== text && removedAt === undefined) return run(joined.text, st, joined.removed);
+        if (joined.text !== text || removedAt?.some((p) => kept.some(([s, e]) => s < p && p < e)))
+          ctx.state.misread = true;
         if (root.hasError) {
           ctx.fail("parse error");
-          if (st === state) topError = true;
+          topError = true;
         }
-        walkBash(root, { ctx, script: run }, st);
+        walkBash(root, { ctx, script: (t, s) => run(t, s) }, st);
         return true;
       }) ?? false
     );
@@ -63,19 +71,25 @@ export function analyzeShell(
           ctx.fail("parse error");
           topError = true;
         }
-        walkPowerShell(root, ctx, { cwd: opts.cwd, stack: [] });
+        walkPowerShell(root, ctx, { cwd: opts.cwd, stack: [] }, (text, cwd) =>
+          run(text, { cwd, stack: [], loops: new Map(), depth: 1 }),
+        );
         return true;
       });
   } catch (e) {
     return unparsed(`analysis failed: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (parsed && performance.now() > deadline) parsed = false;
-  if (topError)
+  if (topError || ctx.state.misread)
     return {
       commands: undefined,
       understood: false,
       literalNames: false,
-      reasons: ["the parser reported a syntax error"],
+      reasons: [
+        topError
+          ? "the parser reported a syntax error"
+          : "the parser misread a compound command or a line continuation",
+      ],
       operands: [],
       // The lines before the erroring one run (the tool executes a script file): the checks see them, the ask stands.
       recovered: { commands: ctx.commands, operands: ctx.operands },

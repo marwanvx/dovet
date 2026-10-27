@@ -265,6 +265,7 @@ describe("shapes that are not understood", () => {
     for (const command of [
       'echo "${x:-$(rm -rf y)}"',
       "cat <<EOF\n`rm -rf y`\nEOF",
+      "cat <<EOF\n\\`a\\` `rm -rf y`\nEOF",
       "echo ${x:-$(rm -rf y)}",
       "cat <<EOF\n$(rm -rf y)\nEOF",
       "for ((i=0;i<1;i++)); do rm -rf x; done",

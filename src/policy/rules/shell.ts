@@ -127,6 +127,26 @@ const SAFE_WRAPPERS = new Map<string, Grammar>([
 ]);
 
 /** Every wrapper deny and ask rules and the built-in checks see past, with the operands before its command (`flock FILE`). */
+const KEYWORDS = new Set([
+  "if",
+  "then",
+  "else",
+  "elif",
+  "fi",
+  "do",
+  "done",
+  "while",
+  "until",
+  "for",
+  "select",
+  "case",
+  "esac",
+  "in",
+  "{",
+  "}",
+  "!",
+  "coproc",
+]);
 const DEEP_WRAPPERS = new Map<string, number>([
   ...[...SAFE_WRAPPERS].map(([name, g]): [string, number] => [name, g.operands]),
   ...[
@@ -555,7 +575,15 @@ function inner(argv: string[], deep: boolean, budget: Budget): string[][] {
   }
   const name = commandName(argv[0]);
   if (name === "find") return findCommands(argv);
-  if (name === "git") return gitAlias(argv, budget);
+  if (KEYWORDS.has(argv[0] ?? "")) {
+    // The grammar misreads a compound command (after `coproc [NAME]`, `time` or `!`) as simple commands its keywords
+    // lead: `then git push`.
+    const rest = argv.slice(1);
+    return [rest, ...(argv[0] === "coproc" ? [rest.slice(1)] : [])]
+      .filter((r) => r.length > 0)
+      .flatMap((r) => take(budget, r));
+  }
+  if (name === "git") return [...gitAlias(argv, budget), ...gitRuns(argv).flatMap((r) => take(budget, r))];
   const operands = DEEP_WRAPPERS.get(name);
   return operands === undefined ? [] : wrapperReadings(argv, name, operands, budget);
 }
@@ -642,6 +670,79 @@ function gitAlias(argv: string[], budget: Budget): string[][] {
     }
     v = [...v.slice(0, at + 1), ...splitAlias(value), ...rest];
     out.push(...take(budget, v));
+  }
+}
+
+/** `--long=v`, `--long v` and (with `short`) `-xv`, `-x v`, `-ix v` among a git subcommand's options. */
+export function gitOptionValues(args: string[], short: string | undefined, long: string): string[] {
+  const out: string[] = [];
+  for (let j = 0; j < args.length && args[j] !== "--"; j++)
+    if ((args[j] ?? "").startsWith("-") && (short !== undefined || (args[j] ?? "").startsWith("--")))
+      // parse-options takes the next word only for a bare option, never after an attached value.
+      out.push(
+        ...optionValues(args, j, short ?? "\0", long)
+          .slice(0, 1)
+          .map(([v]) => v),
+      );
+  return out;
+}
+
+const shellReadings = (cmd: string[]): string[][] => (cmd.length === 0 ? [] : [cmd, ["sh", "-c", cmd.join(" ")]]);
+
+/** What a git subcommand runs from its own arguments: `submodule foreach`, `bisect run`, `rebase --exec`, a pager,
+ * difftool or upload-pack program, or the git command `for-each-repo` runs in each repository. */
+function gitRuns(argv: string[]): string[][] {
+  const { at } = gitInvocation(argv.slice(1));
+  const sub = argv[at + 1] ?? "";
+  const rest = argv.slice(at + 2);
+  const sh = (values: string[]): string[][] => values.map((v) => ["sh", "-c", v]);
+  switch (sub) {
+    case "submodule":
+    case "submodule--helper": {
+      const f = rest.findIndex((a) => !a.startsWith("-"));
+      if (rest[f] !== "foreach") return [];
+      const cmd = rest.slice(f + 1);
+      const start = cmd.findIndex((a) => !a.startsWith("-") || a === "--");
+      return shellReadings(start < 0 ? [] : cmd.slice(cmd[start] === "--" ? start + 1 : start));
+    }
+    case "bisect":
+      return rest[0] === "run" ? shellReadings(rest.slice(1)) : [];
+    case "rebase":
+      return sh(gitOptionValues(rest, "x", "--exec"));
+    case "difftool":
+      return sh(gitOptionValues(rest, "x", "--extcmd"));
+    case "grep":
+      // `-O` takes its pager only attached; alone it opens the configured one.
+      return sh(
+        rest.flatMap((a) =>
+          /^-[^-O]*O./s.test(a)
+            ? [a.slice(a.indexOf("O") + 1)]
+            : isLongOption("--open-files-in-pager", a) && a.includes("=")
+              ? [a.slice(a.indexOf("=") + 1)]
+              : [],
+        ),
+      );
+    case "fetch":
+    case "pull":
+      return sh(gitOptionValues(rest, undefined, "--upload-pack"));
+    case "clone":
+      return sh(gitOptionValues(rest, "u", "--upload-pack"));
+    case "ls-remote":
+      // `--exec` is ls-remote's and fetch-pack's old name for `--upload-pack`.
+      return sh([...gitOptionValues(rest, "u", "--upload-pack"), ...gitOptionValues(rest, undefined, "--exec")]);
+    case "fetch-pack":
+      return sh([...gitOptionValues(rest, undefined, "--upload-pack"), ...gitOptionValues(rest, undefined, "--exec")]);
+    case "archive":
+      return sh(gitOptionValues(rest, undefined, "--exec"));
+    case "for-each-repo": {
+      let i = 0;
+      while ((rest[i] ?? "").startsWith("-") && rest[i] !== "--")
+        i += isLongOption("--config", rest[i] ?? "") && !(rest[i] ?? "").includes("=") ? 2 : 1;
+      const cmd = rest.slice(rest[i] === "--" ? i + 1 : i);
+      return cmd.length === 0 ? [] : [["git", ...cmd]];
+    }
+    default:
+      return [];
   }
 }
 

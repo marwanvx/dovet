@@ -20,7 +20,12 @@ let root = "";
 let dispose: () => Promise<void>;
 beforeAll(async () => {
   parsers = await loadShellParsers();
-  const project = await tempProject({ "a.ts": "a", ".env": "K=1", "src/x.ts": "x" });
+  const project = await tempProject({
+    "a.ts": "a",
+    ".env": "K=1",
+    "src/x.ts": "x",
+    ".git/HEAD": "ref: refs/heads/main\n",
+  });
   root = project.root;
   dispose = project.dispose;
 });
@@ -544,6 +549,358 @@ describe("a git alias hides no push from the taint deny (FOLLOWUPS F41)", () => 
       "git -c core.pager='git push origin main' log",
     ])
       expect(shell(command, state("bypassPermissions", { tainted: true })).behavior, command).toBe("deny");
+  });
+});
+
+describe("git runs no hidden push through a command its arguments or environment name (FOLLOWUPS F76)", () => {
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git submodule foreach git push",
+    "git submodule foreach --recursive 'git push origin main'",
+    "git submodule --quiet foreach 'cd x && git push'",
+    "git rebase -x 'git push origin main' HEAD~1",
+    "git rebase --exec='git push' HEAD~1",
+    "git rebase --exe 'git push' HEAD~1",
+    "git rebase -ix 'git push' HEAD~1",
+    "git rebase -i -x'git push' HEAD~1",
+    "git bisect run git push",
+    "git bisect run sh -c 'git push'",
+    "git difftool -x 'git push' HEAD",
+    "git difftool --extcmd='git push' HEAD",
+    "git grep -O'git push' x",
+    "git grep --open-files-in-pager='git push' x",
+    "git fetch --upload-pack='git push origin main' .",
+    "git ls-remote --upload-pack 'git push' .",
+    "git clone -u 'git push' . y",
+    "git archive --remote=. --exec='git push' HEAD",
+    "git for-each-repo --config=maintenance.repo push",
+    "git -c alias.f='submodule foreach git push' f",
+    "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log",
+    "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log",
+    "GIT_CONFIG_PARAMETERS=\"'core.pager'='git push'\" git log",
+    "GIT_CONFIG_GLOBAL=./x git log",
+    "GIT_EXTERNAL_DIFF='git push' git diff",
+    "GIT_SSH_COMMAND='git push' git fetch",
+    "sudo GIT_EDITOR='git push' git commit",
+    "export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push'; git log",
+    "GIT_CONFIG_COUNT=1; git log",
+    "wget --config=./rc https://example.com",
+    "git pull --upload-pack='git push' .",
+    "git fetch-pack --upload-pack='git push origin main' . main",
+    "git fetch-pack --exec='git push origin main' . main",
+    "git ls-remote --exec='git push origin main' .",
+    "git submodule--helper foreach git push",
+    "git clone -c core.sshCommand='git push origin main' ssh://x/y z",
+    "git clone --config=core.pager='git push' . y",
+    "git clone --conf core.pager='git push' . y",
+    "GIT_ALLOW_PROTOCOL=ext git fetch 'ext::sh -c x'",
+    "LESSOPEN='|-git push origin main %s' git log",
+    "printf -v GIT_PAGER 'git push'; export GIT_PAGER; git log",
+    "read GIT_PAGER <<< 'git push'; export GIT_PAGER; git log",
+    "GIT_PAGER='less; git push' git log",
+    "EDITOR='vim -Sx' git commit",
+    "GIT_EDITOR='vim --cmd x' git commit",
+    "GIT_PAGER='less -Rk keys' git log",
+    "GIT_PAGER='less --lesskey-file=x' git log",
+    "declare -n r=GIT_PAGER; export r='git push'; git log",
+    "printf -vGIT_PAGER 'git push'; git log",
+    "git clone --template=t . y",
+    "git init --template=t y",
+    "GIT_PAGER='less -R--lesskey-file=keys' git log",
+    "GIT_PAGER='less -Rkkeys' git log",
+    "PAGER='less --lesskey-src' git log",
+    "GIT_PAGER='less -R -Xk' git log",
+    "GIT_PAGER='less -R--lesskey-src=f' git log",
+    "GIT_PAGER='less -R -+k' git log",
+    "LESS=--lesskey-file=keys git log",
+    "LESSKEYIN=keys git log",
+    "coproc git push",
+    "git rebase -x 'coproc git push' HEAD~1",
+    "git rebase -x 'coproc { git push; }' HEAD~1",
+    "git rebase -x 'coproc X { git push; }' HEAD~1",
+    "git rebase -x 'coproc X if true; then git push; fi' HEAD~1",
+    "git rebase -x 'coproc while true; do git push; done' HEAD~1",
+    "git rebase -x 'coproc for i in 1; do git push; done' HEAD~1",
+    "git submodule foreach 'coproc X if true; then git push; fi'",
+  ])("%s is a remote action while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    expect(shell(command, state("default")).findings.map((f) => f.kind)).toContain("remote");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git rebase -x 'git push origin main' HEAD~1",
+    "git rebase --exec 'cd x; git push' HEAD~1",
+    "git difftool -x 'git push' HEAD",
+    "git ls-remote --upload-pack 'git push' .",
+    "git submodule foreach 'cd x && git push'",
+    "Set-Item env:GIT_PAGER 'git push'; git log",
+    "Set-Item Env:\\GIT_PAGER 'git push'; git log",
+    "Set-Item -Path Env:/GIT_PAGER -Value 'git push'; git log",
+    "git rebase -x 'if true; then git push; fi' HEAD~1",
+    "git rebase -x 'while true; do git push; done' HEAD~1",
+    "git rebase -x '! git push' HEAD~1",
+    "git rebase -x 'time -p git push' HEAD~1",
+    "git rebase -x 'coproc git push' HEAD~1",
+    "git rebase -x '>/dev/null git push' HEAD~1",
+    "git rebase -x '<x git push' HEAD~1",
+    "git rebase -x '2>&1 git push' HEAD~1",
+    "git rebase -x 'X=\"$(git push)\"' HEAD~1",
+    "sh -c 'git push'",
+    "Set-Item Environment::GIT_PAGER 'git push'; git log",
+    "Set-Item Microsoft.PowerShell.Core\\Environment::GIT_PAGER 'git push'; git log",
+    "Set-Item Env:\\\\GIT_PAGER 'git push'; git log",
+    "Set-Item env:git_pager 'git push'; git log",
+    "git rebase -x @'\ngit push\n'@ HEAD~1",
+    'git rebase -x @"\ngit push\n"@ HEAD~1',
+    "sh -c @'\ngit push\n'@",
+    'git rebase -x "git push $x" HEAD~1',
+    "New-Item -Path env: -Name git_pager -Value 'git push'; git log",
+    "Set-Item env:FOO 'git push'; Rename-Item env:FOO -NewName git_pager; git log",
+    "Set-Item env:FOO 'git push'; Rename-Item env:FOO git_pager; git log",
+    "git rebase -x 'coproc X if true; then git push; fi' HEAD~1",
+    "git rebase -x 'git push #''' HEAD~1",
+  ])("%s is a remote action while tainted in PowerShell", (command) => {
+    expect(
+      shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
+    ).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("an sh -c script under PowerShell writes from the directory Set-Location moved to", () => {
+    const d = shell("Set-Location .git; sh -c 'printf x >> config'", state("default"), false, {
+      language: "powershell",
+    });
+    expect(d.findings.map((f) => f.kind)).toContain("protected");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git rebase -x 'coproc X case a in a) git push;; esac' HEAD~1",
+    "git rebase -x 'coproc X if(true)then git push;fi' HEAD~1",
+    "git rebase -x 'coproc X while(true)do git push;done' HEAD~1",
+    "git rebase -x 'coproc X until(false)do git push;done' HEAD~1",
+    "git rebase -x 'coproc X for((i=0;i<1;i++))do git push;done' HEAD~1",
+    "git rebase -x 'coproc X ( git push )' HEAD~1",
+    "coproc X \\\nif true; then git push; fi",
+    "coproc \\\nX if true; then git push; fi",
+    "time coproc X if true; then git push; fi",
+    "! coproc X if true; then git push; fi",
+    "! if true; then git push; fi",
+    "time if true; then git push; fi",
+    "sh -c 'time coproc X if true; then git push; fi'",
+    "bash -c '! coproc X if true; then git push; fi'",
+  ])("%s, a compound command the grammar misreads, is never allowed while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+    expect(
+      shell(command, state("bypassPermissions", { tainted: true }), false, { language: "powershell" }).behavior,
+    ).not.toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "coproc X { { git push; }; }",
+    "! { { git push; }; }",
+    "time { { git push; } }",
+    "time { git push; }",
+    "git rebase -x 'coproc X { { git push; }; }' HEAD~1",
+    "time if true; then git push; fi",
+    "! if true; then git push; fi",
+    "time while true; do git push; done",
+    "time ( git push )",
+    "cat <\\\n<'E'\nA\\\nE\ngit push\nE\n",
+    "cat <\\\n<'E'\nA\\\nE\ncat .env\nE\n",
+    "cat <\\\n<\\\n'E'\nA\\\nE\ngit push\nE\n",
+    "sh -c 'cat <\\\n<\"E\"\nA\\\nE\ngit push\nE\n'",
+    "echo \\\r\ngit push",
+    "echo \\\r\ncat .env",
+    "echo $\\\n'x\\\ny' ; git push",
+  ])("%s, a command the grammar misreads, is unparsed and asks in bypass", (command) => {
+    const analysis = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(analysis.commands).toBeUndefined();
+    expect(analysis.recovered).toBeDefined();
+    expect(shell(command, state("bypassPermissions")).behavior).toBe("ask");
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+    expect(shell(command, state("dontAsk")).behavior).toBe("deny");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["gi\\\nt push", "git push"],
+    ["export GIT_PAGE\\\nR='sh -c \"git push\"'; git log", "export GIT_PAGER='sh -c \"git push\"'; git log"],
+    ["cat < .en\\\nv", "cat < .env"],
+    ["echo > .en\\\nv", "echo > .env"],
+    ["for f in .en\\\nv; do cat $f; done", "for f in .env; do cat $f; done"],
+    ['echo "$(cat .en\\\nv)"', 'echo "$(cat .env)"'],
+    ['echo "`gi\\\nt push`"', 'echo "`git push`"'],
+    ["cat <<EOF\n$(cat .en\\\nv)\nEOF", "cat <<EOF\n$(cat .env)\nEOF"],
+    ['echo "$\\\n(git push)"', 'echo "$(git push)"'],
+    ["cat <<EOF\n$\\\n(cat .env)\nEOF", "cat <<EOF\n$(cat .env)\nEOF"],
+    ["echo ${x:-$\\\n(git push)}", "echo ${x:-$(git push)}"],
+    ["[[ x =~ $\\\n(git push) ]]", "[[ x =~ $(git push) ]]"],
+    ["echo a # c\\\ngit push", "echo a\ngit push"],
+    ["cat <<'EOF'\nx\\\nEOF\ngit push", "cat <<'EOF'\nx\nEOF\ngit push"],
+    ["echo 'a\\\n'git push", "echo 'a\\\n'git push"],
+    ["echo a\\\\\ngit push", "echo 'a\\'\ngit push"],
+    ["e\\\ncho \\\n'x' \\\n\\\n; git p\\\nush", "echo 'x'; git push"],
+    ["echo `cat '.e\\\nnv'`", "echo `cat '.env'`"],
+    ["echo \"`cat '.e\\\nnv'`\"", "echo \"`cat '.env'`\""],
+    ["echo `echo $(cat '.e\\\nnv')`", "echo `echo $(cat '.env')`"],
+    ["echo `git 'pu\\\nsh'`", "echo `git 'push'`"],
+    ["echo \"`git pu'\\\n'sh`\"", "echo \"`git pu''sh`\""],
+    ["echo $(cat '.e\\\nnv')", "echo $(cat '.e\\\nnv')"],
+  ])("%s reads as bash joins its line continuations", (command, joined) => {
+    const opts = { cwd: root, workingDirs: [root], home: "/home/u", glob: expandGlob, isDirectory };
+    const read = analyzeShell(parsers, "bash", command, opts);
+    const want = analyzeShell(parsers, "bash", joined, opts);
+    expect(want.commands).toBeDefined();
+    expect(read.commands?.map((c) => c.argv)).toEqual(want.commands?.map((c) => c.argv) ?? []);
+    expect(read.operands).toEqual(want.operands);
+    const deny = loadRules(
+      [{ file: "/p/s.json", baseDir: root, allow: [{ text: "Bash" }], ask: [], deny: [{ text: "Bash(git push *)" }] }],
+      { os, home: "/home/u", canonicalize: (p) => p },
+    ).rules;
+    for (const mode of ["bypassPermissions", "default"] as const)
+      expect(shell(command, { mode, rules: deny, env: env() }).behavior).toBe(
+        shell(joined, { mode, rules: deny, env: env() }).behavior,
+      );
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each(["sh -c 'gi\\\nt push'", "sh -c 'echo \"$(gi\\\nt push)\"'", 'bash -c "gi\\\\\\\nt push"'])(
+    "%s, a nested script, reads as bash joins its line continuations",
+    (command) => {
+      const read = analyzeShell(parsers, "bash", command, {
+        cwd: root,
+        workingDirs: [root],
+        home: "/home/u",
+        glob: expandGlob,
+        isDirectory,
+      });
+      expect(read.commands?.map((c) => c.argv)).toContainEqual(["git", "push"]);
+      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("deny");
+    },
+  );
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    ["grep 'a\\\nb' .env", ["grep", "a\\\nb", ".env"]],
+    ["echo $'gi\\\nt'", ["echo", "$'gi\\\nt'"]],
+    ["echo \\\n'a\\\nb'", ["echo", "a\\\nb"]],
+  ])("%s keeps the line continuation in single quotes as written", (command, argv) => {
+    const read = analyzeShell(parsers, "bash", command, {
+      cwd: root,
+      workingDirs: [root],
+      home: "/home/u",
+      glob: expandGlob,
+      isDirectory,
+    });
+    expect(read.commands?.map((c) => c.argv)).toEqual([argv]);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a git rebase -x script joins its line continuations", () => {
+    const command = "git rebase -x 'export GIT_PAGE\\\nR=\"sh -c git-push\"; git log' HEAD~1";
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).not.toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a line continuation inside what a first reading took for a comment is unparsed", () => {
+    expect(shell("x\\\n#y\\\ngit push", state("bypassPermissions")).behavior).toBe("ask");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "git log \\\n  --oneline",
+    "cat > notes.md <<EOF\nUse \\`npm test\\` first\nEOF",
+    "echo 'a\\\nb'",
+    "docker run \\\n  -e X=1 \\\n  img",
+    "for f in a \\\n  b; do echo $f; done",
+  ])("%s, a line continuation between words or an escaped backtick, stays allowed in bypass", (command) => {
+    expect(shell(command, state("bypassPermissions")).behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a coproc keyword in an argument or a pattern adds no command", () => {
+    const d = shell("grep -rn coproc src", state("default"));
+    expect(d.behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a doubled quote in a PowerShell sh -c script is one quote, not the end of the string", () => {
+    const d = shell("sh -c 'echo ''; git push'''", state("bypassPermissions", { tainted: true }), false, {
+      language: "powershell",
+    });
+    expect(d.behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 3
+  test("a PowerShell path that only ends in a pager name stays allowed while tainted", () => {
+    const d = shell("Copy-Item ./src/pager ./dst", state("bypassPermissions", { tainted: true }), false, {
+      language: "powershell",
+    });
+    expect(d.behavior).toBe("allow");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("a removal a git subcommand runs is a critical-path removal in PowerShell", () => {
+    for (const command of [
+      "git rebase -x 'rm -rf /' HEAD~1",
+      "git submodule foreach 'rm -rf /'",
+      "git rebase -x 'if true; then rm -rf /; fi' HEAD~1",
+    ])
+      expect(shell(command, state("bypassPermissions"), false, { language: "powershell" }).countdown, command).toBe(
+        true,
+      );
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("a removal a git subcommand runs is a critical-path removal", () => {
+    for (const command of [
+      "git submodule foreach 'rm -rf /'",
+      "git rebase -x 'rm -rf /' HEAD~1",
+      "git bisect run rm -rf /",
+    ])
+      expect(shell(command, state("bypassPermissions")).countdown, command).toBe(true);
+  });
+
+  // spec: permissions §0 guarantee 3
+  test.each([
+    "GIT_PAGER=cat git log",
+    "GIT_PAGER= git log",
+    "PAGER=cat git log",
+    "GIT_PAGER='less -R' git log",
+    "PAGER='less -FRX' git log",
+    "LESS=-FRX git log",
+    "LESS=FRX git log",
+    "GIT_PAGER=less git log",
+    "X=less git log",
+    "FOO=/usr/bin/less make",
+    "printf '%s\\n' docs/editor",
+    "EDITOR=vim git commit",
+    "git clone -cuser.name=x x",
+    "FOO=1 grep EDITOR x",
+    "GIT_AUTHOR_NAME=x GIT_COMMITTER_NAME=x git commit -m x",
+    "GIT_TERMINAL_PROMPT=0 git status",
+    "git submodule status",
+    "git submodule foreach",
+    "git bisect start",
+    "git rebase main",
+    "git grep -O x",
+    "git rebase -x",
+    "git bisect run",
+    "git for-each-repo --config",
+    "git submodule foreach ''",
+    "git submodule foreach 'echo \u{1F600}'",
+    "wget https://example.com",
+  ])("%s stays allowed while tainted", (command) => {
+    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
   });
 });
 

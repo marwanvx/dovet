@@ -22,9 +22,91 @@ export type Walk = {
 
 const MAX_DEPTH = 8;
 const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
+export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
+const RESERVED = new Set([
+  ...["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"],
+  ...["function", "!", "[[", "]]"],
+]);
+const STATEMENTS = new Set([
+  ...["subshell", "compound_statement", "if_statement", "while_statement", "for_statement", "case_statement"],
+  ...["c_style_for_statement", "function_definition", "pipeline", "list", "negated_command", "test_command"],
+]);
+
+const VERBATIM = new Set(["raw_string", "ansi_c_string", "comment"]);
+
+/** Single quotes, `$'…'`, comments and quoted here-document bodies: where bash keeps a `\<newline>` as written.
+ * Not inside backticks: bash removes every `\<newline>` from a backtick body before it parses it. */
+export function verbatimRanges(root: Node): [number, number][] {
+  const kept: [number, number][] = [];
+  const todo = [root];
+  for (let n = todo.pop(); n !== undefined; n = todo.pop()) {
+    if (n.type === "command_substitution" && n.text.startsWith("`")) continue;
+    if (VERBATIM.has(n.type)) kept.push([n.startIndex, n.endIndex]);
+    else if (
+      n.type === "heredoc_redirect" &&
+      /['"\\]/.test(n.namedChildren.find((c) => c.type === "heredoc_start")?.text ?? "")
+    )
+      for (const b of n.namedChildren) if (b.type === "heredoc_body") kept.push([b.startIndex, b.endIndex]);
+    todo.push(...n.children);
+  }
+  return kept.sort((a, b) => a[0] - b[0]);
+}
+
+/** The text bash's lexer reads (QUESTIONS Q102): every unquoted `\<newline>` outside `kept` removed. `removed` holds
+ * where each one was, as offsets in the joined text; `crlf` is a `\<CR><LF>`, which bash doesn't join and the grammar does. */
+export function joinContinuations(
+  text: string,
+  kept: [number, number][],
+): { text: string; removed: number[]; crlf: boolean } {
+  const removed: number[] = [];
+  let crlf = false;
+  let out = "";
+  let r = 0;
+  for (let i = 0; i < text.length; i++) {
+    while ((kept[r]?.[1] ?? Infinity) <= i) r++;
+    const [start, end] = kept[r] ?? [Infinity, Infinity];
+    if (start <= i) {
+      out += text.slice(i, end);
+      i = end - 1;
+    } else if (text[i] !== "\\" || i + 1 === start) out += text[i];
+    else if (text[i + 1] === "\n") {
+      removed.push(out.length);
+      i++;
+    } else {
+      if (text[i + 1] === "\r" && text[i + 2] === "\n") crlf = true;
+      out += text.slice(i, i + 2);
+      i++;
+    }
+  }
+  return { text: out, removed, crlf };
+}
+
+/** The `…` substitutions of an unquoted here-document body; `\`` there is a literal backtick. */
+function backticks(body: string): string[] {
+  const out: string[] = [];
+  let start = -1;
+  for (let i = 0; i < body.length; i++) {
+    if (body[i] === "\\") i++;
+    else if (body[i] === "`" && start < 0) start = i + 1;
+    else if (body[i] === "`") {
+      out.push(body.slice(start, i));
+      start = -1;
+    }
+  }
+  return start < 0 ? out : [...out, body.slice(start)];
+}
+
+/** tree-sitter-bash reads a compound command after `coproc`, `time` or `!` as simple commands with no parse error
+ * (`then git push`, `{ {` as one word): the reading isn't bash's. */
+const misread = (n: Node): boolean => {
+  const name = n.namedChildren.find((c) => c.type === "command_name")?.text;
+  return (
+    (name !== undefined && (RESERVED.has(name) || /^[{}\s]+$/.test(name))) ||
+    n.namedChildren.some((c) => STATEMENTS.has(c.type))
+  );
+};
 
 const fresh = (st: State): State => ({ ...st, stack: [...st.stack], loops: new Map(st.loops), depth: st.depth + 1 });
 
@@ -165,9 +247,9 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
               statement(p, fresh(st), true);
             }
             // tree-sitter leaves backticks in an unquoted body as plain text.
-            for (const m of c.text.matchAll(/`([^`]*)`/g)) {
+            for (const script of backticks(c.text)) {
               ctx.fail("here-document with command substitution");
-              walk.script(m[1] ?? "", fresh(st));
+              walk.script(script, fresh(st));
             }
           }
         } else if (c.type !== "heredoc_start" && c.type !== "heredoc_end") statement(c, fresh(st), true);
@@ -222,6 +304,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
   }
 
   function command(n: Node, st: State, cond: boolean, preset: Node[]): void {
+    if (misread(n)) ctx.state.misread = true;
     const sub: Subcommand = { argv: [], cwd: st.cwd };
     const args: Word[] = [];
     let name: Word | undefined;
