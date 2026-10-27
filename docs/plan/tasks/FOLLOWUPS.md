@@ -16,7 +16,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ### F76 (F41 review): git runs a command its arguments or environment name, out of the remote-action check's sight
 - **Severity:** major · `src/policy/rules/shell.ts` (`inner`, `gitAlias`), `src/policy/decide/remote.ts`
-- `git submodule foreach git push`, `git rebase -x 'git push origin main' HEAD~1`, `git bisect run git push` and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log` are allowed in tainted `bypassPermissions`: git is not read as an exec wrapper, and inline assignments are stripped before `gitHidden` sees the configuration. Fix as F41 did for `!` aliases: give `inner` readings for these (`sh -c` of foreach/`--exec`'s string, `bisect run`'s argv), and count a `GIT_CONFIG*` assignment on a git command like inline `-c` configuration.
+- `git submodule foreach git push`, `git rebase -x 'git push origin main' HEAD~1`, `git bisect run git push` and `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0='git push' git log` are allowed in tainted `bypassPermissions`: git is not read as an exec wrapper, and inline assignments are stripped before `gitHidden` sees the configuration. Fix as F41 did for `!` aliases: give `inner` readings for these (`sh -c` of foreach/`--exec`'s string, `bisect run`'s argv), and count a `GIT_CONFIG*` assignment on a git command like inline `-c` configuration. Same class (minor, F41 round-2 security review, not probed): `wget --config=<file>` reads `method`/`post_data` from a file the agent wrote.
 
 ### F67 (F59 round-3 review): `!VAR!` is not an unresolved destination without a cmd layer
 - **Severity:** minor · `src/policy/decide/targets.ts:102` (`unresolvedTarget`)
@@ -215,7 +215,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F41 (M2-16 security review): `git -c alias.p=push p` hides a push from the remote-action check
 - **Severity:** major · `src/policy/decide/remote.ts:22-30`
 - `test.failing`: allowed in tainted bypass. Same gap (minor): `git send-pack`, `gh release upload`, `wget --method=POST`, `npx npm publish`.
-- **Fixed (#PR):** an inline `-c alias.*` is expanded as git does (a `!` alias reads as `sh -c` of its body), any subcommand outside git's own list counts as a possible push (config-file aliases, add-ons, remote helpers), inline configuration that can run a program counts too, and `send-pack`, `http-push`, `imap-send`, `subtree push`, `gh release upload`, `wget --method`/`--body-*` and `npx`/`bunx`/`pnpx` joined the list. Q100 and §4.8 carry the rule; F76 logged.
+- **Fixed (#199):** an inline `-c alias.*` is expanded as git does (a `!` alias reads as `sh -c` of its body), any subcommand outside git's own list counts as a possible push (config-file aliases, add-ons, remote helpers), inline configuration that can run a program counts too, and `send-pack`, `http-push`, `imap-send`, `subtree push`, `gh release upload`, `wget --method`/`--body-*` and `npx`/`bunx`/`pnpx` joined the list. Q100 and §4.8 carry the rule; F76 logged.
 
 ### F51 (F40 review): an unparseable command is allowed in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/analyze.ts`, `decide.ts`

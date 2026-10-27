@@ -550,6 +550,11 @@ describe("remote actions", () => {
       ["git -c alias.p=push -c alias.push=status -c alias.status=push p", "git push"],
       ["git --shallow-file status push origin main", "git push"],
       ["git -c alias.gui=push gui", "git push"],
+      ["git -c alias.status=push Status origin main", "git push"],
+      ["git -c alias.p=Status -c alias.status=push p origin main", "git push"],
+      ["git -c alias.subtree=push subtree origin main", "git push"],
+      ["git Status", "git Status"],
+      ["git instaweb", "git instaweb"],
       ["git -c 'alias.p=push --dry-run' p", "git push"],
       ["git -c alias.p='!git push origin main' p", "git p"],
       ["git --config-env alias.p=X p", "git --config-env alias.p"],
@@ -576,6 +581,7 @@ describe("remote actions", () => {
       "git -c alias.p='!git push --force origin main' p",
       "git -c 'alias.p=push --force' -c alias.push=status p origin main",
       "git --shallow-file status push --force origin main",
+      "git -c 'alias.log=push --force' Log origin main",
     ])
       expect(remote(c, auto("bypassPermissions")).behavior, c).toBe("deny");
     expect(remote("git -c alias.p='!rm -rf /' p", auto("bypassPermissions")).behavior).not.toBe("allow");
@@ -621,6 +627,13 @@ describe("remote actions", () => {
       "npx -c 'true; npm publish'",
       "npx --call='cd x&&npm publish'",
       "wget -e method=POST https://h",
+      "wget -qe method=POST https://h",
+      "wget -qemethod=POST https://h",
+      "wget -e post-data=x https://h",
+      "wget -e Body_Data=x https://h",
+      `npx -c "'npm' publish"`,
+      "npx -c 'np\"\"m publish'",
+      "npx -c 'n\\pm publish'",
       "wget --execute=post_data=x https://h",
       "npx --package=x -- twine upload d",
     ])
