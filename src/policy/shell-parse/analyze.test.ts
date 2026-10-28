@@ -553,6 +553,12 @@ describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
   });
 
   // spec: AC-PERM-21
+  test("an empty here-document body ends the analysis", () => {
+    for (const c of ["cat <<'E'\nE\n", 'cat <<"E"\nE\ngit push\n', "cat <<\\E\nE\n", "cat <<E\nE\n"])
+      expect([c, analyze(c).commands?.[0]?.argv]).toEqual([c, ["cat"]]);
+  });
+
+  // spec: AC-PERM-21
   test("ordinary commands still parse", () => {
     for (const c of [
       "git log --oneline -5 # recent",

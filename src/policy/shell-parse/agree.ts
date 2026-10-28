@@ -41,7 +41,7 @@ export function substitutionStarts(
     return text.length;
   };
   for (let i = 0; i < text.length; i++) {
-    const body = bodies.find((b) => b.at[0] === i);
+    const body = bodies.find((b) => b.at[0] === i && b.at[1] > i);
     if (body?.quoted) {
       i = body.at[1] - 1;
       continue;
