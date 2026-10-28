@@ -71,8 +71,9 @@ const GIT_CONFIG_READS = new Set([
 ]);
 
 /** What `git config …` writes that git may later run: a key outside `QUIET_GIT_CONFIG`, `--edit`, or `--rename-section`
- * (it can move quietly written keys, `user.pager`, into `core`). An option or expansion it can't place reads as a write. */
-function gitConfigWrite(args: string[]): string | undefined {
+ * (it can move quietly written keys, `user.pager`, into `core`). An option or expansion it can't place reads as a write;
+ * `literal` holds the words the analyzer saw quoted or plain, so a quoted `[bot]` or `'alias\..*'` is read as text. */
+function gitConfigWrite(args: string[], literal: ReadonlySet<string>): string | undefined {
   const words: string[] = [];
   const flags: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -89,7 +90,7 @@ function gitConfigWrite(args: string[]): string | undefined {
   }
   // An expansion, glob, splat or stop-parsing token can be any number of words, flags included, so the form can't be
   // read from the text.
-  const opaque = args.find((x) => /[$`*?[{]|^[@(]|^--%/.test(x));
+  const opaque = args.find((x) => /[$`*?[{]|^[@(]|^--%/.test(x) && !literal.has(x));
   if (opaque !== undefined) return opaque;
   const [sub = ""] = words;
   if (sub === "edit" || flags.some((f) => /^-[lz]*e/.test(f) || isLongOption("--edit", f))) return "--edit";
@@ -222,19 +223,26 @@ const REMOTE_WORDS: string[][] = [
 ];
 
 /** The remote action a command could be once each `input` word is filled in at run time (xargs input), else undefined. */
-export function remoteWithInput(argv: string[], input: string): Remote | undefined {
+export function remoteWithInput(argv: string[], input: string, literalWords: string[] = []): Remote | undefined {
+  const literal = new Set(literalWords.filter((w) => w !== input));
   const at = argv.flatMap((w, i) => (w === input ? [i] : []));
-  if (at.length === 0) return remoteAction(argv);
+  if (at.length === 0) return remoteAction(argv, literal);
   for (const i of at)
     for (const words of REMOTE_WORDS) {
-      const r = remoteAction([...argv.slice(0, i), ...words, ...argv.slice(i + 1)].filter((w) => w !== input));
+      const r = remoteAction(
+        [...argv.slice(0, i), ...words, ...argv.slice(i + 1)].filter((w) => w !== input),
+        literal,
+      );
       if (r !== undefined) return { ...r, label: `${r.label} (from xargs input)` };
     }
-  return remoteAction(argv.filter((w) => w !== input));
+  return remoteAction(
+    argv.filter((w) => w !== input),
+    literal,
+  );
 }
 
-/** The remote action one command, already unwrapped by `strippedArgvs`, is. */
-export function remoteAction(argv: string[]): Remote | undefined {
+/** The remote action one command, already unwrapped by `strippedArgvs`, is; `literal` as for `gitConfigWrite`. */
+export function remoteAction(argv: string[], literal: ReadonlySet<string> = new Set()): Remote | undefined {
   const name = program(argv[0]);
   const rest = argv.slice(1);
   const plain = name === "git" ? gitArgs(rest) : positional(rest);
@@ -266,7 +274,7 @@ export function remoteAction(argv: string[]): Remote | undefined {
         if (key !== undefined) return is("push", `git clone -c ${key} (configuration that can run a command)`);
       }
       if (a === "config") {
-        const write = gitConfigWrite(gitArgs(rest).slice(1));
+        const write = gitConfigWrite(gitArgs(rest).slice(1), literal);
         if (write !== undefined) return is("push", `git config ${write} (configuration that can run a command)`);
       }
       return gitHidden(rest, a);

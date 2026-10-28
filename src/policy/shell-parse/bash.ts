@@ -10,7 +10,7 @@ import {
   xargsCommandStarts,
 } from "../rules/index.ts";
 import type { Context } from "./context.ts";
-import { classify, textOnly, type Word } from "./read-only.ts";
+import { classify, literalTexts, textOnly, type Word } from "./read-only.ts";
 
 export type State = { cwd: string; stack: string[]; loops: Map<string, string[]>; depth: number };
 
@@ -369,6 +369,7 @@ export function walkBash(root: Node, walk: Walk, st: State): Set<number> {
       ctx.fail("command name is not literal");
     }
     sub.argv.push(name.text, ...args.map((a) => a.text));
+    sub.literalWords = literalTexts(args);
     if (NEVER_UNDERSTOOD.has(name.text)) ctx.fail(`${name.text}`);
     if (commandName(name.text) === "xargs") {
       const { starts, none } = xargsCommandStarts([name.text, ...args.map((a) => a.text)]);

@@ -10,7 +10,7 @@ import {
 } from "../rules/index.ts";
 import { SHELLS } from "./bash.ts";
 import type { Context } from "./context.ts";
-import type { Word } from "./read-only.ts";
+import { literalTexts, type Word } from "./read-only.ts";
 
 type Cmdlet = {
   switches?: string[];
@@ -121,10 +121,12 @@ export function walkPowerShell(
     const parsed: Array<{ param?: string; word?: Word }> = [];
     let redirectsOk = true;
     let computed = false;
+    const words: Word[] = [];
     for (const c of n.childForFieldName("command_elements")?.namedChildren ?? []) {
       if (c.type === "command_argument_sep") continue;
       if (c.type === "command_parameter") {
         sub.argv.push(c.text);
+        words.push({ text: c.text, literal: !c.text.includes(":"), glob: false });
         parsed.push(
           c.text.includes(":")
             ? { word: { text: c.text, literal: false, glob: false } }
@@ -149,9 +151,12 @@ export function walkPowerShell(
           computed = true;
         }
         sub.argv.push(w.text);
+        words.push(w);
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });
       }
     }
+    // A backtick escape stays in a token's text (`--e`dit`), so that text isn't what runs.
+    sub.literalWords = literalTexts(words).filter((t) => !t.includes("`"));
     ctx.commands.push(sub);
     const { argvs, complete } = unwrapCommand(sub.argv);
     if (!complete) ctx.fail("a wrapper's options can't all be checked");

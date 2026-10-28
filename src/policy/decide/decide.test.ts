@@ -641,6 +641,8 @@ describe("remote actions", () => {
       ["git config $(echo core.pager git)", "git config \\$\\(echo"],
       ["touch core.pager 'sh -c git\\ push'; git config *", "git config \\*"],
       ["git config {core.pager,'git push'}", "git config \\{core"],
+      ["git config user.name '*' *", "git config \\*"],
+      ['git config user.name x"[a]"*', "git config x\\[a\\]\\*"],
     ];
     for (const [c, label] of pushes) {
       const d = remote(c, auto("default"));
@@ -653,6 +655,10 @@ describe("remote actions", () => {
       "git config -zf user.x core.pager x",
       "git config (echo core.pager x)",
       "git config --% core.pager x",
+      "git config --e`dit",
+      "git config -`-edit",
+      "git config user.name '*' *",
+      "git config user.name 'x' $k",
     ])
       expect(
         sh(c, auto("bypassPermissions", {}, { tainted: true }), { language: "powershell", sandboxed: true }).behavior,
@@ -675,8 +681,17 @@ describe("remote actions", () => {
       "git config alias.s status",
       "git config",
       "git config --",
+      'git config user.name "github-actions[bot]"',
+      "git config --get-regexp 'alias\\..*'",
+      "git config --global user.name 'a*b?'",
+      "git config alias.st '!f() { git status; }; f'",
     ])
       expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("allow");
+    for (const c of ['git config user.name "github-actions[bot]"', "git config --get-regexp 'alias\\..*'"])
+      expect(
+        sh(c, auto("bypassPermissions", {}, { tainted: true }), { language: "powershell", sandboxed: true }).behavior,
+        c,
+      ).toBe("allow");
   });
 
   // spec: AC-PERM-29
