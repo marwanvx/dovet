@@ -124,10 +124,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/agent/compaction/facts.ts:68`
 - `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
 
-### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
-- **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
-- Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
-
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
 - **Severity:** minor (pre-existing) · `src/store/event-log/writer.ts:202`
 - 40 parallel `Write` calls of 150 KB each make one `model.response` event of 6 MB; none is moved to a blob (each is under 256 KB), so `append` throws "over 1 MB after moving large strings to blobs". Move the largest strings to blobs until the line fits instead of throwing.
@@ -247,6 +243,12 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `sops -d s.enc > .env && cat .env` in one call, or writing `app/.env` (with `app/` existing) and reading it in a later batch, puts `DB_PASS=hunter22-example-pass` in clear in the result and the log. Read the set again after a batch's tools run and before redacting their results, and notice new nested `.env*` files (rescan when any scanned directory changes, or every call with a short cache).
 
 ## Fixed
+
+### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
+- **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
+- Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
+- **Cause:** checkpoints are on by default, so each of the ~70 `runHeadless` calls in `headless-run.test.ts` ran two real `git` processes (`--version`, `rev-parse`): 134 in the file, 62 in `headless-boot.test.ts`, 14 in `headless-websearch.test.ts`. The file's first test pays the cold `git` start on a macOS runner (2.8 s even in a passing run, 5 s on a slow one).
+- **Fixed (PR 209):** those three files write `checkpoints.enabled: false` into the project's settings (as the other headless tests already do); `headless-checkpoints.test.ts` still tests checkpoints. `git` processes in the three files: 210 → 0 (counted with `strace -f -e trace=execve`).
 
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)

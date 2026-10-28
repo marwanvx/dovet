@@ -1,7 +1,12 @@
 // WebSearch in the headless boot (tools §10 "Choosing", ADR-25): offered only when a backend exists, and its results taint the session.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { fakePlatform, scriptedModel, sequentialIds, tempProject } from "../../test/helpers/index.ts";
+import {
+  tempProject as baseTempProject,
+  fakePlatform,
+  scriptedModel,
+  sequentialIds,
+} from "../../test/helpers/index.ts";
 import { createSdkAdapter } from "../ai/index.ts";
 import type { Os } from "../platform/index.ts";
 import type { LoadedSettings, LoadInput } from "../store/index.ts";
@@ -12,6 +17,10 @@ import { type HeadlessRunInput, runHeadless } from "./headless-run.ts";
 const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 
 type Env = Record<string, string | undefined>;
+
+/** Checkpoints are tested in headless-checkpoints.test.ts; here they would start two real `git` processes per run (F49). */
+const tempProject = (files: Record<string, string> = {}) =>
+  baseTempProject({ ".dovet/settings.json": JSON.stringify({ checkpoints: { enabled: false } }), ...files });
 
 function run(
   dir: { root: string },

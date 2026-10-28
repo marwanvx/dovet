@@ -3,7 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { fakePlatform, sequentialIds, type TempProject, tempProject } from "../../test/helpers/index.ts";
+import {
+  tempProject as baseTempProject,
+  fakePlatform,
+  sequentialIds,
+  type TempProject,
+} from "../../test/helpers/index.ts";
 import type { Os } from "../platform/index.ts";
 import type { SandboxService } from "../policy/index.ts";
 import type { Settings } from "../schema/index.ts";
@@ -14,6 +19,10 @@ import { type HeadlessAdapter, runHeadless } from "./headless-run.ts";
 
 const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
 const ENV: Record<string, string | undefined> = { NVIDIA_API_KEY: "nvapi-FAKE", HOME: "/tmp" };
+
+/** Checkpoints are tested in headless-checkpoints.test.ts; here they would start two real `git` processes per run (F49). */
+const tempProject = (files: Record<string, string> = {}) =>
+  baseTempProject({ ".dovet/settings.json": JSON.stringify({ checkpoints: { enabled: false } }), ...files });
 
 function settingsFor(extra: Settings = {}): LoadedSettings {
   return {
