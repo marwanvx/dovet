@@ -904,18 +904,97 @@ describe("git runs no hidden push through a command its arguments or environment
   });
 });
 
-// Found by the M2 exit check and logged in FOLLOWUPS (F42); `test.failing` passes while the bug is there and
-// fails the day it is fixed, which is the cue to turn it into a plain test.
-describe("known gaps (FOLLOWUPS F42)", () => {
-  // spec: permissions §0 guarantee 4
-  test.failing("F42: other spellings of the working directory are critical in bypassPermissions", () => {
-    for (const command of ['rm -rf "$PWD"', "rm -rf ~+"]) notAllowed(shell(command, state("bypassPermissions")));
+describe("every spelling of the working directory and of a home is critical (FOLLOWUPS F42)", () => {
+  // spec: permissions §4.4
+  test.each([
+    'rm -rf "$PWD"',
+    'rm -rf "${PWD}"',
+    "rm -rf $PWD/",
+    "rm -rf ~+",
+    "rm -rf ~+/",
+    'rm -rf "$PWD"/..',
+    'cd ..; rm -rf "$PWD"',
+    "rm -rf ~root",
+    "rm -rf ~bob/",
+    "rm -rf ~bob/*",
+    "rm -rf ~-",
+    "rm -rf ${PWD%/}",
+    "rm -rf ~root/.",
+    "rm -rf ~-/.",
+    "rm -rf ~bob/build/..",
+    "rm -rf ~bob/*/",
+    "rm -rf $OLDPWD",
+    "rm -rf ~+0",
+    "rm -rf ~-1",
+    "rm -rf ~bob/.*",
+    "rm -rf ~bob/**",
+    "rm -rf ~-/?*",
+    "rm -rf ${OLDPWD%/}",
+    "rm -rf ~john@corp.example",
+    "rm -rf ~bob/../alice",
+  ])("%s is a critical-path removal with a countdown in bypassPermissions", (command) => {
+    const d = shell(command, state("bypassPermissions"));
+    notAllowed(d);
+    expect(d.findings.map((f) => f.kind)).toContain("critical");
+    expect(d.countdown).toBe(true);
   });
 
-  // spec: permissions §0 guarantee 4
-  test.failing("F42: a typed remover's flags or target can arrive from xargs input in bypassPermissions", () => {
-    notAllowed(shell("echo '-rf /' | xargs rm", state("bypassPermissions")));
+  // spec: permissions §4.4
+  test.each([
+    "Remove-Item -Recurse $PWD",
+    "Remove-Item -Recurse $pwd",
+    "Remove-Item $Pwd -Recurse -Force",
+    "rm -r ${pwd}",
+  ])("PowerShell's %s, a case-insensitive name, is the working directory too", (command) => {
+    const d = shell(command, state("bypassPermissions"), false, { language: "powershell" });
+    notAllowed(d);
+    expect(d.findings.map((f) => f.kind)).toContain("critical");
   });
+
+  // spec: permissions §4.4
+  test.each([
+    'rm -rf "$PWD/build"',
+    "rm -rf ~+/build",
+    "rm -rf ~bob/build",
+    "rm -rf ~-/build",
+    "rm '~$Report.docx'",
+    "rm -rf ${PWDX:-/tmp/x}",
+  ])("%s names a path below the spelling, which is not critical", (command) => {
+    const d = shell(command, state("bypassPermissions"));
+    expect(d.behavior).toBe("allow");
+    expect(d.findings.map((f) => f.kind)).not.toContain("critical");
+  });
+});
+
+describe("a typed remover whose flags can come from xargs input (FOLLOWUPS F42)", () => {
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q90)"
+  test.each(["echo '-rf /' | xargs rm", "echo / | xargs -0 rm -f", "echo rm -rf / | xargs toybox rm"])(
+    "%s can be a recursive removal of / , so it is critical in every mode",
+    (command) => {
+      for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+        const d = shell(command, state(mode, { allow: ["Bash"] }));
+        notAllowed(d);
+        expect(d.findings.map((f) => f.kind)).toContain("critical");
+      }
+    },
+  );
+
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q108)"
+  test("the prompt for a bare xargs rm says how to keep its input to file names", () => {
+    expect(shell("find . -name '*.o' | xargs rm", state("default")).reason).toBe(
+      "critical-path removal: $(xargs-input): a recursive removal whose target is only a command substitution, and the xargs input can carry its flags (`xargs rm --` keeps the input to file names)",
+    );
+  });
+
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q90)"
+  test.each(["echo x | xargs rm --", "echo x | xargs rm -f --"])(
+    "%s reads its input only as operands, so no flag can arrive and it is not critical",
+    (command) => {
+      const d = shell(command, state("bypassPermissions"));
+      expect(d.behavior).toBe("allow");
+      expect(d.findings.map((f) => f.kind)).not.toContain("critical");
+    },
+  );
 });
 
 describe("what xargs reads from its input and what find reaches get the checks (FOLLOWUPS F32)", () => {
@@ -1132,9 +1211,20 @@ describe("a command xargs runs is unwrapped like a typed one (F32 review)", () =
     expect(shell(command, state32("bypassPermissions")).countdown).toBe(true);
   });
 
-  // spec: permissions §0 guarantee 4
-  test.failing("F42: a system path from xargs input under a typed remover in bypassPermissions", () => {
-    notAllowed(shell("echo C:\\Windows | xargs cmd /c rd /s", state32("bypassPermissions")));
+  // spec: permissions §4.4 "Decided while building (QUESTIONS Q90)"
+  test.each([
+    "echo C:\\Windows | xargs cmd /c rd /s",
+    "echo /s C:\\Windows | xargs cmd /c rd",
+    "echo x | xargs cmd /c del",
+    "echo /s C:\\Windows | xargs cmd /c rd --",
+    "echo /s C:\\Windows | xargs cmd /c rmdir --",
+  ])("%s can remove a system path from its input, so it is critical with a countdown", (command) => {
+    for (const mode of [...GUARDED, "bypassPermissions" as const]) {
+      const d = shell(command, state32(mode));
+      notAllowed(d);
+      expect(d.findings.map((f) => f.kind)).toContain("critical");
+    }
+    expect(shell(command, state32("bypassPermissions")).countdown).toBe(true);
   });
 
   // spec: permissions §4.4 "Decided while building (QUESTIONS Q91)"

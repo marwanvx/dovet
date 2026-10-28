@@ -95,18 +95,32 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
       ? "a critical path followed by a substitution"
       : undefined;
   }
+  t = t.replace(/^~\+0(?=$|[/\\])/, "~+");
+  const elsewhere = /^(~(?:[+-]\d+|-|[^/\\$+\s][^/\\$\s]*)|\$OLDPWD|\$\{OLDPWD\})((?:[/\\].*)?)$/s.exec(t);
+  if (elsewhere !== null) {
+    // Unresolvable: critical when the rest names the directory itself, a glob directly under it, or climbs out of it.
+    const rel = posix.normalize(`.${(elsewhere[2] ?? "").replace(/\\/g, "/")}`).replace(/\/+$/, "");
+    return rel === "." || rel === ".." || rel.startsWith("../") || /^[^/]*[*?[{]/.test(rel)
+      ? "another user's home, the previous directory or a directory-stack entry, which the check can't resolve"
+      : undefined;
+  }
   const variable = new RegExp(`^(${VAR})(.*)$`, "s").exec(t);
   if (variable !== null) {
     const [, name = "", rest = ""] = variable;
-    if (/^\$\{?HOME\}?$/.test(name)) t = env.home + rest;
+    // PowerShell names are case-insensitive (`$pwd`, `$Home`).
+    if (/^\$\{?HOME\}?$/i.test(name)) t = env.home + rest;
+    else if (/^\$\{?PWD\}?$/i.test(name)) t = cwd + rest;
     else if (/^[/\\]?\*?$/.test(rest) && rest !== "") return "a glob or trailing slash directly under a shell variable";
     else
       return new RegExp(`^/(${TOP})(/|$)`).test(rest)
         ? "a shell variable followed by a top-level directory"
         : undefined;
   } else if (t === "~" || t.startsWith("~/")) t = env.home + t.slice(1);
+  else if (t === "~+" || t.startsWith("~+/")) t = cwd + t.slice(2);
   if (t.includes("$"))
-    return /^\$\{?HOME/.test(orig) ? "the home directory with an expansion the check can't resolve" : undefined;
+    return /^\$\{?(?:HOME|PWD|OLDPWD)(?!\w)/i.test(orig)
+      ? "the home, working or previous directory with an expansion the check can't resolve"
+      : undefined;
   if (t.startsWith("/cygdrive/")) t = t.slice(9);
   const glob = /[*?[{]/.test(t);
   let base = t;
@@ -122,16 +136,32 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
   return [forms.requested, forms.canonical].some((p) => listCritical(env, p, glob)) ? "a critical path" : undefined;
 }
 
-const recursiveFlag = (sub: Subcommand): boolean =>
-  sub.argv.some((a) => /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(a) || a === "--recursive" || /^-recurse$/i.test(a));
+// xargs input can carry the flag itself (`echo '-rf /' | xargs rm`); only `rm` stops reading flags at `--`, cmd's
+// removers take `/s` anywhere.
+function recursiveFlag(sub: Subcommand): boolean {
+  const name = sub.argv[0]?.toLowerCase() ?? "";
+  const cmdSwitches = ["rd", "rmdir", "del", "erase"].includes(name);
+  const end = name === "rm" ? sub.argv.indexOf("--") : -1;
+  return sub.argv.some(
+    (a, i) =>
+      /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(a) ||
+      a === "--recursive" ||
+      /^-recurse$/i.test(a) ||
+      (cmdSwitches && /^\/s$/i.test(a)) ||
+      (a === XARGS_INPUT && (end < 0 || i < end)),
+  );
+}
 
 /** The reason a removal command targets a critical path, else undefined. */
 export function criticalRemoval(env: Env, sub: Subcommand): string | undefined {
   if (!REMOVERS.has(sub.argv[0]?.toLowerCase() ?? "")) return undefined;
   const recursive = recursiveFlag(sub);
+  const fromInput = recursive && !recursiveFlag({ ...sub, argv: sub.argv.filter((a) => a !== XARGS_INPUT) });
+  const rewrite = sub.argv[0] === "rm" ? " (`xargs rm --` keeps the input to file names)" : "";
+  const note = fromInput ? `, and the xargs input can carry its flags${rewrite}` : "";
   for (const t of targets(sub)) {
     const why = criticalTarget(env, t, sub.cwd ?? env.cwd, recursive);
-    if (why !== undefined) return `${t}: ${why}`;
+    if (why !== undefined) return `${t}: ${why}${note}`;
   }
   return undefined;
 }
