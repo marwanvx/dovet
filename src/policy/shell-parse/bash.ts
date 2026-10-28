@@ -23,8 +23,12 @@ export type Walk = {
 const MAX_DEPTH = 8;
 const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
 export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-// PowerShell's -Command and -EncodedCommand run a script this analyzer doesn't parse.
-const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc", "pwsh", "powershell"]);
+// They run a string as commands: a trap's action, a script in another shell's language (`pwsh -EncodedCommand`
+// can't be read at all), or a program in WSL or through cmd's `start`.
+const NEVER_UNDERSTOOD = new Set([
+  ...["eval", "source", ".", "exec", "coproc", "trap", "wsl", "start"],
+  ...["pwsh", "pwsh-preview", "powershell", "powershell_ise", "fish", "tcsh", "csh", "mksh", "ash"],
+]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
 const RESERVED = new Set([
   ...["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"],

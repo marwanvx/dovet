@@ -159,9 +159,9 @@ export function evaluateRules(set: RuleSet, call: RuleCall): RuleMatch | undefin
   return hit && matchOf(hit);
 }
 
-/** Whether any deny rule names the tool, whatever it matches (permissions §4.0 item 10). */
-export const hasDenyRule = (set: RuleSet, tool: string): boolean =>
-  set.list.some((rule) => rule.behavior === "deny" && toolMatches(rule, tool));
+/** Whether any deny rule names one of the tools, whatever it matches (permissions §4.0 item 10). */
+export const hasDenyRule = (set: RuleSet, tools: readonly string[]): boolean =>
+  set.list.some((rule) => rule.behavior === "deny" && tools.some((tool) => toolMatches(rule, tool)));
 
 function covers(b: Rule, a: Rule): boolean {
   if (b.matcher.kind === "path" && b.matcher.path.negate) return false;

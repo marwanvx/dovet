@@ -1360,6 +1360,13 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     'set -a; : "${GIT_PAGER:=git push}"; git log',
     'pwsh -c "git push"',
     "powershell.exe -Command 'git push'",
+    "trap 'git push' EXIT",
+    "wsl git push",
+    "fish -c 'git push'",
+    "tcsh -c 'git push'",
+    "csh -c 'git push'",
+    "mksh -c 'git push'",
+    "ash -c 'git push'",
   ];
   const psHidden = [
     "$env:GIT_PAGER = 'git push'; git log",
@@ -1374,6 +1381,19 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     "pwsh -Command 'git push'",
     "powershell -c 'git push'",
     "powershell.exe -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
+    "Set-Alias g git; g push",
+    "New-Alias x Invoke-Expression; x 'git push'",
+    "sal g git; g push",
+    "Set-Item alias:g git; g push",
+    "New-Item function:g -Value 'git push'; g",
+    "wsl.exe -e git push",
+    "pwsh-preview -c 'git push'",
+    "powershell_ise -c 'git push'",
+    "ii x.lnk",
+    "schtasks /create /tn x /tr 'git push'",
+    "Invoke-WmiMethod Win32_Process Create 'git push'",
+    "Invoke-CimMethod Win32_Process Create @{CommandLine='git push'}",
+    "Register-ScheduledTask x",
   ];
   const ps = (c: string, st: State): Decision => sh(c, st, { language: "powershell", sandboxed: true });
   // Unparsed, so they ask in any bypass session (item 7).
@@ -1389,6 +1409,12 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
         expect(d.reason, c).toStartWith("session tainted by WebFetch: example.com: not fully checkable: ");
     }
     for (const c of psHidden) expect(ps(c, tainted).behavior, c).toBe("ask");
+    // A cmd /c layer that starts a command asks in every bypass session, like one running a shell script.
+    for (const st of [tainted, state("bypassPermissions")]) {
+      for (const c of ["cmd /c start git push", "cmd /c wsl git push", "cmd /c powershell -c 'git push'"])
+        expect(sh(c, st).behavior, c).toBe("ask");
+      expect(ps("cmd.exe /c start git push", st).behavior).toBe("ask");
+    }
     expect(sh('eval "git push"', state("dontAsk", {}, { tainted: true })).behavior).toBe("deny");
     for (const c of ["git status", "for f in a b; do echo $f; done"]) expect(sh(c, tainted).behavior, c).toBe("allow");
   });
@@ -1402,10 +1428,17 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     const denied = state("bypassPermissions", { deny: ["Bash(rm -rf *)"] });
     const d = sh('eval "rm -rf build"', denied);
     expect(d.behavior).toBe("ask");
-    expect(d.reason).toBe("not fully checkable: eval (a deny rule exists for Bash)");
+    expect(d.reason).toBe("not fully checkable: eval (a deny rule could apply)");
     expect(sh("pwsh -c 'rm -rf build'", denied).behavior).toBe("ask");
     expect(sh("git status", denied).behavior).toBe("allow");
     expect(ps("iex 'rm -rf build'", denied).behavior).toBe("allow");
+    // Shell file operands are checked against Read and Edit deny rules (item 4), so those count too.
+    const files = state("bypassPermissions", { deny: ["Read(src/**)", "Edit(src/**)"] });
+    expect(sh("cat src/x.ts", files).behavior).toBe("deny");
+    for (const c of ["eval 'cat src/x.ts'", "eval 'rm src/x.ts'", "eval 'echo hi > src/x.ts'"])
+      expect(sh(c, files).behavior, c).toBe("ask");
+    expect(ps("iex 'Get-Content src/x.ts'", files).behavior).toBe("ask");
+    expect(sh("eval 'cat src/x.ts'", state("bypassPermissions", { deny: ["WebFetch"] })).behavior).toBe("allow");
     expect(
       ps("iex 'Remove-Item build'", state("bypassPermissions", { deny: ["PowerShell(Remove-Item *)"] })).behavior,
     ).toBe("ask");

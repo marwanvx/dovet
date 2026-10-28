@@ -126,6 +126,9 @@ const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
 const PATH_GLOB = /[*?[]/;
 const CMD_OPAQUE = "a cmd /c layer can't be fully checked";
 const CMD_OPAQUE_SHELL = "a cmd /c layer hides the shell script it runs";
+const CMD_OPAQUE_LAUNCH = "a cmd /c layer starts a command it doesn't show";
+// What cmd runs through these isn't the argv the checks read (QUESTIONS Q111).
+const CMD_LAUNCHERS = new Set(["start", "wsl", "schtasks", "pwsh", "pwsh-preview", "powershell", "powershell_ise"]);
 
 const finding = (
   kind: FindingKind,
@@ -404,6 +407,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
       }
       const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
       if (via && SHELL_COMMANDS.has(program(sub.argv[0]))) out.push(finding("unchecked", CMD_OPAQUE_SHELL, "ask"));
+      if (via && CMD_LAUNCHERS.has(program(sub.argv[0]))) out.push(finding("unchecked", CMD_OPAQUE_LAUNCH, "ask"));
       const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);
@@ -612,10 +616,11 @@ function shellDefault(
         `session tainted by ${st.taintSource ?? "untrusted input"}: not fully checkable: ${analysis.reasons.join("; ")}`,
         "the bypass rule for unreadable commands (§4.0 item 10)",
       );
-    if (!understood && hasDenyRule(st.rules, tool))
+    // Its file operands are checked against Read and Edit deny rules too (item 4).
+    if (!understood && hasDenyRule(st.rules, [tool, "Read", "Edit"]))
       return done(
         "ask",
-        `not fully checkable: ${analysis.reasons.join("; ")} (a deny rule exists for ${tool})`,
+        `not fully checkable: ${analysis.reasons.join("; ")} (a deny rule could apply)`,
         "the bypass rule for unreadable commands (§4.0 item 10)",
       );
     return done("allow", "bypassPermissions mode", "the bypassPermissions mode");

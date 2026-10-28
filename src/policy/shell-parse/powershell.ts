@@ -67,7 +67,13 @@ function literal(n: Node): Word {
 }
 
 /** Commands whose arguments become a command line this analyzer doesn't read (bash's `eval`, permissions §4.0). */
-const EVALUATORS = new Set(["invoke-expression", "start-process", "pwsh", "powershell"]);
+const EVALUATORS = new Set([
+  ...["invoke-expression", "start-process", "start", "invoke-item", "wsl", "schtasks", "register-scheduledtask"],
+  ...["invoke-wmimethod", "invoke-cimmethod", "pwsh", "pwsh-preview", "powershell", "powershell_ise"],
+  // A name defined earlier in the script resolves to whatever it was set to.
+  ...["set-alias", "new-alias", "sal", "nal"],
+]);
+const NAME_PROVIDER = /^(alias|function):/i;
 
 /** A provider-qualified path (`env:PATH`, `HKCU:\\x`, `FileSystem::/etc`): not a file under the working directories. */
 const isProviderPath = (text: string): boolean => text.includes("::") || /^[A-Za-z][\w.]+:/.test(text);
@@ -165,6 +171,7 @@ export function walkPowerShell(
     if (!complete) ctx.fail("a wrapper's options can't all be checked");
     for (const v of argvs) {
       if (EVALUATORS.has(commandName(v[0]))) ctx.fail(`${v[0]} runs its arguments as a command`);
+      if (v.some((w) => NAME_PROVIDER.test(w))) ctx.fail("a write to the alias: or function: provider");
       if (!SHELLS.has(commandName(v[0]))) continue;
       ctx.fail("sh -c runs a nested script");
       const at = shellScriptAt(v.slice(1));
