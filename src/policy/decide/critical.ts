@@ -11,11 +11,15 @@ const TOP =
   "usr|etc|var|bin|sbin|lib|lib64|opt|home|root|mnt|tmp|boot|srv|dev|sys|proc|Users|Windows|Applications|System|Library|Volumes";
 const MAC_PRIVATE = ["/private/etc", "/private/var", "/private/tmp", "/private/home"];
 
+// cmd's remover switches, run together too (`/s/q`); only `/a` takes a value, attribute letters.
+const CMD_SWITCH_RUN = /^(?:\/[a-z](?::?[-rhsailo]*)?)+$/i;
+const CMD_REMOVERS = ["rd", "rmdir", "del", "erase"];
+
 const targets = (sub: Subcommand): string[] => {
-  const cmdSwitches = ["rd", "del", "erase"].includes(sub.argv[0]?.toLowerCase() ?? "");
+  const cmdSwitches = CMD_REMOVERS.includes(sub.argv[0]?.toLowerCase() ?? "");
   return sub.argv
     .slice(1)
-    .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^(?:\/[a-z](?::[^/\s]*)?)+$/i.test(a)));
+    .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && CMD_SWITCH_RUN.test(a)));
 };
 
 const CMD_SWITCH = /^(?:\/(?![ckr])[a-z](?::[^/\s]*)?)+$/i;
@@ -40,7 +44,7 @@ function cmdHead(words: string[]): string[] {
     const parts = first === "" ? [first] : first.split(/[\s,;=]+/).filter(Boolean);
     // A name ends at `/` (`schtasks/create`, `rd/s/q`); `call` and `start` end at `.` `+` `:` `[` `]` `\` too.
     const glued =
-      /^([a-z][\w-]*)(\/.*)$/is.exec(parts[0] ?? "") ?? /^(call|start)[.+:[\]\\](.+)$/is.exec(parts[0] ?? "");
+      /^([a-z][\w.-]*)(\/.*)$/is.exec(parts[0] ?? "") ?? /^(call|start)[.+:[\]\\](.+)$/is.exec(parts[0] ?? "");
     if (glued !== null) parts.splice(0, 1, glued[1] ?? "", glued[2] ?? "");
     out = [...parts, ...rest];
     if (out[0]?.toLowerCase() !== "call") return out;
@@ -158,14 +162,14 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
 // removers take `/s` anywhere.
 function recursiveFlag(sub: Subcommand): boolean {
   const name = sub.argv[0]?.toLowerCase() ?? "";
-  const cmdSwitches = ["rd", "rmdir", "del", "erase"].includes(name);
+  const cmdSwitches = CMD_REMOVERS.includes(name);
   const end = name === "rm" ? sub.argv.indexOf("--") : -1;
   return sub.argv.some(
     (a, i) =>
       /^-[a-zA-Z]*[rR][a-zA-Z]*$/.test(a) ||
       a === "--recursive" ||
       /^-recurse$/i.test(a) ||
-      (cmdSwitches && /^\/s$/i.test(a)) ||
+      (cmdSwitches && CMD_SWITCH_RUN.test(a) && /\/s(?=\/|$)/i.test(a)) ||
       (a === XARGS_INPUT && (end < 0 || i < end)),
   );
 }

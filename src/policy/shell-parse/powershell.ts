@@ -128,9 +128,10 @@ export function walkPowerShell(
   function command(n: Node): void {
     const sub: Subcommand = { argv: [], cwd: st.cwd };
     const nameNode = n.childForFieldName("command_name");
-    const raw = nameNode?.text ?? "";
+    // The checks read the name PowerShell runs (``g`it`` is `git`); an escaped name still isn't literal.
+    const raw = dropEscapes(nameNode?.text ?? "");
     const canonical = canonicalCmdlet(raw);
-    if (nameNode === null || !/^[A-Za-z][\w.-]*$/.test(raw)) {
+    if (nameNode === null || raw !== nameNode.text || !/^[A-Za-z][\w.-]*$/.test(raw)) {
       ctx.state.literalNames = false;
       ctx.fail("command name is not literal");
     }

@@ -256,6 +256,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:35` (`unwrapCmd`)
 - `cmd /c git push` is denied while tainted, but `cmd /c call git push` and `cmd /c call cmd /c git push` allow in tainted `bypassPermissions`: `unwrapCmd` peels only `cmd /c` layers, never cmd's `call`, so the remote, removal and rule checks read `call` as the program. Peel `call` (and split cmd's `,`/`=` delimiters) in `unwrapCmd`; F78's rethink needs the same.
 
+### F103 (F78 rethink round-2 security review): a PowerShell backtick before a newline or at the end of a word
+- **Severity:** minor (pre-existing, unverified without PowerShell) · `src/policy/shell-parse/powershell.ts` (`dropEscapes`)
+- ``git push --force`<LF>origin main`` and a trailing ``--force` `` allow in bypass: if PowerShell reads `` `<LF> `` inside a bareword as a line continuation, git gets `--force` and the force-push deny (§5) never sees it. Check on Windows; if so, drop `` `<LF> `` in `dropEscapes` too.
+
 ## Fixed
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
