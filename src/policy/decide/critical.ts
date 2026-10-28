@@ -31,14 +31,30 @@ function cmdOperand(argv: string[]): string[] | undefined {
   return undefined;
 }
 
-/** `cmd /c cmd /c rd /s C:\x` as the command it runs, every `cmd` layer peeled (the same sub when it is not a `cmd` wrapper). */
+/** The command cmd runs for these words: its first word ends at `,` `;` `=` like at a space, `call` runs the rest,
+ * and a builtin takes its switch glued on (`call,start/b git push` runs `start /b git push`). */
+function cmdHead(words: string[]): string[] {
+  let out = words;
+  for (;;) {
+    const [first = "", ...rest] = out;
+    const parts = first === "" ? [first] : first.split(/[\s,;=]+/).filter(Boolean);
+    const glued = /^(call|start|rd|rmdir|del|erase)(\/.*)$/is.exec(parts[0] ?? "");
+    if (glued !== null) parts.splice(0, 1, glued[1] ?? "", glued[2] ?? "");
+    out = [...parts, ...rest];
+    if (out[0]?.toLowerCase() !== "call") return out;
+    out = out.slice(1);
+  }
+}
+
+/** `cmd /c call cmd /c rd /s C:\x` as the command it runs, every `cmd` layer and `call` peeled (the same sub when it
+ * is not a `cmd` wrapper). */
 export function unwrapCmd(sub: Subcommand): Subcommand {
   while (commandName(sub.argv[0]) === "cmd") {
     const rest = cmdOperand(sub.argv);
     if (rest === undefined) return sub;
     // One word is the whole command line as cmd received it: re-split it. Several words were already split by the
     // calling shell — a word keeping its spaces is one argument of the command (`find "/my dir" -delete`).
-    sub = { ...sub, argv: rest.length === 1 ? (rest[0] ?? "").split(/\s+/).filter(Boolean) : rest };
+    sub = { ...sub, argv: cmdHead(rest.length === 1 ? (rest[0] ?? "").split(/\s+/).filter(Boolean) : rest) };
   }
   return sub;
 }

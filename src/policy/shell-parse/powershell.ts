@@ -70,11 +70,13 @@ function literal(n: Node): Word {
 const EVALUATORS = new Set([
   ...["invoke-expression", "start-process", "start", "invoke-item", "wsl", "schtasks", "register-scheduledtask"],
   ...["invoke-wmimethod", "invoke-cimmethod", "pwsh", "pwsh-preview", "powershell", "powershell_ise"],
-  // A name defined earlier in the script resolves to whatever it was set to; a module or COM object brings its own.
+  // A name defined earlier in the script resolves to whatever it was set to; a module or COM object brings its own,
+  // and a new drive can map any name onto the alias: or function: provider.
   ...["set-alias", "new-alias", "sal", "nal", "import-alias", "ipal", "import-module", "ipmo", "new-object"],
+  ...["new-psdrive", "ndr", "mount"],
 ]);
-// `alias:g`, `Alias::g`, `Microsoft.PowerShell.Core\Function::g`.
-const NAME_PROVIDER = /(^|\\)(alias|function):/i;
+// `alias:g`, `Alias::g`, `Microsoft.PowerShell.Core\Function::g` or `…/Function::g`.
+const NAME_PROVIDER = /(^|[\\/])(alias|function):/i;
 // Only a cmdlet can write a provider path; a Get/Select/Test one only reads it.
 const ITEM_WRITER = /^(?!(get|select|test|measure|write|format)-)[a-z]+-[a-z]+$/i;
 
@@ -161,7 +163,9 @@ export function walkPowerShell(
         if (!w.literal) {
           ctx.fail(`${c.type} argument`);
           computed = true;
-        }
+        } else if (c.type === "generic_token" && w.text.includes("`"))
+          // PowerShell drops or translates the escape (``a`lias:g`` is `alias:g`); every check reads the raw text.
+          ctx.fail("a backtick escape in a bareword");
         sub.argv.push(w.text);
         words.push(w);
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });

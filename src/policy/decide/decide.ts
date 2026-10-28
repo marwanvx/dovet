@@ -130,14 +130,6 @@ const CMD_OPAQUE_LAUNCH = "a cmd /c layer starts a command it doesn't show";
 // What cmd runs through these isn't the argv the checks read (QUESTIONS Q111).
 const CMD_LAUNCHERS = new Set(["start", "wsl", "schtasks", "pwsh", "pwsh-preview", "powershell", "powershell_ise"]);
 
-/** What cmd runs for this argv, past its `call` prefixes; `start/b` is cmd's `start` with a switch attached. */
-function cmdHead(argv: string[]): string[] {
-  let i = 0;
-  while (program(argv[i]) === "call") i++;
-  const word = argv[i] ?? "";
-  return [program(word), program(word.split("/")[0])];
-}
-
 const finding = (
   kind: FindingKind,
   detail: string,
@@ -414,9 +406,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         }
       }
       const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
-      const head = via ? cmdHead(v) : [];
-      if (head.some((h) => SHELL_COMMANDS.has(h))) out.push(finding("unchecked", CMD_OPAQUE_SHELL, "ask"));
-      if (head.some((h) => CMD_LAUNCHERS.has(h))) out.push(finding("unchecked", CMD_OPAQUE_LAUNCH, "ask"));
+      if (via && SHELL_COMMANDS.has(program(v[0]))) out.push(finding("unchecked", CMD_OPAQUE_SHELL, "ask"));
+      if (via && CMD_LAUNCHERS.has(program(v[0]))) out.push(finding("unchecked", CMD_OPAQUE_LAUNCH, "ask"));
       const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);

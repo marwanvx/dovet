@@ -1470,6 +1470,59 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
   });
 
   // spec: AC-PERM-27
+  test("cmd's call and its , ; = delimiters don't hide what a cmd /c layer runs (F78, F102)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true });
+    for (const st of [tainted, state("bypassPermissions")])
+      for (const c of [
+        "cmd /c call cmd /c start git push",
+        "cmd /c call env bash -c 'git push'",
+        "cmd /c call,start git push",
+        "cmd /c call=start git push",
+        'cmd /c "call,start git push"',
+        "cmd /c CALL start/b git push",
+        "cmd /c call,,start/min git push",
+      ])
+        expect(sh(c, st).behavior, c).toBe("ask");
+    // The tainted-push deny (§5.4) reads the program cmd runs.
+    for (const c of ["cmd /c call git push", "cmd /c call cmd /c git push", "cmd /c call,git push", "cmd /c git,push"])
+      expect(sh(c, tainted).behavior, c).toBe("deny");
+    const win = state(
+      "bypassPermissions",
+      {},
+      { env: env({ os: "win32", cwd: "C:\\p", workingDirs: ["C:\\p"], home: "C:\\Users\\u", canonicalize: (p) => p }) },
+    );
+    for (const argv of [
+      ["cmd", "/c", "call rd /s C:\\Windows"],
+      ["cmd", "/c", "call,rd", "/s", "C:\\Windows"],
+      ["cmd", "/c", "rd/s/q C:\\Windows"],
+    ]) {
+      const commands = [{ argv, cwd: "C:\\p" }];
+      const analysis = { commands, understood: true, literalNames: true, reasons: [], operands: [] };
+      expect(decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } }, win).behavior).toBe(
+        "deny",
+      );
+    }
+    for (const c of ["cmd /c git status", "cmd /c call git status", "cmd /c git config a=b"])
+      expect(sh(c, tainted).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
+  test("a PowerShell bareword with a backtick, or a new drive, isn't understood (F78)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true });
+    for (const c of [
+      "Set-Item -Path a`lias:g -Value git; g push",
+      "Set-Item -Path Microsoft.PowerShell.Core/Alias::g -Value git; g push",
+      "New-PSDrive x Alias '\\'; Set-Item x:g git; g push",
+      "ndr x Alias '\\'; Set-Item x:g git; g push",
+      "mount x Alias '\\'; Set-Item x:g git; g push",
+      "git log --format=%h`n",
+    ])
+      expect(ps(c, tainted).behavior, c).toBe("ask");
+    expect(ps("git status", tainted).behavior).toBe("allow");
+    expect(ps("git log -n 1 'a`b'", tainted).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
   test("Invoke-Expression is a dynamic name like eval: sandbox auto-allow asks for it (§4.0 item 1)", () => {
     const st = state("default", {}, { sandboxAutoAllow: true });
     expect(ps("iex 'npm test'", st).behavior).toBe("ask");
