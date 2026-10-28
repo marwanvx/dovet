@@ -15,13 +15,9 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
 
-### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
-- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
-- `git config core.pager 'git push'; git log` and `git config --global core.sshCommand …` are allowed in tainted `bypassPermissions`: a write to `.git/config` by path is protected (§7), but `git config` writing a key outside `QUIET_GIT_CONFIG` isn't checked, and the later built-in subcommand reads it. Count a `git config` (or `git config set`) write of a non-quiet key as a possible push, like inline `-c`.
-
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
-- `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too.
+- `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too. Extended (F77 security review): evaluators and launchers whose argument is a command line aren't read as what they run: `eval git config core.pager x`, PowerShell `Invoke-Expression 'git push'` and `Start-Process git -ArgumentList 'push'` (or `'config','core.pager','x'`) allow in tainted bypass, while `bash -c`/`cmd /c` are unwrapped; unwrap them like `bash -c` or count them as a possible push.
 - **Decided:** ask in bypass only when tainted or a deny rule exists (permissions §4.0 item 10), not for every command that is not fully understood.
 
 ### F79 (F76 security review): `PATH=…` on a git command picks the programs git runs
@@ -242,7 +238,17 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/agent/loop.ts:417` (set read once per batch, before tools run), `src/policy/redaction/secrets.ts:89` (rescans only when a root directory's mtime changes), `src/cli/headless-run.ts:551` (backstop fixed at session open)
 - `sops -d s.enc > .env && cat .env` in one call, or writing `app/.env` (with `app/` existing) and reading it in a later batch, puts `DB_PASS=hunter22-example-pass` in clear in the result and the log. Read the set again after a batch's tools run and before redacting their results, and notice new nested `.env*` files (rescan when any scanned directory changes, or every call with a short cache).
 
+### F99 (F77 security review): `fd -x`/`-X` isn't read as a wrapper
+- **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`FIND_EXEC`, around line 466)
+- `fd -x git push` and `fd -X git config '{}'` are allowed in tainted `bypassPermissions`: the command `fd` runs per match is never unwrapped, so it gets no remote-action check. Unwrap `fd -x`/`--exec`/`-X`/`--exec-batch` like `find -exec`, with `{}` (and `{/}`, `{.}`, …) as a run-time word.
+- Extended (F77 round-2 security review): `FIND_EXEC` matches the program name, so GNU find installed as `gfind` (Homebrew findutils) isn't unwrapped either: `gfind . -exec git push \;` allows in tainted bypass.
+
 ## Fixed
+
+### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
+- **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
+- `git config core.pager 'git push'; git log` and `git config --global core.sshCommand …` are allowed in tainted `bypassPermissions`: a write to `.git/config` by path is protected (§7), but `git config` writing a key outside `QUIET_GIT_CONFIG` isn't checked, and the later built-in subcommand reads it. Count a `git config` (or `git config set`) write of a non-quiet key as a possible push, like inline `-c`.
+- **Fixed (PR 210):** a `git config` (or `set`) write of a key outside the quiet list, `--edit` and `--rename-section` count as a `push` (QUESTIONS Q110). A word counts as possibly several at run time only when the shell analyzer saw it expanded, unglobbed or braced (`Subcommand.literalWords`), or it holds find's `{}` or a PowerShell `$`/backtick; so `git config user.name "github-actions[bot]"` stays allowed.
 
 ### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
 - **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)

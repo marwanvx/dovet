@@ -7,6 +7,9 @@ export type Subcommand = {
   readOnly?: boolean;
   /** The simulated working directory the command runs in (permissions §4.0 item 5). */
   cwd?: string;
+  /** Set by the analyzer: argument texts it read as exactly one word with nothing expanded (a quoted `*`, not an
+   * unquoted one); a text also seen as an expansion, glob or brace is left out. */
+  literalWords?: string[];
 };
 
 const REDIRECT = /^(?:&>>?|>>|>\||>&?|<&?)/;

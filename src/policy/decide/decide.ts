@@ -485,7 +485,7 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
     if (!fullyRead) out.push(finding("unchecked", "a wrapper's options can't all be checked", "ask"));
     const sub = { ...unwrapped };
     const readings = queue.map((r) => r.argv);
-    const remote = readings.map((v) => remoteWithInput(v, XARGS_INPUT)).find((r) => r !== undefined);
+    const remote = readings.map((v) => remoteWithInput(v, XARGS_INPUT, sub0.literalWords)).find((r) => r !== undefined);
     if (remote !== undefined)
       out.push(
         finding(

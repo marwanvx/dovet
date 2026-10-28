@@ -13,6 +13,12 @@ export type Word = {
   split?: boolean;
 };
 
+/** The texts of `words` that each run as exactly one word of that text. */
+export function literalTexts(words: Word[]): string[] {
+  const loose = new Set(words.filter((w) => !w.literal || w.glob || w.values || w.split).map((w) => w.text));
+  return [...new Set(words.map((w) => w.text).filter((t) => !loose.has(t)))];
+}
+
 export const READ_ONLY_VERSION = 1;
 
 type Spec = {
