@@ -229,8 +229,9 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - With `DB_PASS=hunter22-example-pass` in `.env`, a test fixture holding the same value shows `[REDACTED:DB_PASS]`; a model that rewrites the line writes the marker literally. Refuse (or ask on) an Edit/Write whose new text holds a `[REDACTED:<name>]` marker the old text didn't.
 
 ### F95 (F43 security review): the set holds parsed `.env` values, but tools show the raw text
-- **Severity:** minor (pre-existing) · `src/policy/redaction/dotenv.ts`
+- **Severity:** major (minor logged twice; pre-existing) · `src/policy/redaction/dotenv.ts`
 - A quoted multi-line value is one entry with a newline, so `grep -r . .` shows each line in clear; an escaped value (`ESC="pa\"ss-word-0003"`) is stored unescaped, so the raw `cat` text never matches. Also add the raw quoted text and each line of 8 or more characters.
+- Logged again (F43 rethink security review): `BS_PASS="back\\slash99pass"`, `NL_PASS="line1abc\nline2xyz9"` and a quoted multi-line value in a CRLF file (joined with `\n`, shown with `\r\n`) all print in clear under `cat .env`.
 
 ### F96 (F43 security review): an earlier duplicate name in one `.env` file is never redacted
 - **Severity:** minor (pre-existing) · `src/policy/redaction/dotenv.ts:55,62` (last assignment wins)
@@ -239,6 +240,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F97 (F43 security review): some `.env` files are never scanned
 - **Severity:** minor (pre-existing) · `src/policy/redaction/secrets.ts` (`SKIP_DIRS`, `readFileSync(path, "utf8")`)
 - A `.env` under `build/`, `dist/`, `target/` or `.venv/` is skipped, so `cat build/.env` is not redacted; a UTF-16LE `.env.local` is read as UTF-8 and joins nothing.
+- Extended (F43 rethink security review): `.envrc` matches §4.7's `.env*` but not `ENV_BASENAME` (`/^\.env(\..+)?$/`); lines the parser skips (`db.pass=…`, `DB-PASS2=…`, `KEY: value`) never join; `shell.envFile` (`src/tools/bash.ts:140-143`) loads a file whose plain values never join, so `env` in Bash prints them.
+
+### F98 (F43 rethink security review): a `.env` written during the session is printed before the set sees it
+- **Severity:** major (pre-existing) · `src/agent/loop.ts:417` (set read once per batch, before tools run), `src/policy/redaction/secrets.ts:89` (rescans only when a root directory's mtime changes), `src/cli/headless-run.ts:551` (backstop fixed at session open)
+- `sops -d s.enc > .env && cat .env` in one call, or writing `app/.env` (with `app/` existing) and reading it in a later batch, puts `DB_PASS=hunter22-example-pass` in clear in the result and the log. Read the set again after a batch's tools run and before redacting their results, and notice new nested `.env*` files (rescan when any scanned directory changes, or every call with a short cache).
 
 ## Fixed
 
