@@ -639,6 +639,8 @@ describe("remote actions", () => {
       ["git config -zf --get core.pager x", "git config core.pager"],
       ["a='core.pager git'; git config $a", "git config \\$a"],
       ["git config $(echo core.pager git)", "git config \\$\\(echo"],
+      ["touch core.pager 'sh -c git\\ push'; git config *", "git config \\*"],
+      ["git config {core.pager,'git push'}", "git config \\{core"],
     ];
     for (const [c, label] of pushes) {
       const d = remote(c, auto("default"));
@@ -646,7 +648,12 @@ describe("remote actions", () => {
       expect(d.reason, c).toMatch(new RegExp(`remote action: ${label.replaceAll(".", "\\.")}(?![\\w-])`));
       expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
     }
-    for (const c of ["$a = 'core.pager','x'; git config @a", "git config -zf user.x core.pager x"])
+    for (const c of [
+      "$a = 'core.pager','x'; git config @a",
+      "git config -zf user.x core.pager x",
+      "git config (echo core.pager x)",
+      "git config --% core.pager x",
+    ])
       expect(
         sh(c, auto("bypassPermissions", {}, { tainted: true }), { language: "powershell", sandboxed: true }).behavior,
         c,

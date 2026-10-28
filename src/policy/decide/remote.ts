@@ -87,8 +87,9 @@ function gitConfigWrite(args: string[]): string | undefined {
       if (/^-[lze]*f$/.test(x) || (!x.includes("=") && GIT_CONFIG_VALUES.some((n) => isLongOption(n, x)))) i++;
     }
   }
-  // An expansion or splat can be any number of words, flags included, so the form can't be read from the text.
-  const opaque = args.find((x) => /[$`]|^@/.test(x));
+  // An expansion, glob, splat or stop-parsing token can be any number of words, flags included, so the form can't be
+  // read from the text.
+  const opaque = args.find((x) => /[$`*?[{]|^[@(]|^--%/.test(x));
   if (opaque !== undefined) return opaque;
   const [sub = ""] = words;
   if (sub === "edit" || flags.some((f) => /^-[lz]*e/.test(f) || isLongOption("--edit", f))) return "--edit";
