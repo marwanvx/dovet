@@ -248,7 +248,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
 - Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
 - **Cause:** checkpoints are on by default, so each of the ~70 `runHeadless` calls in `headless-run.test.ts` ran two real `git` processes (`--version`, `rev-parse`): 134 in the file, 62 in `headless-boot.test.ts`, 14 in `headless-websearch.test.ts`. The file's first test pays the cold `git` start on a macOS runner (2.8 s even in a passing run, 5 s on a slow one).
-- **Fixed (PR PRNUM):** those three files write `checkpoints.enabled: false` into the project's settings (as the other headless tests already do); `headless-checkpoints.test.ts` still tests checkpoints. `git` processes in the three files: 210 → 0 (counted with `strace -f -e trace=execve`).
+- **Fixed (PR 209):** those three files write `checkpoints.enabled: false` into the project's settings (as the other headless tests already do); `headless-checkpoints.test.ts` still tests checkpoints. `git` processes in the three files: 210 → 0 (counted with `strace -f -e trace=execve`).
 
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
