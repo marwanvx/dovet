@@ -12,7 +12,7 @@ const TOP =
 const MAC_PRIVATE = ["/private/etc", "/private/var", "/private/tmp", "/private/home"];
 
 // cmd's remover switches, run together too (`/s/q`); only `/a` takes a value, attribute letters.
-const CMD_SWITCH_RUN = /^(?:\/[a-z](?::?[-rhsailo]*)?)+$/i;
+const CMD_SWITCH_RUN = /^(?:\/(?:a:?[-rhsailo]*|[a-z]))+$/i;
 const CMD_REMOVERS = ["rd", "rmdir", "del", "erase"];
 
 const targets = (sub: Subcommand): string[] => {

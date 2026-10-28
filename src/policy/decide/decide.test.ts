@@ -1510,6 +1510,8 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
       expect(d.behavior).toBe("deny");
       expect(d.reason).toContain("C:\\Windows");
     }
+    // A POSIX rmdir's target isn't a switch run (`/usr` isn't `/u` with attributes).
+    for (const c of ["rmdir /usr", "rmdir /var"]) expect(sh(c, state("bypassPermissions")).behavior, c).toBe("ask");
     // Only attribute letters follow `/a:`, so a path glued there is still read as a target.
     const glued = { argv: ["cmd", "/c", "rd /s /q /a:C:\\Windows"], cwd: "C:\\p" };
     const gluedAnalysis = { commands: [glued], understood: true, literalNames: true, reasons: [], operands: [] };
