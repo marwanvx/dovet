@@ -21,15 +21,18 @@ function* outer(root: Node): Generator<[Node, boolean]> {
   }
 }
 
-type Mode = "code" | "dq" | "brace" | "braceDq" | "arith" | "bracket";
+type Mode = "code" | "dq" | "heredoc" | "brace" | "braceDq" | "arith" | "bracket";
 const BOUNDARY = /[\s;&|()<>]/;
 
 /** Where bash starts a `$(`, backtick, `<(` or `>(` substitution, and where each `${…}` starts and ends, in `text`,
- * skipping `skip` (here-document bodies, whose substitutions the walker reads from the tree). Errs toward finding more: an extra one only makes the analysis unparsed. */
-export function substitutionStarts(text: string, skip: [number, number][]): { starts: number[]; braces: string[] } {
+ * skipping quoted here-document bodies (an unquoted body's backticks the walker reads from its text). Errs toward finding more: an extra one only makes the analysis unparsed. */
+export function substitutionStarts(
+  text: string,
+  bodies: { at: [number, number]; quoted: boolean }[],
+): { starts: number[]; braces: string[] } {
   const starts: number[] = [];
   const braces: string[] = [];
-  const stack: { mode: Mode; depth: number; at?: number }[] = [{ mode: "code", depth: 0 }];
+  const stack: { mode: Mode; depth: number; at?: number; sq?: boolean; end?: number }[] = [{ mode: "code", depth: 0 }];
   const closeBacktick = (from: number): number => {
     for (let j = from; j < text.length; j++) {
       if (text[j] === "\\") j++;
@@ -38,21 +41,26 @@ export function substitutionStarts(text: string, skip: [number, number][]): { st
     return text.length;
   };
   for (let i = 0; i < text.length; i++) {
-    const s = skip.find(([a, b]) => a <= i && i < b);
-    if (s) {
-      i = s[1] - 1;
+    const body = bodies.find((b) => b.at[0] === i);
+    if (body?.quoted) {
+      i = body.at[1] - 1;
       continue;
     }
+    if (body) stack.push({ mode: "heredoc", depth: 0, end: body.at[1] });
+    // An unquoted body reads like a double-quoted string whose `"` is literal; it ends where the tree ends it.
+    const open = stack.findIndex((f) => f.mode === "heredoc" && (f.end ?? 0) <= i);
+    if (open > 0) stack.length = open;
     const top = stack[stack.length - 1] ?? { mode: "code", depth: 0 };
     const c = text[i];
     const next = text[i + 1];
-    const quoted = top.mode === "dq" || top.mode === "braceDq";
+    const quoted = top.mode === "dq" || top.mode === "braceDq" || top.mode === "heredoc";
     if (c === "\\") {
       i++;
       continue;
     }
     if (c === "`") {
-      starts.push(i);
+      // tree-sitter leaves a body's backticks as text; the walker reads them from it.
+      if (top.mode !== "heredoc") starts.push(i);
       i = closeBacktick(i + 1);
       continue;
     }
@@ -81,12 +89,17 @@ export function substitutionStarts(text: string, skip: [number, number][]): { st
       stack.pop();
       continue;
     }
-    if (c === '"') {
+    if (c === '"' && top.mode !== "heredoc") {
       stack.push({ mode: "dq", depth: 0 });
       continue;
     }
-    if (quoted && top.mode === "dq") continue;
-    if (c === "}" && (top.mode === "brace" || top.mode === "braceDq")) {
+    if (top.mode === "dq" || top.mode === "heredoc") continue;
+    // Inside `"${…}"` single quotes stay in the value, yet a `}` between them doesn't close it.
+    if (c === "'" && top.mode === "braceDq") {
+      top.sq = top.sq !== true;
+      continue;
+    }
+    if (c === "}" && (top.mode === "brace" || (top.mode === "braceDq" && top.sq !== true))) {
       braces.push(`${top.at}-${i + 1}`);
       stack.pop();
       continue;
@@ -129,21 +142,32 @@ export function substitutionStarts(text: string, skip: [number, number][]): { st
 /** Why the tree and the text disagree (permissions §4.0 item 9), or undefined. `walked` holds the ids of the command
  * and backtick nodes the walker read. */
 export function disagreement(root: Node, text: string, walked: Set<number>): string | undefined {
-  const bodies: [number, number][] = [];
+  const bodies: { at: [number, number]; quoted: boolean }[] = [];
   const nodes = new Set<number>();
   const expansions = new Set<string>();
   for (const [n, inBody] of outer(root)) {
-    if (n.type === "heredoc_body" && !inBody) bodies.push([n.startIndex, n.endIndex]);
-    if (SUBSTITUTIONS.has(n.type) && !inBody) nodes.add(n.startIndex);
-    if (n.type === "expansion" && !inBody) expansions.add(`${n.startIndex}-${n.endIndex}`);
+    if (n.type === "heredoc_body" && !inBody) {
+      const start = n.parent?.children.find((c) => c.type === "heredoc_start")?.text ?? "";
+      bodies.push({ at: [n.startIndex, n.endIndex], quoted: /['"\\]/.test(start) });
+    }
+    if (SUBSTITUTIONS.has(n.type)) nodes.add(n.startIndex);
+    if (n.type === "expansion") expansions.add(`${n.startIndex}-${n.endIndex}`);
     if ((n.type === "command" || isBacktick(n)) && !walked.has(n.id)) return "a command the walker never read";
     if (n.type === "word" && /^\s/.test(n.text)) return "text between the words of one command";
-    // bash ends a here-document only at a line that is its delimiter alone (`<<-` strips leading tabs).
-    if (
-      n.type === "heredoc_end" &&
-      !(/(^|\n)\t*$/.test(text.slice(0, n.startIndex)) && /^(\n|$)/.test(text.slice(n.endIndex)))
-    )
-      return "a here-document end that isn't a whole line";
+    // bash ends a here-document only at a line that is its delimiter alone (`<<-` strips leading tabs first).
+    if (n.type === "heredoc_body" || n.type === "heredoc_end") {
+      const kin = n.parent?.children ?? [];
+      const delimiter = kin.find((c) => c.type === "heredoc_start")?.text.replace(/['"\\]/g, "");
+      const tabs = kin.some((c) => c.type === "<<-") ? /^\t*/ : /^/;
+      const lines = n.type === "heredoc_body" ? n.text.split("\n") : [];
+      const before = text.slice(text.lastIndexOf("\n", n.startIndex - 1) + 1, n.startIndex);
+      if (
+        lines.some((line) => line.replace(tabs, "") === delimiter) ||
+        (n.type === "heredoc_end" &&
+          !(n.text === delimiter && before.replace(tabs, "") === "" && /^(\n|$)/.test(text.slice(n.endIndex))))
+      )
+        return "a here-document end that isn't a whole line";
+    }
     const kids = n.children;
     for (let k = 1; k < kids.length; k++) {
       const [a, b] = [kids[k - 1], kids[k]];
@@ -159,6 +183,6 @@ export function disagreement(root: Node, text: string, walked: Set<number>): str
   const { starts, braces } = substitutionStarts(text, bodies);
   if (starts.length !== nodes.size || starts.some((s) => !nodes.has(s))) return "a substitution the tree doesn't hold";
   if (braces.length !== expansions.size || braces.some((b) => !expansions.has(b)))
-    return "a ${…} that ends elsewhere in bash";
+    return "a parameter expansion that ends elsewhere in bash";
   return undefined;
 }

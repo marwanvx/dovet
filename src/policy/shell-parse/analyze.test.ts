@@ -515,6 +515,17 @@ describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
   });
 
   // spec: AC-PERM-20
+  test("a substitution in a here-document body the grammar doesn't hold is unparsed", () => {
+    for (const c of [
+      "cat <<E\n $(cat .env)\nE",
+      "cat <<-E\n\t$(git push)\n\tE",
+      "echo $(cat <<E\n $(git push)\nE\n)",
+      "cat <<E\n\tE\n$(git push)\nE",
+    ])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-20
   test("a substitution the grammar keeps as text is unparsed (FOLLOWUPS F82, F83)", () => {
     for (const c of [
       "echo ${x:-`git push`}",
@@ -525,6 +536,17 @@ describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
       "echo \"${x:-'$(git push)'}\"",
       "echo $(( 1 #$(git push)\n))",
       "echo $[ 1 #$(git push)\n]",
+    ])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-20
+  test("a ${…} the grammar ends elsewhere, or a here-document read as words, is unparsed (QUESTIONS Q103)", () => {
+    for (const c of [
+      "echo ${x#\\}} a",
+      'echo ${x:-$"}"} a',
+      "cat <<EOF\n\\`a\\` `rm -rf y`\nEOF",
+      'cat <<E\n${x:+\'a}\nE\ngit "<(x"}" a)"a -f\nls',
     ])
       expect([c, unparsed(c)]).toEqual([c, true]);
   });
@@ -541,6 +563,7 @@ describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
       'for f in *.ts; do wc -l "$f"; done',
       "case $x in a) echo $(ls) ;; esac",
       "echo 😀''x \\😀",
+      `echo "\${x:-'}'}" \${x:-"}"} '}'`,
     ])
       expect([c, analyze(c).commands !== undefined]).toEqual([c, true]);
   });

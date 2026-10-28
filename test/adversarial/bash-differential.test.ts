@@ -32,7 +32,24 @@ function generator(seed: number): () => string {
     return pick([n, n, `${n.slice(0, cut)}''\\${n.slice(cut)}`, `${n.slice(0, cut)}""${n.slice(cut)}`, `\\${n}`]);
   };
   const simple = (): string => `${name()} ${pick(["push", "a", ".env", "-f"])}`;
-  const LEAVES = ["push", "a", ".env", "''", '""', "'a b'", '"q r"', "\\s", "\\ ", "\\\\", "\\'", "$(( 1 ))", "$[ 1 ]"];
+  const LEAVES = [
+    "push",
+    "a",
+    ".env",
+    "''",
+    '""',
+    "'a b'",
+    '"q r"',
+    "\\s",
+    "\\ ",
+    "\\\\",
+    "\\'",
+    "$(( 1 ))",
+    "$[ 1 ]",
+    "'}'",
+    '"}"',
+    "\\}",
+  ];
   const piece = (d: number): string => {
     const r = rand();
     if (r < 0.5) return pick(["push", "a", ".env", "-f"]);
@@ -55,7 +72,7 @@ function generator(seed: number): () => string {
     const prefix = pick(["", "", `a=${word(1)} `, `a[${word(1)}]=1 `]);
     const body = pick([
       () => many(4, () => cmd(0), " | "),
-      () => `cat <<${pick(["E", "'E'"])}\n${word(1)}\nE`,
+      () => `cat <<${pick(["", "-"])}${pick(["E", "'E'"])}\n${pick(["", " ", "\t"])}${word(1)}\n${pick(["", "\t"])}E`,
       () => `declare a[${word(1)}]=1`,
     ])();
     return `${prefix}${body}${pick(["", "", ` # ${word(1)}`])}`;
