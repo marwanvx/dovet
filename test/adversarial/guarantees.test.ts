@@ -926,6 +926,12 @@ describe("every spelling of the working directory and of a home is critical (FOL
     "rm -rf $OLDPWD",
     "rm -rf ~+0",
     "rm -rf ~-1",
+    "rm -rf ~bob/.*",
+    "rm -rf ~bob/**",
+    "rm -rf ~-/?*",
+    "rm -rf ${OLDPWD%/}",
+    "rm -rf ~john@corp.example",
+    "rm -rf ~bob/../alice",
   ])("%s is a critical-path removal with a countdown in bypassPermissions", (command) => {
     const d = shell(command, state("bypassPermissions"));
     notAllowed(d);
@@ -946,14 +952,18 @@ describe("every spelling of the working directory and of a home is critical (FOL
   });
 
   // spec: permissions §4.4
-  test.each(['rm -rf "$PWD/build"', "rm -rf ~+/build", "rm -rf ~bob/build", "rm -rf ~-/build", "rm '~$Report.docx'"])(
-    "%s names a path below the spelling, which is not critical",
-    (command) => {
-      const d = shell(command, state("bypassPermissions"));
-      expect(d.behavior).toBe("allow");
-      expect(d.findings.map((f) => f.kind)).not.toContain("critical");
-    },
-  );
+  test.each([
+    'rm -rf "$PWD/build"',
+    "rm -rf ~+/build",
+    "rm -rf ~bob/build",
+    "rm -rf ~-/build",
+    "rm '~$Report.docx'",
+    "rm -rf ${PWDX:-/tmp/x}",
+  ])("%s names a path below the spelling, which is not critical", (command) => {
+    const d = shell(command, state("bypassPermissions"));
+    expect(d.behavior).toBe("allow");
+    expect(d.findings.map((f) => f.kind)).not.toContain("critical");
+  });
 });
 
 describe("a typed remover whose flags can come from xargs input (FOLLOWUPS F42)", () => {

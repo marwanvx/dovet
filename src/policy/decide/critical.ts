@@ -96,10 +96,11 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
       : undefined;
   }
   t = t.replace(/^~\+0(?=$|[/\\])/, "~+");
-  const elsewhere = /^(~(?:[+-]\d+|-|\w[\w.-]*)|\$OLDPWD|\$\{OLDPWD\})((?:[/\\].*)?)$/s.exec(t);
+  const elsewhere = /^(~(?:[+-]\d+|-|[^/\\$+\s][^/\\$\s]*)|\$OLDPWD|\$\{OLDPWD\})((?:[/\\].*)?)$/s.exec(t);
   if (elsewhere !== null) {
-    const below = posix.normalize(`/${(elsewhere[2] ?? "").replace(/\\/g, "/")}`).replace(/\/+$/, "");
-    return below === "" || below === "/*"
+    // Unresolvable: critical when the rest names the directory itself, a glob directly under it, or climbs out of it.
+    const rel = posix.normalize(`.${(elsewhere[2] ?? "").replace(/\\/g, "/")}`).replace(/\/+$/, "");
+    return rel === "." || rel === ".." || rel.startsWith("../") || /^[^/]*[*?[{]/.test(rel)
       ? "another user's home, the previous directory or a directory-stack entry, which the check can't resolve"
       : undefined;
   }
@@ -117,8 +118,8 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
   } else if (t === "~" || t.startsWith("~/")) t = env.home + t.slice(1);
   else if (t === "~+" || t.startsWith("~+/")) t = cwd + t.slice(2);
   if (t.includes("$"))
-    return /^\$\{?(?:HOME|PWD)/i.test(orig)
-      ? "the home or working directory with an expansion the check can't resolve"
+    return /^\$\{?(?:HOME|PWD|OLDPWD)(?!\w)/i.test(orig)
+      ? "the home, working or previous directory with an expansion the check can't resolve"
       : undefined;
   if (t.startsWith("/cygdrive/")) t = t.slice(9);
   const glob = /[*?[{]/.test(t);

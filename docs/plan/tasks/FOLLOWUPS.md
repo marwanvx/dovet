@@ -220,6 +220,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts:93`
 - `rm -rf /$(echo usr)` and `rm -rf /$X` are allowed: the head `/` is trimmed to `""` and skipped. Treat a root head like "a shell variable followed by a top-level directory".
 
+### F92 (F42 round-2 security review): a huge path throws out of `decide`
+- **Severity:** major (pre-existing) · `src/policy/decide/paths.ts:245` (`resolveForms`), reached from `src/policy/decide/decide.ts:155` (`pathFindings`)
+- A shell command naming a 20,000-component path makes `decide` throw an uncaught `ENAMETOOLONG` instead of returning a decision. Treat a path the OS can't resolve as not fully checkable (ask), and add a huge-input case to the path tests.
+
 ## Fixed
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
