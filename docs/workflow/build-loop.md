@@ -23,7 +23,7 @@ Standing goal: `main` green on three OSes, no flaky test, no leaks. In this orde
 1. `main` is red in CI → fix it (smallest change; a regression test if it was a real bug).
 2. Uncommitted or half-done work from a crashed session → finish it or revert it, and say which in `PROGRESS.md`.
 3. An open PR of yours with review findings or failing CI → fix it (step 6–7).
-4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the oldest one at its cause (a regression test first; a rerun or a raised limit is no fix), then move it to "Fixed" with the PR number. A `minor` logged twice is `major`.
+4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the one `bun run next` prints at its cause (a regression test first; a rerun or a raised limit is no fix); move it to "Fixed" (PR number). A `minor` logged twice is `major`.
 
 ### 3. Apply the owner's overrides
 You answer your own questions (step 6), so there is normally nothing to wait for. `bun run next` lists any answered question where the owner added an `**Override (owner, <date>):**` line. Apply each override where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes), change the code that followed the old answer, and add an `**Override applied:**` line saying what changed. Anything left under "Waiting for the owner" is something only the owner can do (an account, money, a key); don't start work that depends on it.

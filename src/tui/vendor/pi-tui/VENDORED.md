@@ -15,3 +15,4 @@ Every change is marked with a `Dovet:` comment, or is a whole file listed here, 
 - Added `tsconfig.json`: type-checked as its own project with upstream's strictness (QUESTIONS Q7).
 
 Not changed yet, and required by `docs/specs/tui.md` (SPIKE-4): width changes re-render only the live region, and rendering runs in ≤ 8 ms slices between input events.
+- **Revisit** when the two changes above have landed: diff against upstream. If Dovet's patches are still a handful, depend on the npm package and keep the patches as a patch file; if the render loop was rewritten, keep the copy.

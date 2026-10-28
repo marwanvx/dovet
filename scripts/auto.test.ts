@@ -263,6 +263,14 @@ describe("tierFor", () => {
     const f = "### F2: usage\n- **Severity:** major · `src/cli/headless-run.ts:894`";
     expect(tierFor(next(f, "the trust store in `src/policy/trust/`"), risk)).toBe("standard");
   });
+
+  test("only the first follow-up decides, so a high-risk one further down the list does not make the session deep", () => {
+    const risk = highRiskPaths(review);
+    const store = "### F36: tail\n- **Severity:** major · `src/store/event-log/reader.ts:128`";
+    const policy = "### F85: word\n- **Severity:** blocker · `src/policy/shell-parse/bash.ts`";
+    expect(tierFor(next(`${store}\n\n${policy}`, "x"), risk)).toBe("standard");
+    expect(tierFor(next(`${policy}\n\n${store}`, "x"), risk)).toBe("deep");
+  });
 });
 
 describe("modelFor", () => {
