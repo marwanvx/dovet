@@ -152,6 +152,7 @@ describe("writer", () => {
     expect(r.events.map((e) => e.type)).toEqual(["user.message", "turn.end", "turn.end"]);
   });
 
+  // spec: AC-LOG-01
   test("reopening a log that ends with its newline adds no blank line", async () => {
     const loc = await location();
     const first = await open(loc);
