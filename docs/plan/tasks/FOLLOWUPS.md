@@ -100,10 +100,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/decide.ts` `SECTION`, `test/adversarial/guarantees.test.ts`
 - Every `by` string a prompt shows ("critical-path removal (§4.4)", "remote-action check (§4.8)", …) is asserted nowhere (the F32 round pinned only the new `computed` one), so a wrong section reference reaches users silently — the traps table's "pin the literal text". One `expect(...by)` per kind where a test already produces that finding.
 
-### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
-- **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
-- `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
-
 ### F44 (M2-16 security review): an invisible character inside a secret stops its redaction
 - **Severity:** minor · `src/agent/loop.ts:370-372` (`stripHidden` runs before `redactText`), `src/policy/redaction/redact.ts:29` (folds only U+200B/C/D, U+FEFF)
 - `abcd1234\u2060efgh5678` for `MY_API_KEY=abcd1234efgh5678` reaches the model as two clear halves around the removal marker; same for U+00AD, U+034F, U+180E and tag characters. Redact before stripping, and share one character set with F14.
@@ -228,7 +224,34 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/policy/decide/critical.ts` (`criticalTarget`: the glob base and the `elsewhere` normaliser)
 - `rm -rf ~/x/{..,y}/*`, `rm -rf ~bob/x/{..,y}/*` and `rm -rf $OLDPWD/x/{..,y}/*` are allowed in `bypassPermissions`: bash expands the braces first (`~/x/../*`, i.e. `~/*`), but the check takes the glob base before the first glob segment (`~/x`) and `posix.normalize` keeps `{..,y}` as a plain segment. Also `.?`/`..*` segments, which match `..` under bash before 5.2. Expand braces (bounded) before choosing the base, or treat a segment with `{` or a dot-leading glob, followed by more segments, as reaching the parent.
 
+### F94 (F43 build): a redaction marker the model copies back is written into the file
+- **Severity:** minor (pre-existing) · `src/policy/redaction/redact.ts:76`, the Edit/Write tools
+- With `DB_PASS=hunter22-example-pass` in `.env`, a test fixture holding the same value shows `[REDACTED:DB_PASS]`; a model that rewrites the line writes the marker literally. Refuse (or ask on) an Edit/Write whose new text holds a `[REDACTED:<name>]` marker the old text didn't.
+
+### F95 (F43 security review): the set holds parsed `.env` values, but tools show the raw text
+- **Severity:** major (minor logged twice; pre-existing) · `src/policy/redaction/dotenv.ts`
+- A quoted multi-line value is one entry with a newline, so `grep -r . .` shows each line in clear; an escaped value (`ESC="pa\"ss-word-0003"`) is stored unescaped, so the raw `cat` text never matches. Also add the raw quoted text and each line of 8 or more characters.
+- Logged again (F43 rethink security review): `BS_PASS="back\\slash99pass"`, `NL_PASS="line1abc\nline2xyz9"` and a quoted multi-line value in a CRLF file (joined with `\n`, shown with `\r\n`) all print in clear under `cat .env`.
+
+### F96 (F43 security review): an earlier duplicate name in one `.env` file is never redacted
+- **Severity:** minor (pre-existing) · `src/policy/redaction/dotenv.ts:55,62` (last assignment wins)
+- `DB_PASS=first-value-0001` then `DB_PASS=second-value-0002`: `./.env:DB_PASS=first-value-0001` reaches the model. Keep every assignment's value for the redaction set.
+
+### F97 (F43 security review): some `.env` files are never scanned
+- **Severity:** minor (pre-existing) · `src/policy/redaction/secrets.ts` (`SKIP_DIRS`, `readFileSync(path, "utf8")`)
+- A `.env` under `build/`, `dist/`, `target/` or `.venv/` is skipped, so `cat build/.env` is not redacted; a UTF-16LE `.env.local` is read as UTF-8 and joins nothing.
+- Extended (F43 rethink security review): `.envrc` matches §4.7's `.env*` but not `ENV_BASENAME` (`/^\.env(\..+)?$/`); lines the parser skips (`db.pass=…`, `DB-PASS2=…`, `KEY: value`) never join; `shell.envFile` (`src/tools/bash.ts:140-143`) loads a file whose plain values never join, so `env` in Bash prints them.
+
+### F98 (F43 rethink security review): a `.env` written during the session is printed before the set sees it
+- **Severity:** major (pre-existing) · `src/agent/loop.ts:417` (set read once per batch, before tools run), `src/policy/redaction/secrets.ts:89` (rescans only when a root directory's mtime changes), `src/cli/headless-run.ts:551` (backstop fixed at session open)
+- `sops -d s.enc > .env && cat .env` in one call, or writing `app/.env` (with `app/` existing) and reading it in a later batch, puts `DB_PASS=hunter22-example-pass` in clear in the result and the log. Read the set again after a batch's tools run and before redacting their results, and notice new nested `.env*` files (rescan when any scanned directory changes, or every call with a short cache).
+
 ## Fixed
+
+### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
+- **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
+- `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
+- **Fixed (#208):** a `.env*` value of 8 or more characters joins under any name when it holds a letter and a digit and is redacted wherever it appears in tool results, paths included; a plain-named one is kept out of the log's backstop scrub; overlapping spans merge (QUESTIONS Q109). A headless run has one working directory, so the project root is the whole scan.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`

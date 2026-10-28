@@ -547,7 +547,8 @@ export async function runHeadless(input: HeadlessRunInput): Promise<HeadlessRunO
     ids: input.ids,
     pid: input.pid,
     host: input.host,
-    secrets: [secretValue, ...outputSecrets().map((s) => s.value)],
+    // Tool results reach the log already redacted; a plain `.env` value would scrub paths rewind reads (Q109).
+    secrets: [secretValue, ...outputSecrets().flatMap((s) => (s.plain === true ? [] : [s.value]))],
   });
   if (opened.mode !== "write")
     return errOut(sessionId, `session ${sessionId} is read-only (${opened.reason})`, { kind: "error" }, warnings);

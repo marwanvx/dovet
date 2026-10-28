@@ -3,22 +3,31 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseEnvFile } from "./dotenv.ts";
 
-export type NamedSecret = { name: string; value: string };
+/** `plain`: a `.env` value under a name that doesn't look secret, kept only by its shape (QUESTIONS Q109). */
+export type NamedSecret = { name: string; value: string; plain?: true };
 
 /** Values shorter than this never redact by value (ASSUMPTION QUESTIONS Q60): they match ordinary words. */
 export const MIN_SECRET_VALUE_LENGTH = 8;
 
 export const SECRET_NAME = /(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)/i;
 
-export function secretsFromEnv(env: Readonly<Record<string, string | undefined>>): NamedSecret[] {
+// `production` or a project name would hide every path holding it (QUESTIONS Q109).
+const looksLikeCredential = (value: string): boolean => /\p{L}/u.test(value) && /\p{N}/u.test(value);
+
+function secretsFrom(env: Readonly<Record<string, string | undefined>>, anyNamedCredential: boolean): NamedSecret[] {
   const out: NamedSecret[] = [];
   for (const [name, value] of Object.entries(env)) {
-    if (value === undefined || value.length < MIN_SECRET_VALUE_LENGTH || !SECRET_NAME.test(name)) continue;
+    if (value === undefined || value.length < MIN_SECRET_VALUE_LENGTH) continue;
+    const named = SECRET_NAME.test(name);
+    if (!named && !(anyNamedCredential && looksLikeCredential(value))) continue;
     if (out.some((s) => s.name === name)) continue;
-    out.push({ name, value });
+    out.push(named ? { name, value } : { name, value, plain: true });
   }
   return out;
 }
+
+export const secretsFromEnv = (env: Readonly<Record<string, string | undefined>>): NamedSecret[] =>
+  secretsFrom(env, false);
 
 const SKIP_DIRS = new Set(["node_modules", ".git", ".hg", ".svn", "target", "dist", "build", ".venv", "__pycache__"]);
 const ENV_BASENAME = /^\.env(\..+)?$/;
@@ -57,7 +66,7 @@ function scanDir(dir: string, found: string[]): void {
 
 const readSecretsFile = (path: string): NamedSecret[] => {
   try {
-    return secretsFromEnv(parseEnvFile(readFileSync(path, "utf8")));
+    return secretsFrom(parseEnvFile(readFileSync(path, "utf8")), true);
   } catch {
     return [];
   }
