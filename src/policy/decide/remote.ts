@@ -56,6 +56,51 @@ function gitHidden(rest: string[], a: string): Remote | undefined {
   return { kind: "push", label: `git ${a} (not a git command: an alias or add-on could push)` };
 }
 
+const GIT_CONFIG_VALUES = ["--file", "--blob", "--type", "--default", "--comment", "--value", "--url"];
+const GIT_CONFIG_READS = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--get-color",
+  "--get-colorbool",
+  "--list",
+  "--unset",
+  "--unset-all",
+  "--remove-section",
+]);
+
+/** What `git config …` writes that git may later run: a key outside `QUIET_GIT_CONFIG`, `--edit`, or `--rename-section`
+ * (it can move quietly written keys, `user.pager`, into `core`). An option it can't place reads as a write. */
+function gitConfigWrite(args: string[]): string | undefined {
+  const words: string[] = [];
+  const flags: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const x = args[i] ?? "";
+    if (x === "--") {
+      words.push(...args.slice(i + 1));
+      break;
+    }
+    if (!x.startsWith("-") || x === "-") words.push(x);
+    else {
+      flags.push(x);
+      if (x === "-f" || (!x.includes("=") && GIT_CONFIG_VALUES.some((n) => isLongOption(n, x)))) i++;
+    }
+  }
+  const [sub = ""] = words;
+  if (sub === "edit" || flags.some((f) => /^-[lz]*e/.test(f) || isLongOption("--edit", f))) return "--edit";
+  if (sub === "rename-section" || flags.some((f) => isLongOption("--rename-section", f))) return "--rename-section";
+  if (["get", "list", "unset", "remove-section"].includes(sub)) return undefined;
+  const operands = sub === "set" ? words.slice(1) : words;
+  if (
+    sub !== "set" &&
+    (operands.length < 2 || flags.some((f) => GIT_CONFIG_READS.has(f.split("=", 1)[0] ?? "") || /^-[ez]*l/.test(f)))
+  )
+    return undefined;
+  const [key] = operands;
+  return key === undefined || key.toLowerCase().startsWith("alias.") || QUIET_GIT_CONFIG.test(key) ? undefined : key;
+}
+
 /** Environment variables git (or its pager) reads configuration or a program to run from. */
 const GIT_ENV_NAMES =
   "GIT_CONFIG\\w*|GIT_SSH(?:_COMMAND)?|GIT_PAGER|GIT_(?:SEQUENCE_)?EDITOR|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_EXEC_PATH|GIT_TEMPLATE_DIR|GIT_ALLOW_PROTOCOL|PAGER|EDITOR|VISUAL|SSH_ASKPASS|LESS|LESSOPEN|LESSCLOSE|LESSKEY\\w*";
@@ -215,6 +260,10 @@ export function remoteAction(argv: string[]): Remote | undefined {
           .map((kv) => kv.split("=", 1)[0] ?? "")
           .find((k) => !QUIET_GIT_CONFIG.test(k));
         if (key !== undefined) return is("push", `git clone -c ${key} (configuration that can run a command)`);
+      }
+      if (a === "config") {
+        const write = gitConfigWrite(gitArgs(rest).slice(1));
+        if (write !== undefined) return is("push", `git config ${write} (configuration that can run a command)`);
       }
       return gitHidden(rest, a);
     case "npm":

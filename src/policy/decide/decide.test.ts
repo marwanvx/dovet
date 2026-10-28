@@ -612,6 +612,57 @@ describe("remote actions", () => {
   });
 
   // spec: AC-PERM-29
+  test("git config writing a key that can run a program counts as a push, like inline -c (F77)", () => {
+    const pushes: Array<[string, string]> = [
+      ["git config core.pager 'git push'; git log", "git config core.pager"],
+      ["git config --global core.sshCommand 'ssh -o ProxyCommand=x'", "git config core.sshCommand"],
+      ["git config Core.Pager x", "git config Core.Pager"],
+      ["git config set core.pager x", "git config core.pager"],
+      ["git config set --global --comment c core.pager x", "git config core.pager"],
+      ["git config --add include.path ../x", "git config include.path"],
+      ["git config --replace-all core.pager x", "git config core.pager"],
+      ["git config -f .git/config core.hooksPath h", "git config core.hooksPath"],
+      ["git config --file=.gitmodules submodule.a.update '!sh x'", "git config submodule.a.update"],
+      ["git config --type bool core.fsmonitor true", "git config core.fsmonitor"],
+      ["git config --type=bool --no-includes core.fsmonitor true", "git config core.fsmonitor"],
+      ["git -C d config credential.helper x", "git config credential.helper"],
+      ["git -c alias.c=config c core.pager x", "git config core.pager"],
+      ["git config --edit", "git config --edit"],
+      ["git config --global --ed", "git config --edit"],
+      ["git config -e", "git config --edit"],
+      ["git config edit --global", "git config --edit"],
+      ["git config --rename-section user core", "git config --rename-section"],
+      ["git config rename-section user core", "git config --rename-section"],
+      ["git config -- core.pager x", "git config core.pager"],
+    ];
+    for (const [c, label] of pushes) {
+      const d = remote(c, auto("default"));
+      expect(d.behavior, c).toBe("ask");
+      expect(d.reason, c).toMatch(new RegExp(`remote action: ${label.replaceAll(".", "\\.")}(?![\\w-])`));
+      expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
+    }
+    for (const c of [
+      "git config user.name x",
+      "git config --global user.email x",
+      "git config set --global init.defaultBranch main",
+      "git config core.pager",
+      "git config --get core.pager",
+      "git config get core.pager",
+      "git config --get-regexp core. pager",
+      "git config --list --show-origin",
+      "git config list",
+      "git config -l",
+      "git config --unset core.pager",
+      "git config unset --all core.pager",
+      "git config --remove-section core",
+      "git config alias.s status",
+      "git config",
+      "git config --",
+    ])
+      expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-29
   test("other spellings of a §4.8 action: gh release upload, wget --method, a package runner running one", () => {
     for (const c of [
       "gh release upload v1 f",
