@@ -10,7 +10,7 @@ Agents run this loop through [build-loop.md](build-loop.md), which also covers p
 2. **Agent reads the spec section first**, plus every doc it links to. The task prompt names the spec file and section.
 3. **Tests first** for the acceptance criteria in scope: the agent writes failing tests named after the criteria (`// spec: AC-TOOLS-04`).
 4. **Implement** until the tests pass.
-5. **Run the full quality gate locally:** `bun run check` = `bun check` (type check) + Biome lint + dependency-direction check + all tests + spec-coverage check.
+5. **Run the full quality gate locally:** `bun run check` = `bun check` (type check) + Biome lint + dependency-direction check + all tests + spec-coverage + docs + wiring checks. Every step runs even when one fails, and the summary names each result.
 6. **Self-review:** the agent re-reads its diff against the spec section and lists any deviation. Deviations are fixed or turned into a spec-change proposal (never silently kept).
 7. **Fresh review:** a separate reviewer session or subagent checks the diff against the spec; findings are fixed.
 8. **Merge** when CI is green on all three OSes and the review passed. PRs that change decisions (ADRs, roadmap, product decisions) or need an owner step wait for the owner.

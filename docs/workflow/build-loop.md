@@ -83,7 +83,7 @@ Without subagents: open the PR and leave the review to the next session (step 2.
 
 ### 8. Ship
 One task, one PR: the status line and the progress entry ride in the task's own PR, never in a PR of their own.
-1. Open the PR (template filled: task, spec sections, criteria, assumptions).
+1. Open the PR (fill `.github/PULL_REQUEST_TEMPLATE.md`).
 2. On the same branch, set the task's `Status:` to `done (#PR)` and append the step 9 progress entry; commit and push.
 3. If GitHub says the branch is behind `main`, run `gh pr update-branch <PR>` first. Wait for CI with **one blocking call**: `bun .claude/skills/ship-task/scripts/wait-ci.ts <PR>` in the foreground, with a 60-minute timeout. Don't poll with `sleep` or repeated `gh run view`: every poll is another model round trip. On a failure, read `gh run view <run id> --log-failed`, fix, push, and wait again.
 4. Green on all three OSes and the review passed → **merge it**, unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step. Those wait for the owner: set `Status:` to `waiting for owner (#PR)` instead and say so in the progress entry.
