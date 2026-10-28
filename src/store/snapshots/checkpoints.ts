@@ -1,6 +1,6 @@
 // When a checkpoint is taken and how a rewind uses it (docs/specs/checkpoints.md): the git tree snapshot of snapshotter.ts
 // where the workspace allows it, the before-bytes of the files Dovet's own tools change where it doesn't.
-import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, parse, relative, sep } from "node:path";
 import { hardenedGitEnv, pathKey } from "../../platform/index.ts";
 import { CheckpointData, type EventEnvelope, FileChangeData } from "../../schema/index.ts";
@@ -96,6 +96,16 @@ async function openGit(options: SnapshotterOptions): Promise<{ snapshotter?: Sna
   }
 }
 
+/** The real path, or the path as given when it no longer exists (nothing under it is on disk, so nothing conflicts). */
+function realPathOf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return path;
+    throw e;
+  }
+}
+
 const hex = (bytes: Uint8Array): string => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 
 export async function openCheckpoints(options: CheckpointOptions): Promise<CheckpointService> {
@@ -110,11 +120,17 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
   const recorded = new Set<string>();
   let noticed = false;
 
+  /** `path` relative to the workspace, or undefined when it is the workspace itself or outside it. */
+  function belowWorkspace(path: string): string | undefined {
+    const inside = relative(options.workspace, path);
+    return inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside)
+      ? inside
+      : undefined;
+  }
+
   /** The git path's link check on every directory above `path`: below the workspace, or from the drive root outside it. */
   function blobPathBlock(path: string, create: boolean): RestoreSkip["reason"] | undefined {
-    const inside = relative(options.workspace, path);
-    const below = inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
-    const base = below ? options.workspace : parse(path).root;
+    const base = belowWorkspace(path) === undefined ? parse(path).root : options.workspace;
     return pathBlock(base, relative(base, path).split(sep).join("/"), create);
   }
 
@@ -175,10 +191,16 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
     checkpointId: string,
   ): Promise<{ abs: string; key: string }[]> {
     const target = resolve(events, checkpointId);
+    // Git names paths from its real root while a tool logs them under the workspace as opened.
+    const realWorkspace = realPathOf(options.workspace);
+    const real = (path: string): string => {
+      const inside = belowWorkspace(path);
+      return inside === undefined ? path : join(realWorkspace, inside);
+    };
     const left = new Map<string, string | null>();
     for (const e of events) {
       const c = e.type === "file.change" ? FileChangeData.safeParse(e.data) : undefined;
-      if (c?.success && c.data.after !== undefined) left.set(pathKey(c.data.path, osOf), c.data.after);
+      if (c?.success && c.data.after !== undefined) left.set(pathKey(real(c.data.path), osOf), c.data.after);
     }
     let candidates: { abs: string; key: string; saved?: string | null }[];
     if (target.kind === "git") {
@@ -193,7 +215,7 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
       const st = lstatSync(abs, { throwIfNoEntry: false });
       if (st === undefined || !st.isFile() || st.isSymbolicLink() || st.nlink > 1) return false;
       const now = hex(readFileSync(abs));
-      return now !== saved && left.get(pathKey(abs, osOf)) !== now;
+      return now !== saved && left.get(pathKey(real(abs), osOf)) !== now;
     });
   }
 

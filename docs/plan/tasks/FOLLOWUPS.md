@@ -128,10 +128,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/targets.ts:6-40`
 - With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
 
-### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
-- **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
-- Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
-
 ### F39 (M2-16 spec review): the compaction facts' command output tail can start with a lone surrogate
 - **Severity:** minor (pre-existing) · `src/agent/compaction/facts.ts:68`
 - `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
@@ -217,6 +213,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Find the cause in the raw log (a real race in the ledger, or a leftover compile process holding the directory) before touching a limit; a rerun is no fix.
 
 ## Fixed
+
+### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
+- Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
+- **Fixed (#PR):** the conflict check re-roots workspace paths onto the workspace's real path on both sides (QUESTIONS Q107).
 
 ### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
