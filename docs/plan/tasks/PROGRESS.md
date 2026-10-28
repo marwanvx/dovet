@@ -917,7 +917,7 @@ Next: F38, then F42, F43, F77, F78 (the open majors `bun run next` lists), then 
 
 
 ## 2026-10-28 — F38: a workspace opened through a symlink no longer turns Dovet's own writes into rewind conflicts
-Done: the conflict check re-roots any path under the workspace onto the workspace's real path on both the logged and the candidate side, so git's real-root paths match the `file.change` paths (macOS `/tmp`); a removed workspace reports no conflicts instead of throwing (QUESTIONS Q107). F38 fixed. PR: #PR (merged).
+Done: the conflict check re-roots any path under the workspace onto the workspace's real path on both the logged and the candidate side, so git's real-root paths match the `file.change` paths (macOS `/tmp`); a removed workspace reports no conflicts instead of throwing (QUESTIONS Q107). F38 fixed. PR: #206 (merged).
 Review: standard, 1 round (reviewer ×1); 2 fixed (minor: blobs-mode test for the candidate side; ENOENT on a removed workspace), 0 dropped, 0 logged.
 Learned: `bun run check` here fails only the known sandbox-in-binary test. The `subst`-drive case is not covered: plain `realpathSync` may not resolve one, and no Windows run has shown it, so the spec says only symlinks.
 Next: F42, then F43, F77, F78 (the open majors `bun run next` lists), then M2-17.

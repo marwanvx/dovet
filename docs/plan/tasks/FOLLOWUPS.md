@@ -217,7 +217,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
 - Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
-- **Fixed (#PR):** the conflict check re-roots workspace paths onto the workspace's real path on both sides (QUESTIONS Q107).
+- **Fixed (#206):** the conflict check re-roots workspace paths onto the workspace's real path on both sides (QUESTIONS Q107).
 
 ### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
