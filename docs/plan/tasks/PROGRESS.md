@@ -933,3 +933,9 @@ Done: finished the crashed session's F43 branch with a rethought approach. A `.e
 Review: deep, 1 round on the rethought approach (reviewer ×1, security-reviewer ×1); 0 fixed, 0 dropped, 3 logged (F95 again, now major; F97 extended; F98 new, major; all pre-existing).
 Learned: the earlier "keep a plain value visible after `/` or `\`" exemption was the hole every round reopened: the command decides what surrounds a value (`sed 's/=/=\//' .env`), so redaction can't trust context. The price is that a directory named after a plain value shows redacted in Glob/Grep results (an honest limit in §4.7). `bun run check` here fails only the known sandbox-in-binary, SPIKE-5 file-fallback and ripgrep download tests.
 Next: F98 (a `.env` written mid-session is printed before the set sees it), F95, then F49, F77, F78, F88, F89, F90, F92, F93, then M2-17.
+
+## 2026-10-28 — F49: headless tests that don't test checkpoints stop starting real git processes
+Done: `headless-run`, `headless-boot` and `headless-websearch` tests now run with `checkpoints.enabled: false`, so they no longer start two real `git` processes per `runHeadless` (210 in all, counted with strace, now 0). That start was what made the first test of `headless-run.test.ts` take 2.8 s, or time out at 5 s, on a cold macOS runner. F49 fixed. PR: #209 (merged).
+Review: standard, 1 round (reviewer ×1); 0 fixed, 0 dropped, 0 logged.
+Learned: any test that calls `runHeadless` and doesn't test checkpoints must turn them off in the project's `.dovet/settings.json` (the `settings` input is not what `openCheckpoints` reads; the polled file is). The wrapper now exists in three test files; a shared helper is allowed from here on. `bun run check` here fails only the known sandbox-in-binary and SPIKE-5 file-fallback tests. The reviewer did not rerun strace on `headless-run.test.ts`; I did (134 → 0).
+Next: F98, F95, then F77, F78, F88, F89, F90, F92, F93, then M2-17.
