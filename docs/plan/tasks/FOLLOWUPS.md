@@ -128,10 +128,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/targets.ts:6-40`
 - With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
 
-### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
-- **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
-- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n`.
-
 ### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
 - Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
@@ -221,6 +217,11 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
+- **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
+- Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n`.
+- **Fixed (#203):** on reopen the writer appends `\n` whenever the log's last byte isn't one (sidecar path too), so the next event starts its own line (QUESTIONS Q104).
 
 ### F87 (differential check after F84): a newline after a 3-stage pipeline folds the next `&&` line into its last command
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command`), tree-sitter-bash 0.25.1 (the newest on npm)

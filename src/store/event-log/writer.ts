@@ -124,7 +124,7 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
   let handle: FileHandle;
   try {
     handle = await open(paths.log, "a", 0o600);
-    if (existing.tornLine !== undefined) await handle.appendFile("\n");
+    if (!existing.endsWithNewline) await handle.appendFile("\n");
   } catch (err) {
     await rm(paths.lock, { force: true });
     throw err;
@@ -239,15 +239,16 @@ export async function openSession(input: OpenInput): Promise<OpenResult> {
   return { mode: "write", writer };
 }
 
-type Existing = { meta: SessionMeta; tornLine?: number } | { readOnly: string };
+type Existing = { meta: SessionMeta; endsWithNewline: boolean; tornLine?: number } | { readOnly: string };
 
-/** What a reopened log already holds; a torn last line gets `\n` and a `session.resume` naming it, so the log stays readable. */
+/** What a reopened log already holds; a last line without `\n` gets one (a torn one also a `session.resume` naming it), so the log stays readable. */
 async function readExisting(input: OpenInput, paths: { log: string; meta: string }): Promise<Existing> {
   const size = await stat(paths.log).then(
     (st) => st.size,
     (err: unknown) => (isErrno(err, "ENOENT") ? 0 : Promise.reject(err)),
   );
-  if (size === 0) return { meta: emptyMeta(input.session) };
+  if (size === 0) return { meta: emptyMeta(input.session), endsWithNewline: true };
+  const endsWithNewline = await lastByteIsNewline(paths.log, size);
   const sidecar = await readFile(paths.meta, "utf8").then(
     (t) => {
       try {
@@ -258,9 +259,19 @@ async function readExisting(input: OpenInput, paths: { log: string; meta: string
     },
     (err: unknown) => (isErrno(err, "ENOENT") ? undefined : Promise.reject(err)),
   );
-  if (sidecar !== undefined && sidecar.bytes === size) return { meta: sidecar };
+  if (sidecar !== undefined && sidecar.bytes === size) return { meta: sidecar, endsWithNewline };
   const read = await readSession(input);
   if (read.readOnly !== undefined) return { readOnly: read.readOnly };
   const meta = read.events.reduce(foldMeta, emptyMeta(input.session));
-  return read.tornLine === undefined ? { meta } : { meta, tornLine: read.tornLine };
+  return read.tornLine === undefined ? { meta, endsWithNewline } : { meta, endsWithNewline, tornLine: read.tornLine };
+}
+
+async function lastByteIsNewline(log: string, size: number): Promise<boolean> {
+  const file = await open(log, "r");
+  try {
+    const { buffer } = await file.read({ buffer: Buffer.alloc(1), position: size - 1 });
+    return buffer[0] === 0x0a;
+  } finally {
+    await file.close();
+  }
 }

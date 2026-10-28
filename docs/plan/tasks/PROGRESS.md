@@ -902,3 +902,9 @@ Done: five tree-vs-text checks (permissions §4.0 item 9, `src/policy/shell-pars
 Review: deep, 3 rounds (reviewer ×2, security-reviewer ×3); 6 fixed, 0 dropped, 0 logged; round 3: none.
 Learned: the differential test found four disagreements on its first runs that the planned four checks missed (here-document end lines, escaped blanks skipped between nodes, a body `$(` after a blank with no node, tabs before an end without `<<-`): grow its generator before trusting a new check. A zero-length tree range (empty here-document body) can stall an index-skipping lexer. On windows-latest the one-bash-for-2,000-texts version passed in 34 s, then timed out at 300 s once the generator gained unquoted and tab-indented here-documents (same seed; Linux/macOS ~2 s). The cause was not proven. The test now runs 100 texts per bash with a 60 s deadline, a progress marker and a tree kill, so a hang names its case and text; with that, windows-latest passed 2,000 cases in 42 s. If it ever fails with "bash still running after … on case", fix that text, not the limit.
 Next: F77, F78, F42 (the open majors `bun run next` lists), then M2-17.
+
+## 2026-10-28 — F36: a last log line without its final newline gets one before the next event
+Done: on reopen the writer appends `\n` whenever the log's last byte isn't one (sidecar fast path too), so a complete last line that lost its newline no longer glues the next event on and makes the session read-only (QUESTIONS Q104). F36 fixed. Local `main` had been left 3 commits ahead of origin; they were already inside #202's squash, so `main` was reset to origin. PR: #203 (merged).
+Review: standard, 1 round (reviewer ×1); 1 fixed (nit), 0 dropped, 0 logged.
+Learned: the writer decides from the file's last byte, not a reader flag, because the sidecar fast path skips the read.
+Next: F37, then F38, F42, F43, F77, F78 (the open majors `bun run next` lists), then M2-17.
