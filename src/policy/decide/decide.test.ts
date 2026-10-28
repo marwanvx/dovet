@@ -1367,6 +1367,13 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     "csh -c 'git push'",
     "mksh -c 'git push'",
     "ash -c 'git push'",
+    "elvish -c 'git push'",
+    "nu -c 'git push'",
+    "xonsh -c 'git push'",
+    "yash -c 'git push'",
+    "posh -c 'git push'",
+    "rc -c 'git push'",
+    "rbash -c 'git push'",
   ];
   const psHidden = [
     "$env:GIT_PAGER = 'git push'; git log",
@@ -1394,6 +1401,12 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     "Invoke-WmiMethod Win32_Process Create 'git push'",
     "Invoke-CimMethod Win32_Process Create @{CommandLine='git push'}",
     "Register-ScheduledTask x",
+    "Set-Item -Path Microsoft.PowerShell.Core\\Alias::g -Value git; g push",
+    "New-Item -Path Microsoft.PowerShell.Core\\Function::g -Value 'git push'; g",
+    "Import-Alias a.csv; g push",
+    "ipal a.csv; g push",
+    "Import-Module ./x.psm1",
+    "New-Object -ComObject WScript.Shell",
   ];
   const ps = (c: string, st: State): Decision => sh(c, st, { language: "powershell", sandboxed: true });
   // Unparsed, so they ask in any bypass session (item 7).
@@ -1411,7 +1424,16 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     for (const c of psHidden) expect(ps(c, tainted).behavior, c).toBe("ask");
     // A cmd /c layer that starts a command asks in every bypass session, like one running a shell script.
     for (const st of [tainted, state("bypassPermissions")]) {
-      for (const c of ["cmd /c start git push", "cmd /c wsl git push", "cmd /c powershell -c 'git push'"])
+      for (const c of [
+        "cmd /c start git push",
+        "cmd /c wsl git push",
+        "cmd /c powershell -c 'git push'",
+        "cmd /c call start git push",
+        "cmd /c call call wsl git push",
+        'cmd /c "call start git push"',
+        "cmd /c start/b git push",
+        "cmd /c call bash -c 'git push'",
+      ])
         expect(sh(c, st).behavior, c).toBe("ask");
       expect(ps("cmd.exe /c start git push", st).behavior).toBe("ask");
     }
@@ -1439,6 +1461,9 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
       expect(sh(c, files).behavior, c).toBe("ask");
     expect(ps("iex 'Get-Content src/x.ts'", files).behavior).toBe("ask");
     expect(sh("eval 'cat src/x.ts'", state("bypassPermissions", { deny: ["WebFetch"] })).behavior).toBe("allow");
+    // Native programs can't write PowerShell's alias: or function: provider.
+    expect(ps("rg 'function:' src", files).behavior).toBe("allow");
+    expect(ps("git commit -m 'alias: fix'", files).behavior).toBe("allow");
     expect(
       ps("iex 'Remove-Item build'", state("bypassPermissions", { deny: ["PowerShell(Remove-Item *)"] })).behavior,
     ).toBe("ask");

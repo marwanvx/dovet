@@ -27,7 +27,8 @@ export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 // can't be read at all), or a program in WSL or through cmd's `start`.
 const NEVER_UNDERSTOOD = new Set([
   ...["eval", "source", ".", "exec", "coproc", "trap", "wsl", "start"],
-  ...["pwsh", "pwsh-preview", "powershell", "powershell_ise", "fish", "tcsh", "csh", "mksh", "ash"],
+  ...["pwsh", "pwsh-preview", "powershell", "powershell_ise", "fish", "tcsh", "csh", "mksh", "ash", "rbash"],
+  ...["yash", "posh", "rc", "elvish", "nu", "xonsh"],
 ]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
 const RESERVED = new Set([
