@@ -921,3 +921,9 @@ Done: the conflict check re-roots any path under the workspace onto the workspac
 Review: standard, 1 round (reviewer ×1); 2 fixed (minor: blobs-mode test for the candidate side; ENOENT on a removed workspace), 0 dropped, 0 logged.
 Learned: `bun run check` here fails only the known sandbox-in-binary test. The `subst`-drive case is not covered: plain `realpathSync` may not resolve one, and no Windows run has shown it, so the spec says only symlinks.
 Next: F42, then F43, F77, F78 (the open majors `bun run next` lists), then M2-17.
+
+## 2026-10-28 — F42: every spelling of the working directory and homes is critical; xargs input can carry a remover's flags
+Done: `$PWD`/`${PWD}`/`$pwd`, `~+`, `~+0` are read as the working directory. `~user`, `~-`, `~±N` and `$OLDPWD` are critical when they name the directory itself, a glob directly under it, or a path climbing out of it. A remover is recursive when xargs input can be a flag: before `--` for `rm`, always for cmd's `rd`/`rmdir`/`del`/`erase` (QUESTIONS Q108). F42 fixed. PR: #207 (merged).
+Review: deep, 3 rounds (reviewer ×1, security-reviewer ×3); 13 fixed, 1 dropped (an unobservable nit), 5 logged (F89–F93, all pre-existing).
+Learned: a bare `find … | xargs rm` now asks in every mode and is denied in `dontAsk`; the prompt names `xargs rm --`. Round 3 found that a brace pair holding `..` (`~/x/{..,y}/*`) climbs past every glob base. That is pre-existing, so it's logged as F93 rather than patched here. `bun run check` here fails only the known sandbox-in-binary and SPIKE-5 file-fallback tests.
+Next: F43, then F49, F77, F78, F88, F89, F90, F92, F93 (the open majors `bun run next` lists), then M2-17.

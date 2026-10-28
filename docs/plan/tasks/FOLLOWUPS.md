@@ -233,7 +233,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
 - `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s`. Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`.
-- **Fixed (#PRNUM):** `$PWD`, `${PWD}`, `~+` resolve to the simulated working directory; bare `~user`/`~-` are critical; a remover is recursive when xargs input comes before any `--`, and `/s` counts for `rd`/`del`/`erase` (QUESTIONS Q108).
+- **Fixed (#207):** `$PWD`, `${PWD}`, `~+` resolve to the simulated working directory; bare `~user`/`~-` are critical; a remover is recursive when xargs input comes before any `--`, and `/s` counts for `rd`/`del`/`erase` (QUESTIONS Q108).
 
 ### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
