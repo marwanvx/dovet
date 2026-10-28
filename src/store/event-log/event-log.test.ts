@@ -130,6 +130,44 @@ describe("writer", () => {
     expect(r.events[1]?.data).toEqual({ reason: "crash-repair", tornLine: 2 });
   });
 
+  // spec: AC-LOG-01
+  test("reopening a log whose last event lost its final newline ends that line before appending", async () => {
+    const loc = await location();
+    const first = await open(loc);
+    first.append({ type: "user.message", epoch: 0, turn: 1, data: { text: "first \u{1F600}" } });
+    first.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+    await first.close();
+    const { log } = sessionPaths(loc);
+    const stripped = (await readFile(log, "utf8")).slice(0, -1);
+    await writeFile(log, stripped);
+    expect((await readSession(loc)).events.map((e) => e.type)).toEqual(["user.message", "turn.end"]);
+    const second = await open(loc, { seed: "2" });
+    second.append({ type: "turn.end", epoch: 0, turn: 2, data: { reason: "end_turn" } });
+    await second.close();
+    const text = await readFile(log, "utf8");
+    expect(text.startsWith(`${stripped}\n{`)).toBe(true);
+    const r = await readSession(loc);
+    expect(r.readOnly).toBeUndefined();
+    expect(r.warnings).toEqual([]);
+    expect(r.events.map((e) => e.type)).toEqual(["user.message", "turn.end", "turn.end"]);
+  });
+
+  test("reopening a log that ends with its newline adds no blank line", async () => {
+    const loc = await location();
+    const first = await open(loc);
+    first.append({ type: "turn.end", epoch: 0, turn: 1, data: { reason: "end_turn" } });
+    await first.close();
+    const { log, meta } = sessionPaths(loc);
+    await rm(meta);
+    const before = await readFile(log, "utf8");
+    const second = await open(loc, { seed: "2" });
+    second.append({ type: "turn.end", epoch: 0, turn: 2, data: { reason: "end_turn" } });
+    await second.close();
+    const text = await readFile(log, "utf8");
+    expect(text.startsWith(`${before}{`)).toBe(true);
+    expect(text.split("\n").filter((l) => l === "")).toEqual([""]);
+  });
+
   test("a permission request reaches the disk without an explicit flush", async () => {
     const loc = await location();
     const w = await open(loc);
