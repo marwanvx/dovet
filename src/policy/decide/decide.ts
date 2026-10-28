@@ -5,6 +5,7 @@ import {
   type Behavior,
   commandFromInput,
   evaluateRules,
+  hasDenyRule,
   PARALLEL_PROGRAMS,
   type RuleCall,
   type RuleMatch,
@@ -125,6 +126,9 @@ const TOOL_WIDE = /^\w+(\(\s*\*?\s*\))?$/;
 const PATH_GLOB = /[*?[]/;
 const CMD_OPAQUE = "a cmd /c layer can't be fully checked";
 const CMD_OPAQUE_SHELL = "a cmd /c layer hides the shell script it runs";
+const CMD_OPAQUE_LAUNCH = "a cmd /c layer starts a command it doesn't show";
+// What cmd runs through these isn't the argv the checks read (QUESTIONS Q111).
+const CMD_LAUNCHERS = new Set(["start", "wsl", "schtasks", "pwsh", "pwsh-preview", "powershell", "powershell_ise"]);
 
 const finding = (
   kind: FindingKind,
@@ -402,7 +406,8 @@ function shellFindings(st: State, tool: string, a: Extract<Action, { kind: "shel
         }
       }
       const sub = unwrapCmd({ ...unwrapped, argv: [program(v[0]), ...v.slice(1)] });
-      if (via && SHELL_COMMANDS.has(program(sub.argv[0]))) out.push(finding("unchecked", CMD_OPAQUE_SHELL, "ask"));
+      if (via && SHELL_COMMANDS.has(program(v[0]))) out.push(finding("unchecked", CMD_OPAQUE_SHELL, "ask"));
+      if (via && CMD_LAUNCHERS.has(program(v[0]))) out.push(finding("unchecked", CMD_OPAQUE_LAUNCH, "ask"));
       const system = systemRemoval(env, sub, via);
       if (system !== undefined) out.push(finding("system-removal", system, "deny"));
       const critical = criticalRemoval(env, sub);
@@ -563,7 +568,7 @@ function fsCommand(s: Subcommand): boolean {
 }
 
 /** Command names that always need a prompt, even under sandbox auto-allow (permissions §4.0 item 1). */
-const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc"]);
+const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc", "invoke-expression"]);
 const SHELL_COMMANDS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const DYNAMIC_WORD = /[$`]/;
 
@@ -590,6 +595,7 @@ function hasDynamicName(subs: Subcommand[]): boolean {
 
 function shellDefault(
   st: State,
+  tool: string,
   a: Extract<Action, { kind: "shell" }>,
   match: RuleMatch | undefined,
   findings: Finding[],
@@ -603,6 +609,20 @@ function shellDefault(
     // An unparsed analysis yields no findings, so every check was skipped: bypass asks instead of allowing (§4.0 item 7).
     if (subs === undefined)
       return done("ask", `not fully checkable: ${analysis.reasons.join("; ") || "unparsed"}`, "the analyzer (§4.0)");
+    // The part the analysis can't see may be what the taint or a deny rule exists to stop (§4.0 item 10).
+    if (!understood && st.tainted === true)
+      return done(
+        "ask",
+        `session tainted by ${st.taintSource ?? "untrusted input"}: not fully checkable: ${analysis.reasons.join("; ")}`,
+        "the bypass rule for unreadable commands (§4.0 item 10)",
+      );
+    // Its file operands are checked against Read and Edit deny rules too (item 4).
+    if (!understood && hasDenyRule(st.rules, [tool, "Read", "Edit"]))
+      return done(
+        "ask",
+        `not fully checkable: ${analysis.reasons.join("; ")} (a deny rule could apply)`,
+        "the bypass rule for unreadable commands (§4.0 item 10)",
+      );
     return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
   }
   if (understood && subs.every((s) => s.readOnly === true))
@@ -684,7 +704,7 @@ export function decide(req: Request, st: State): Decision {
     case "task-list":
       return out("allow", "task list", "the task list");
     case "shell":
-      return shellDefault(st, a, match, findings);
+      return shellDefault(st, req.tool, a, match, findings);
     case "read":
       return match?.behavior === "allow"
         ? out("allow", `allowed by ${match.rule}`, `rule ${match.rule}`, { rule: match })

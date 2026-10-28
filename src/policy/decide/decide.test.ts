@@ -1352,3 +1352,218 @@ describe("a computed word where a command takes a file (FOLLOWUPS F52)", () => {
       expect(sh(c, sandboxed, { sandboxed: true }).behavior, c).toBe("allow");
   });
 });
+
+describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
+  const bashHidden = [
+    'eval "git push"',
+    "eval git config core.pager x",
+    'set -a; : "${GIT_PAGER:=git push}"; git log',
+    'pwsh -c "git push"',
+    "powershell.exe -Command 'git push'",
+    "trap 'git push' EXIT",
+    "wsl git push",
+    "fish -c 'git push'",
+    "tcsh -c 'git push'",
+    "csh -c 'git push'",
+    "mksh -c 'git push'",
+    "ash -c 'git push'",
+    "elvish -c 'git push'",
+    "nu -c 'git push'",
+    "xonsh -c 'git push'",
+    "yash -c 'git push'",
+    "posh -c 'git push'",
+    "rc -c 'git push'",
+    "rbash -c 'git push'",
+  ];
+  const psHidden = [
+    "$env:GIT_PAGER = 'git push'; git log",
+    "[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log",
+    'sh -c "gi$()t push"',
+    '& "gi$()t" push',
+    "Invoke-Expression 'git push'",
+    "iex 'git config core.pager x'",
+    "Start-Process git -ArgumentList 'push'",
+    "Start-Process git -ArgumentList 'config','core.pager','x'",
+    "saps git push",
+    "pwsh -Command 'git push'",
+    "powershell -c 'git push'",
+    "powershell.exe -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
+    "Set-Alias g git; g push",
+    "New-Alias x Invoke-Expression; x 'git push'",
+    "sal g git; g push",
+    "Set-Item alias:g git; g push",
+    "New-Item function:g -Value 'git push'; g",
+    "wsl.exe -e git push",
+    "pwsh-preview -c 'git push'",
+    "powershell_ise -c 'git push'",
+    "ii x.lnk",
+    "schtasks /create /tn x /tr 'git push'",
+    "Invoke-WmiMethod Win32_Process Create 'git push'",
+    "Invoke-CimMethod Win32_Process Create @{CommandLine='git push'}",
+    "Register-ScheduledTask x",
+    "Set-Item -Path Microsoft.PowerShell.Core\\Alias::g -Value git; g push",
+    "New-Item -Path Microsoft.PowerShell.Core\\Function::g -Value 'git push'; g",
+    "Import-Alias a.csv; g push",
+    "ipal a.csv; g push",
+    "Import-Module ./x.psm1",
+    "New-Object -ComObject WScript.Shell",
+  ];
+  const ps = (c: string, st: State): Decision => sh(c, st, { language: "powershell", sandboxed: true });
+  // Unparsed, so they ask in any bypass session (item 7).
+  const unparsed = new Set(['set -a; : "${GIT_PAGER:=git push}"; git log', 'sh -c "gi$()t push"']);
+
+  // spec: AC-PERM-27
+  test("a tainted session asks for a command the analysis can't fully read, even in bypass (F78)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true, taintSource: "WebFetch: example.com" });
+    for (const c of bashHidden) {
+      const d = sh(c, tainted, { sandboxed: true });
+      expect(d.behavior, c).toBe("ask");
+      if (!unparsed.has(c))
+        expect(d.reason, c).toStartWith("session tainted by WebFetch: example.com: not fully checkable: ");
+    }
+    for (const c of psHidden) expect(ps(c, tainted).behavior, c).toBe("ask");
+    // A cmd /c layer that starts a command asks in every bypass session, like one running a shell script.
+    for (const st of [tainted, state("bypassPermissions")]) {
+      for (const c of [
+        "cmd /c start git push",
+        "cmd /c wsl git push",
+        "cmd /c powershell -c 'git push'",
+        "cmd /c call start git push",
+        "cmd /c call call wsl git push",
+        'cmd /c "call start git push"',
+        "cmd /c start/b git push",
+        "cmd /c call bash -c 'git push'",
+      ])
+        expect(sh(c, st).behavior, c).toBe("ask");
+      expect(ps("cmd.exe /c start git push", st).behavior).toBe("ask");
+    }
+    expect(sh('eval "git push"', state("dontAsk", {}, { tainted: true })).behavior).toBe("deny");
+    for (const c of ["git status", "for f in a b; do echo $f; done"]) expect(sh(c, tainted).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
+  test("an untainted bypass session asks for an unreadable command only when a deny rule exists for the tool (F78)", () => {
+    const plain = state("bypassPermissions");
+    for (const c of [...bashHidden, "for f in *; do rm $f; done"])
+      expect(sh(c, plain).behavior, c).toBe(unparsed.has(c) ? "ask" : "allow");
+    for (const c of psHidden) expect(ps(c, plain).behavior, c).toBe(unparsed.has(c) ? "ask" : "allow");
+    const denied = state("bypassPermissions", { deny: ["Bash(rm -rf *)"] });
+    const d = sh('eval "rm -rf build"', denied);
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toBe("not fully checkable: eval (a deny rule could apply)");
+    expect(sh("pwsh -c 'rm -rf build'", denied).behavior).toBe("ask");
+    expect(sh("git status", denied).behavior).toBe("allow");
+    expect(ps("iex 'rm -rf build'", denied).behavior).toBe("allow");
+    // Shell file operands are checked against Read and Edit deny rules (item 4), so those count too.
+    const files = state("bypassPermissions", { deny: ["Read(src/**)", "Edit(src/**)"] });
+    expect(sh("cat src/x.ts", files).behavior).toBe("deny");
+    for (const c of ["eval 'cat src/x.ts'", "eval 'rm src/x.ts'", "eval 'echo hi > src/x.ts'"])
+      expect(sh(c, files).behavior, c).toBe("ask");
+    expect(ps("iex 'Get-Content src/x.ts'", files).behavior).toBe("ask");
+    expect(sh("eval 'cat src/x.ts'", state("bypassPermissions", { deny: ["WebFetch"] })).behavior).toBe("allow");
+    // Native programs can't write PowerShell's alias: or function: provider.
+    expect(ps("rg 'function:' src", files).behavior).toBe("allow");
+    expect(ps("git commit -m 'alias: fix'", files).behavior).toBe("allow");
+    expect(
+      ps("iex 'Remove-Item build'", state("bypassPermissions", { deny: ["PowerShell(Remove-Item *)"] })).behavior,
+    ).toBe("ask");
+  });
+
+  // spec: AC-PERM-27
+  test("cmd's call and its , ; = delimiters don't hide what a cmd /c layer runs (F78, F102)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true });
+    for (const st of [tainted, state("bypassPermissions")])
+      for (const c of [
+        "cmd /c call cmd /c start git push",
+        "cmd /c call env bash -c 'git push'",
+        "cmd /c call,start git push",
+        "cmd /c call=start git push",
+        'cmd /c "call,start git push"',
+        "cmd /c CALL start/b git push",
+        "cmd /c call,,start/min git push",
+        'cmd /c schtasks/create /sc once /st 00:00 /tn x /tr "git push"',
+        "cmd /c 'schtasks/create /sc once /tn x /tr gitpush.bat'",
+        "cmd /c powershell/c git push",
+        "cmd /c call bash/c 'git push'",
+        "cmd /c call.start git push",
+        "cmd /c powershell.exe/c git push",
+        "cmd /c schtasks.exe/create /tn x /tr a.bat",
+        "cmd /c call+start git push",
+      ])
+        expect(sh(c, st).behavior, c).toBe("ask");
+    // The tainted-push deny (§5.4) reads the program cmd runs.
+    for (const c of ["cmd /c call git push", "cmd /c call cmd /c git push", "cmd /c call,git push", "cmd /c git,push"])
+      expect(sh(c, tainted).behavior, c).toBe("deny");
+    const win = state(
+      "bypassPermissions",
+      {},
+      { env: env({ os: "win32", cwd: "C:\\p", workingDirs: ["C:\\p"], home: "C:\\Users\\u", canonicalize: (p) => p }) },
+    );
+    for (const argv of [
+      ["cmd", "/c", "call rd /s C:\\Windows"],
+      ["cmd", "/c", "call,rd", "/s", "C:\\Windows"],
+      ["cmd", "/c", "rd/s/q C:\\Windows"],
+    ]) {
+      const commands = [{ argv, cwd: "C:\\p" }];
+      const analysis = { commands, understood: true, literalNames: true, reasons: [], operands: [] };
+      const d = decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } }, win);
+      expect(d.behavior).toBe("deny");
+      expect(d.reason).toContain("C:\\Windows");
+    }
+    // A POSIX rmdir's target isn't a switch run (`/usr` isn't `/u` with attributes).
+    for (const c of ["rmdir /usr", "rmdir /var"]) expect(sh(c, state("bypassPermissions")).behavior, c).toBe("ask");
+    // Only attribute letters follow `/a:`, so a path glued there is still read as a target.
+    const glued = { argv: ["cmd", "/c", "rd /s /q /a:C:\\Windows"], cwd: "C:\\p" };
+    const gluedAnalysis = { commands: [glued], understood: true, literalNames: true, reasons: [], operands: [] };
+    expect(
+      decide({ tool: "Bash", action: { kind: "shell", analysis: gluedAnalysis, sandboxed: false } }, win).behavior,
+    ).not.toBe("allow");
+    // cmd's glued switch runs are switches, not removal targets.
+    for (const argv of [
+      ["cmd", "/c", "rd/s/q build"],
+      ["cmd", "/c", "del/f/q build\\a.txt"],
+      ["cmd", "/c", "rmdir/s/q build"],
+      ["cmd", "/c", "del /q /a:h build\\a.txt"],
+    ]) {
+      const commands = [{ argv, cwd: "C:\\p" }];
+      const analysis = { commands, understood: true, literalNames: true, reasons: [], operands: [] };
+      expect(decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } }, win).behavior).toBe(
+        "allow",
+      );
+    }
+    for (const c of ["cmd /c git status", "cmd /c call git status", "cmd /c git config a=b"])
+      expect(sh(c, tainted).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
+  test("a PowerShell bareword with a backtick, or a new drive, isn't understood (F78)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true });
+    for (const c of [
+      "Set-Item -Path a`lias:g -Value git; g push",
+      "Set-Item -Path Microsoft.PowerShell.Core/Alias::g -Value git; g push",
+      "New-PSDrive x Alias '\\'; Set-Item x:g git; g push",
+      "ndr x Alias '\\'; Set-Item x:g git; g push",
+      "mount x Alias '\\'; Set-Item x:g git; g push",
+      "git log --format=%h`n",
+    ])
+      expect(ps(c, tainted).behavior, c).toBe("ask");
+    // The checks read the word PowerShell passes: an escaped force-push is still one (§5).
+    for (const c of [
+      "g`it push --force origin main",
+      "& g`it push --force origin main",
+      "git push --for`ce origin main",
+      "git push --f`orce origin main",
+      "git push -`-force",
+    ])
+      expect(ps(c, state("bypassPermissions")).behavior, c).toBe("deny");
+    expect(ps("git status", tainted).behavior).toBe("allow");
+    expect(ps("git log -n 1 'a`b'", tainted).behavior).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
+  test("Invoke-Expression is a dynamic name like eval: sandbox auto-allow asks for it (§4.0 item 1)", () => {
+    const st = state("default", {}, { sandboxAutoAllow: true });
+    expect(ps("iex 'npm test'", st).behavior).toBe("ask");
+    expect(ps("npm test", st).behavior).toBe("allow");
+  });
+});
