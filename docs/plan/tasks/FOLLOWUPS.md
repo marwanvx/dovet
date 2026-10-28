@@ -217,7 +217,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
 - Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
-- **Fixed (#PR):** blob-mode restore runs the git path's `pathBlock` on every directory above a path (from the workspace down, or from the drive root outside it), so a parent turned symlink skips the path as a link (QUESTIONS Q105).
+- **Fixed (#204):** blob-mode restore runs the git path's `pathBlock` on every directory above a path (from the workspace down, or from the drive root outside it), so a parent turned symlink skips the path as a link (QUESTIONS Q105).
 
 ### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
 - **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
