@@ -116,7 +116,7 @@ describe("workspace .env values whatever their names", () => {
     }
   });
 
-  test("an ordinary word or name under a plain name is not redacted; a plain value naming a path segment is kept", async () => {
+  test("an ordinary word or name under a plain name is not redacted; a plain value is redacted inside paths too", async () => {
     const project = await tempProject({
       ".env": [
         "NODE_ENV=production",
@@ -136,7 +136,7 @@ describe("workspace .env values whatever their names", () => {
           found,
         ),
       ).toBe(
-        '/tmp/shop-example/config/production.json infra/eu-west-1/vpc.tf C:\\tf\\eu-west-1.tfvars\nregion = "[REDACTED:AWS_REGION]"',
+        '/tmp/shop-example/config/production.json infra/[REDACTED:AWS_REGION]/vpc.tf C:\\tf\\[REDACTED:AWS_REGION].tfvars\nregion = "[REDACTED:AWS_REGION]"',
       );
       expect(redactText("hook https://hooks.slack.com/services/T0EXAMPLE/B0EXAMPLE/abcdEXAMPLE1234xyz", found)).toBe(
         "hook [REDACTED:SLACK_WEBHOOK]",
@@ -144,6 +144,18 @@ describe("workspace .env values whatever their names", () => {
     } finally {
       await project.dispose();
     }
+  });
+
+  test("a plain value after a slash or backslash the command put there is still redacted", () => {
+    const secrets: NamedSecret[] = [
+      { name: "DB_PASS", value: "hunter22-example-pass", plain: true },
+      { name: "APP_SALT", value: "$ecr3tPass9", plain: true },
+    ];
+    expect(redactText("DB_PASS=/hunter22-example-pass", secrets)).toBe("DB_PASS=/[REDACTED:DB_PASS]");
+    expect(redactText("x\\hunter22-example-pass", secrets)).toBe("x\\[REDACTED:DB_PASS]");
+    expect(redactText('declare -x APP_SALT="\\$ecr3tPass9"', secrets)).toBe(
+      'declare -x APP_SALT="\\[REDACTED:APP_SALT]"',
+    );
   });
 
   test("a value overlapping the start of a longer secret does not leave the secret's tail visible", () => {

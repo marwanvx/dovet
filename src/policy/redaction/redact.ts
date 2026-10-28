@@ -73,8 +73,7 @@ export function redactText(text: string, secrets: readonly NamedSecret[]): strin
   for (const s of ordered) {
     let at = folded.indexOf(s.value);
     while (at >= 0) {
-      const segment = s.plain === true && (folded[at - 1] === "/" || folded[at - 1] === "\\");
-      if (!segment) spans.push({ start: at, end: at + s.value.length, marker: `[REDACTED:${s.name}]` });
+      spans.push({ start: at, end: at + s.value.length, marker: `[REDACTED:${s.name}]` });
       at = folded.indexOf(s.value, at + s.value.length);
     }
   }
