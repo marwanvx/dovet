@@ -221,7 +221,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
 - **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`
 - Strip the final `\n` of a closed log, reopen, append: next read is read-only, 0 events. Reader must flag "no trailing newline"; the writer then adds `\n`.
-- **Fixed (#PR):** on reopen the writer appends `\n` whenever the log's last byte isn't one (sidecar path too), so the next event starts its own line (QUESTIONS Q104).
+- **Fixed (#203):** on reopen the writer appends `\n` whenever the log's last byte isn't one (sidecar path too), so the next event starts its own line (QUESTIONS Q104).
 
 ### F87 (differential check after F84): a newline after a 3-stage pipeline folds the next `&&` line into its last command
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command`), tree-sitter-bash 0.25.1 (the newest on npm)
