@@ -71,7 +71,7 @@ const GIT_CONFIG_READS = new Set([
 ]);
 
 /** What `git config …` writes that git may later run: a key outside `QUIET_GIT_CONFIG`, `--edit`, or `--rename-section`
- * (it can move quietly written keys, `user.pager`, into `core`). An option it can't place reads as a write. */
+ * (it can move quietly written keys, `user.pager`, into `core`). An option or expansion it can't place reads as a write. */
 function gitConfigWrite(args: string[]): string | undefined {
   const words: string[] = [];
   const flags: string[] = [];
@@ -84,9 +84,12 @@ function gitConfigWrite(args: string[]): string | undefined {
     if (!x.startsWith("-") || x === "-") words.push(x);
     else {
       flags.push(x);
-      if (x === "-f" || (!x.includes("=") && GIT_CONFIG_VALUES.some((n) => isLongOption(n, x)))) i++;
+      if (/^-[lze]*f$/.test(x) || (!x.includes("=") && GIT_CONFIG_VALUES.some((n) => isLongOption(n, x)))) i++;
     }
   }
+  // An expansion or splat can be any number of words, flags included, so the form can't be read from the text.
+  const opaque = args.find((x) => /[$`]|^@/.test(x));
+  if (opaque !== undefined) return opaque;
   const [sub = ""] = words;
   if (sub === "edit" || flags.some((f) => /^-[lz]*e/.test(f) || isLongOption("--edit", f))) return "--edit";
   if (sub === "rename-section" || flags.some((f) => isLongOption("--rename-section", f))) return "--rename-section";
