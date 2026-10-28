@@ -18,6 +18,7 @@
 | Property | `fast-check` (dev dep) | Prefix property, receipt ⇔ events equivalence, path canonicalization invariants | Every PR |
 | Recorded-stream integration | A local **fixture server** (`Bun.serve` on `127.0.0.1:0`) replaying real SSE captures; adapters point at it via `RuntimeDeps.baseUrls` ([interfaces §9](interfaces.md)). Every AI SDK provider package takes a `baseURL` setting, so the real provider package and HTTP path are exercised and no request-interception library is needed | Full turns per provider without network; stop-reason handling; quirks | Every PR |
 | Platform integration | real processes | Bash/PowerShell tools, process-tree kill, sandbox, atomic writes, encodings | Every PR, all OSes |
+| Dependency audit | `bun run audit` (`bun audit --audit-level=high` against the npm advisory database) | No high or critical advisory in any locked package; an advisory that can't reach Dovet is ignored by GHSA id with its reason in QUESTIONS (Q106) | Every PR (Linux) and nightly, so a new advisory surfaces without a PR |
 | Live API | the free NVIDIA provider (below); a paid provider only with the owner's approval (QUESTIONS Q23) | Streaming, reasoning and tool-call replay on probed models, a 10-turn tool-using session | Nightly; free |
 | Soak | scripted 4 h session against a scripted model (`MockLanguageModelV4` from `ai/test`) | Memory growth < 200 MB, no FD leaks, disk-write budget | Nightly (Linux), weekly (all OSes) |
 | Evals | `@vercel/agent-eval` (Docker sandboxes) | Agent quality and cost | Before releases and for prompt/tool changes |

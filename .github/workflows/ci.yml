@@ -39,6 +39,9 @@ jobs:
           sudo apt-get install -y bubblewrap socat gnome-keyring libsecret-1-0
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: bun run check
+      - name: no high or critical advisory in the locked packages (testing "Test layers")
+        if: matrix.os == 'ubuntu-latest'
+        run: bun run audit
       - name: all eight release archives build
         if: matrix.os == 'ubuntu-latest'
         run: bun run release

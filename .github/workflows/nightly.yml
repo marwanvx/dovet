@@ -33,6 +33,20 @@ jobs:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           DOVET_LIVE: "1"
 
+  # A new advisory against an unchanged lockfile shows up here before the next PR.
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun run audit
+
   bash-differential:
     name: shell analysis agrees with bash (100,000 cases)
     runs-on: ubuntu-latest
