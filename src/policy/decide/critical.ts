@@ -15,7 +15,7 @@ const targets = (sub: Subcommand): string[] => {
   const cmdSwitches = ["rd", "del", "erase"].includes(sub.argv[0]?.toLowerCase() ?? "");
   return sub.argv
     .slice(1)
-    .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^\/[a-z]$/i.test(a)));
+    .filter((a) => !(a.startsWith("-") && a.length > 1) && !(cmdSwitches && /^(?:\/[a-z](?::[^/\s]*)?)+$/i.test(a)));
 };
 
 const CMD_SWITCH = /^(?:\/(?![ckr])[a-z](?::[^/\s]*)?)+$/i;
@@ -32,13 +32,15 @@ function cmdOperand(argv: string[]): string[] | undefined {
 }
 
 /** The command cmd runs for these words: its first word ends at `,` `;` `=` like at a space, `call` runs the rest,
- * and a builtin takes its switch glued on (`call,start/b git push` runs `start /b git push`). */
+ * and a program takes its switch glued on (`call,start/b git push` runs `start /b git push`). */
 function cmdHead(words: string[]): string[] {
   let out = words;
   for (;;) {
     const [first = "", ...rest] = out;
     const parts = first === "" ? [first] : first.split(/[\s,;=]+/).filter(Boolean);
-    const glued = /^(call|start|rd|rmdir|del|erase)(\/.*)$/is.exec(parts[0] ?? "");
+    // A name ends at `/` (`schtasks/create`, `rd/s/q`); `call` and `start` end at `.` `+` `:` `[` `]` `\` too.
+    const glued =
+      /^([a-z][\w-]*)(\/.*)$/is.exec(parts[0] ?? "") ?? /^(call|start)[.+:[\]\\](.+)$/is.exec(parts[0] ?? "");
     if (glued !== null) parts.splice(0, 1, glued[1] ?? "", glued[2] ?? "");
     out = [...parts, ...rest];
     if (out[0]?.toLowerCase() !== "call") return out;

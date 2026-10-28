@@ -1481,6 +1481,12 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
         'cmd /c "call,start git push"',
         "cmd /c CALL start/b git push",
         "cmd /c call,,start/min git push",
+        'cmd /c schtasks/create /sc once /st 00:00 /tn x /tr "git push"',
+        "cmd /c 'schtasks/create /sc once /tn x /tr gitpush.bat'",
+        "cmd /c powershell/c git push",
+        "cmd /c call bash/c 'git push'",
+        "cmd /c call.start git push",
+        "cmd /c call+start git push",
       ])
         expect(sh(c, st).behavior, c).toBe("ask");
     // The tainted-push deny (§5.4) reads the program cmd runs.
@@ -1498,8 +1504,19 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
     ]) {
       const commands = [{ argv, cwd: "C:\\p" }];
       const analysis = { commands, understood: true, literalNames: true, reasons: [], operands: [] };
+      const d = decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } }, win);
+      expect(d.behavior).toBe("deny");
+      expect(d.reason).toContain("C:\\Windows");
+    }
+    // cmd's glued switch runs are switches, not removal targets.
+    for (const argv of [
+      ["cmd", "/c", "rd/s/q build"],
+      ["cmd", "/c", "del/f/q build\\a.txt"],
+    ]) {
+      const commands = [{ argv, cwd: "C:\\p" }];
+      const analysis = { commands, understood: true, literalNames: true, reasons: [], operands: [] };
       expect(decide({ tool: "Bash", action: { kind: "shell", analysis, sandboxed: false } }, win).behavior).toBe(
-        "deny",
+        "allow",
       );
     }
     for (const c of ["cmd /c git status", "cmd /c call git status", "cmd /c git config a=b"])
@@ -1518,6 +1535,9 @@ describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
       "git log --format=%h`n",
     ])
       expect(ps(c, tainted).behavior, c).toBe("ask");
+    // The checks read the word PowerShell passes: an escaped force-push is still one (§5).
+    for (const c of ["git push --for`ce origin main", "git push --f`orce origin main", "git push -`-force"])
+      expect(ps(c, state("bypassPermissions")).behavior, c).toBe("deny");
     expect(ps("git status", tainted).behavior).toBe("allow");
     expect(ps("git log -n 1 'a`b'", tainted).behavior).toBe("allow");
   });
