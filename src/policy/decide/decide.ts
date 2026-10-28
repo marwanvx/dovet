@@ -5,6 +5,7 @@ import {
   type Behavior,
   commandFromInput,
   evaluateRules,
+  hasDenyRule,
   PARALLEL_PROGRAMS,
   type RuleCall,
   type RuleMatch,
@@ -563,7 +564,7 @@ function fsCommand(s: Subcommand): boolean {
 }
 
 /** Command names that always need a prompt, even under sandbox auto-allow (permissions §4.0 item 1). */
-const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc"]);
+const DYNAMIC_NAMES = new Set(["eval", "source", ".", "exec", "coproc", "invoke-expression"]);
 const SHELL_COMMANDS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
 const DYNAMIC_WORD = /[$`]/;
 
@@ -590,6 +591,7 @@ function hasDynamicName(subs: Subcommand[]): boolean {
 
 function shellDefault(
   st: State,
+  tool: string,
   a: Extract<Action, { kind: "shell" }>,
   match: RuleMatch | undefined,
   findings: Finding[],
@@ -603,6 +605,19 @@ function shellDefault(
     // An unparsed analysis yields no findings, so every check was skipped: bypass asks instead of allowing (§4.0 item 7).
     if (subs === undefined)
       return done("ask", `not fully checkable: ${analysis.reasons.join("; ") || "unparsed"}`, "the analyzer (§4.0)");
+    // The part the analysis can't see may be what the taint or a deny rule exists to stop (§4.0 item 10).
+    if (!understood && st.tainted === true)
+      return done(
+        "ask",
+        `session tainted by ${st.taintSource ?? "untrusted input"}: not fully checkable: ${analysis.reasons.join("; ")}`,
+        "the bypass rule for unreadable commands (§4.0 item 10)",
+      );
+    if (!understood && hasDenyRule(st.rules, tool))
+      return done(
+        "ask",
+        `not fully checkable: ${analysis.reasons.join("; ")} (a deny rule exists for ${tool})`,
+        "the bypass rule for unreadable commands (§4.0 item 10)",
+      );
     return done("allow", "bypassPermissions mode", "the bypassPermissions mode");
   }
   if (understood && subs.every((s) => s.readOnly === true))
@@ -684,7 +699,7 @@ export function decide(req: Request, st: State): Decision {
     case "task-list":
       return out("allow", "task list", "the task list");
     case "shell":
-      return shellDefault(st, a, match, findings);
+      return shellDefault(st, req.tool, a, match, findings);
     case "read":
       return match?.behavior === "allow"
         ? out("allow", `allowed by ${match.rule}`, `rule ${match.rule}`, { rule: match })

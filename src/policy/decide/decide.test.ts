@@ -1352,3 +1352,69 @@ describe("a computed word where a command takes a file (FOLLOWUPS F52)", () => {
       expect(sh(c, sandboxed, { sandboxed: true }).behavior, c).toBe("allow");
   });
 });
+
+describe("bypass and what the analysis can't see (§4.0 item 10)", () => {
+  const bashHidden = [
+    'eval "git push"',
+    "eval git config core.pager x",
+    'set -a; : "${GIT_PAGER:=git push}"; git log',
+    'pwsh -c "git push"',
+    "powershell.exe -Command 'git push'",
+  ];
+  const psHidden = [
+    "$env:GIT_PAGER = 'git push'; git log",
+    "[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log",
+    'sh -c "gi$()t push"',
+    '& "gi$()t" push',
+    "Invoke-Expression 'git push'",
+    "iex 'git config core.pager x'",
+    "Start-Process git -ArgumentList 'push'",
+    "Start-Process git -ArgumentList 'config','core.pager','x'",
+    "saps git push",
+    "pwsh -Command 'git push'",
+    "powershell -c 'git push'",
+    "powershell.exe -EncodedCommand ZwBpAHQAIABwAHUAcwBoAA==",
+  ];
+  const ps = (c: string, st: State): Decision => sh(c, st, { language: "powershell", sandboxed: true });
+  // Unparsed, so they ask in any bypass session (item 7).
+  const unparsed = new Set(['set -a; : "${GIT_PAGER:=git push}"; git log', 'sh -c "gi$()t push"']);
+
+  // spec: AC-PERM-27
+  test("a tainted session asks for a command the analysis can't fully read, even in bypass (F78)", () => {
+    const tainted = state("bypassPermissions", {}, { tainted: true, taintSource: "WebFetch: example.com" });
+    for (const c of bashHidden) {
+      const d = sh(c, tainted, { sandboxed: true });
+      expect(d.behavior, c).toBe("ask");
+      if (!unparsed.has(c))
+        expect(d.reason, c).toStartWith("session tainted by WebFetch: example.com: not fully checkable: ");
+    }
+    for (const c of psHidden) expect(ps(c, tainted).behavior, c).toBe("ask");
+    expect(sh('eval "git push"', state("dontAsk", {}, { tainted: true })).behavior).toBe("deny");
+    for (const c of ["git status", "for f in a b; do echo $f; done"]) expect(sh(c, tainted).behavior, c).toBe("allow");
+  });
+
+  // spec: AC-PERM-27
+  test("an untainted bypass session asks for an unreadable command only when a deny rule exists for the tool (F78)", () => {
+    const plain = state("bypassPermissions");
+    for (const c of [...bashHidden, "for f in *; do rm $f; done"])
+      expect(sh(c, plain).behavior, c).toBe(unparsed.has(c) ? "ask" : "allow");
+    for (const c of psHidden) expect(ps(c, plain).behavior, c).toBe(unparsed.has(c) ? "ask" : "allow");
+    const denied = state("bypassPermissions", { deny: ["Bash(rm -rf *)"] });
+    const d = sh('eval "rm -rf build"', denied);
+    expect(d.behavior).toBe("ask");
+    expect(d.reason).toBe("not fully checkable: eval (a deny rule exists for Bash)");
+    expect(sh("pwsh -c 'rm -rf build'", denied).behavior).toBe("ask");
+    expect(sh("git status", denied).behavior).toBe("allow");
+    expect(ps("iex 'rm -rf build'", denied).behavior).toBe("allow");
+    expect(
+      ps("iex 'Remove-Item build'", state("bypassPermissions", { deny: ["PowerShell(Remove-Item *)"] })).behavior,
+    ).toBe("ask");
+  });
+
+  // spec: AC-PERM-27
+  test("Invoke-Expression is a dynamic name like eval: sandbox auto-allow asks for it (§4.0 item 1)", () => {
+    const st = state("default", {}, { sandboxAutoAllow: true });
+    expect(ps("iex 'npm test'", st).behavior).toBe("ask");
+    expect(ps("npm test", st).behavior).toBe("allow");
+  });
+});

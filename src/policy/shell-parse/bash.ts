@@ -23,7 +23,8 @@ export type Walk = {
 const MAX_DEPTH = 8;
 const CWD_DEFAULT = new Set(["find", "ls", "tree", "du", "rg", "fd", "fdfind", "grep"]);
 export const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh"]);
-const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc"]);
+// PowerShell's -Command and -EncodedCommand run a script this analyzer doesn't parse.
+const NEVER_UNDERSTOOD = new Set(["eval", "source", ".", "exec", "coproc", "pwsh", "powershell"]);
 const REDIRECTS = new Set(["file_redirect", "heredoc_redirect", "herestring_redirect"]);
 const RESERVED = new Set([
   ...["if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "select", "case", "esac", "in"],
