@@ -3399,6 +3399,48 @@ describe("runHeadless", () => {
 
 describe("output redaction", () => {
   // spec: AC-PERM-30
+  test("a plain-named .env value is redacted in tool results but never scrubbed from the rest of the log", async () => {
+    const dir = await tempProject({ ".env": "AWS_REGION=eu-west-1\nDB_PASS=hunter22-example-pass\n" });
+    try {
+      const out = await runHeadless({
+        dirs: { config: join(dir.root, "cfg"), data: join(dir.root, "data"), cache: join(dir.root, "cache") },
+        projectRoot: dir.root,
+        cwd: dir.root,
+        os: testOs(),
+        settings: settingsFor(),
+        env: { NVIDIA_API_KEY: "nvapi-FAKE-KEY-0001", HOME: "/tmp" },
+        loadInput: loadInputFor(dir, { NVIDIA_API_KEY: "nvapi-FAKE-KEY-0001", HOME: "/tmp" }),
+        args: {
+          print: true,
+          output: "text",
+          offline: false,
+          noSessionPersistence: false,
+          continued: false,
+          repair: false,
+          allowedTools: [],
+          disallowedTools: [],
+        },
+        prompt: "fix infra/eu-west-1/vpc.tf",
+        clock: { now: () => Date.UTC(2026, 9, 15) },
+        ids: sequentialIds("R"),
+        pid: 1,
+        host: "h",
+        platform: fakePlatform(),
+        adapter: adapterFor([{ toolCall: { id: "c1", name: "echo", input: { text: "go" } } }, { text: "done" }]),
+        toolDefs: [echoTool(() => ({ status: "ok", text: "region eu-west-1 pass hunter22-example-pass" }))],
+      });
+      expect(out.exit).toEqual({ kind: "ok" });
+      const loc = { data: join(dir.root, "data"), projectRoot: dir.root, os: testOs(), session: out.sessionId };
+      const onDisk = await readFile(sessionPaths(loc).log, "utf8");
+      expect(onDisk).toContain("fix infra/eu-west-1/vpc.tf");
+      expect(onDisk).toContain("region [REDACTED:AWS_REGION] pass [REDACTED:DB_PASS]");
+      expect(onDisk).not.toContain("hunter22-example-pass");
+    } finally {
+      await dir.dispose();
+    }
+  });
+
+  // spec: AC-PERM-30
   test("workspace .env values, env secrets and key formats never reach the model or the log", async () => {
     const dir = await tempProject({ ".env": "DB_PASSWORD=correct-horse-battery-9\n" });
     try {

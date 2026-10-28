@@ -73,7 +73,8 @@ export function redactText(text: string, secrets: readonly NamedSecret[]): strin
   for (const s of ordered) {
     let at = folded.indexOf(s.value);
     while (at >= 0) {
-      spans.push({ start: at, end: at + s.value.length, marker: `[REDACTED:${s.name}]` });
+      const segment = s.plain === true && (folded[at - 1] === "/" || folded[at - 1] === "\\");
+      if (!segment) spans.push({ start: at, end: at + s.value.length, marker: `[REDACTED:${s.name}]` });
       at = folded.indexOf(s.value, at + s.value.length);
     }
   }
@@ -92,7 +93,10 @@ export function redactText(text: string, secrets: readonly NamedSecret[]): strin
   for (const s of spans) {
     const start = map[s.start] ?? text.length;
     const end = s.end < map.length ? (map[s.end] ?? text.length) : text.length;
-    if (start < covered) continue;
+    if (start < covered) {
+      if (end > covered) cursor = covered = end;
+      continue;
+    }
     out += text.slice(cursor, start) + s.marker;
     cursor = end;
     covered = end;

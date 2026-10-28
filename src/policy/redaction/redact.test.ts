@@ -94,6 +94,72 @@ describe("workspace .env values", () => {
 });
 
 // spec: AC-PERM-30
+describe("workspace .env values whatever their names", () => {
+  test("a .env value under a name that does not look secret is still redacted", async () => {
+    const project = await tempProject({
+      ".env": "DB_PASS=hunter22-example-pass\nSTRIPE_SK=sk_live_example_0000fake\nPORT=3000\n",
+      "app/.env.production": "DATABASE_URL=postgres-example-host-0001\n",
+    });
+    try {
+      const found = createDotEnvSecrets([project.root]).current();
+      expect(found.map((s) => s.name).sort()).toEqual(["DATABASE_URL", "DB_PASS", "STRIPE_SK"]);
+      expect(
+        redactText(
+          "./.env:DB_PASS=hunter22-example-pass\n./.env:STRIPE_SK=sk_live_example_0000fake\nhost postgres-example-host-0001 port 3000",
+          found,
+        ),
+      ).toBe(
+        "./.env:DB_PASS=[REDACTED:DB_PASS]\n./.env:STRIPE_SK=[REDACTED:STRIPE_SK]\nhost [REDACTED:DATABASE_URL] port 3000",
+      );
+    } finally {
+      await project.dispose();
+    }
+  });
+
+  test("an ordinary word or name under a plain name is not redacted; a plain value naming a path segment is kept", async () => {
+    const project = await tempProject({
+      ".env": [
+        "NODE_ENV=production",
+        "COMPOSE_PROJECT_NAME=shop-example",
+        "AWS_REGION=eu-west-1",
+        "SLACK_WEBHOOK=https://hooks.slack.com/services/T0EXAMPLE/B0EXAMPLE/abcdEXAMPLE1234xyz",
+        "DB_PASS=hunter22-example-pass",
+        "",
+      ].join("\n"),
+    });
+    try {
+      const found = createDotEnvSecrets([project.root]).current();
+      expect(found.map((s) => s.name).sort()).toEqual(["AWS_REGION", "DB_PASS", "SLACK_WEBHOOK"]);
+      expect(
+        redactText(
+          '/tmp/shop-example/config/production.json infra/eu-west-1/vpc.tf C:\\tf\\eu-west-1.tfvars\nregion = "eu-west-1"',
+          found,
+        ),
+      ).toBe(
+        '/tmp/shop-example/config/production.json infra/eu-west-1/vpc.tf C:\\tf\\eu-west-1.tfvars\nregion = "[REDACTED:AWS_REGION]"',
+      );
+      expect(redactText("hook https://hooks.slack.com/services/T0EXAMPLE/B0EXAMPLE/abcdEXAMPLE1234xyz", found)).toBe(
+        "hook [REDACTED:SLACK_WEBHOOK]",
+      );
+    } finally {
+      await project.dispose();
+    }
+  });
+
+  test("a value overlapping the start of a longer secret does not leave the secret's tail visible", () => {
+    const secrets: NamedSecret[] = [
+      { name: "APP_HOST", value: "db1.example.com" },
+      { name: "DB_DSN", value: "example.com/s3cr3t-pass-0001" },
+    ];
+    expect(redactText("dsn db1.example.com/s3cr3t-pass-0001 end", secrets)).toBe("dsn [REDACTED:APP_HOST] end");
+  });
+
+  test("the process environment still joins only by a secret-looking name", () => {
+    expect(secretsFromEnv({ DB_PASS: "hunter22-example-pass", HOME: "/home/example-user" })).toEqual([]);
+  });
+});
+
+// spec: AC-PERM-30
 describe("astral character and emoji boundaries", () => {
   test("secrets following emojis or astral characters are cut at exact boundaries without leaking", () => {
     const secrets: NamedSecret[] = [{ name: "STRIPE_SECRET_KEY", value: "rk-live-example-0001-fakevalue" }];
