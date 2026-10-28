@@ -251,7 +251,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F43 (M2-16 security review): `.env` values are redacted only when the variable name looks secret
 - **Severity:** major · `src/policy/redaction/secrets.ts:60`, `headless-run.ts:446` (project root only)
 - `DB_PASS=…`, `STRIPE_SK=…` stay visible to `grep -r . .`; §4.7 puts all `.env*` values in the set. Apply the name filter to the process environment only.
-- **Fixed (#PR):** a `.env*` value of 8 or more characters joins under any name when it holds a letter and a digit and is redacted wherever it appears in tool results, paths included; a plain-named one is kept out of the log's backstop scrub; overlapping spans merge (QUESTIONS Q109). A headless run has one working directory, so the project root is the whole scan.
+- **Fixed (#208):** a `.env*` value of 8 or more characters joins under any name when it holds a letter and a digit and is redacted wherever it appears in tool results, paths included; a plain-named one is kept out of the log's backstop scrub; overlapping spans merge (QUESTIONS Q109). A headless run has one working directory, so the project root is the whole scan.
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
