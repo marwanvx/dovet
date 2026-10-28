@@ -242,6 +242,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/agent/loop.ts:417` (set read once per batch, before tools run), `src/policy/redaction/secrets.ts:89` (rescans only when a root directory's mtime changes), `src/cli/headless-run.ts:551` (backstop fixed at session open)
 - `sops -d s.enc > .env && cat .env` in one call, or writing `app/.env` (with `app/` existing) and reading it in a later batch, puts `DB_PASS=hunter22-example-pass` in clear in the result and the log. Read the set again after a batch's tools run and before redacting their results, and notice new nested `.env*` files (rescan when any scanned directory changes, or every call with a short cache).
 
+### F99 (F77 security review): `fd -x`/`-X` isn't read as a wrapper
+- **Severity:** major (pre-existing) · `src/policy/rules/shell.ts` (`FIND_EXEC`, around line 466)
+- `fd -x git push` and `fd -X git config '{}'` are allowed in tainted `bypassPermissions`: the command `fd` runs per match is never unwrapped, so it gets no remote-action check. Unwrap `fd -x`/`--exec`/`-X`/`--exec-batch` like `find -exec`, with `{}` (and `{/}`, `{.}`, …) as a run-time word.
+
 ## Fixed
 
 ### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again

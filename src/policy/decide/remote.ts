@@ -224,7 +224,8 @@ const REMOTE_WORDS: string[][] = [
 
 /** The remote action a command could be once each `input` word is filled in at run time (xargs input), else undefined. */
 export function remoteWithInput(argv: string[], input: string, literalWords: string[] = []): Remote | undefined {
-  const literal = new Set(literalWords.filter((w) => w !== input));
+  // find -exec puts its paths where `{}` is, as many words as it found.
+  const literal = new Set(literalWords.filter((w) => w !== input && !w.includes("{}")));
   const at = argv.flatMap((w, i) => (w === input ? [i] : []));
   if (at.length === 0) return remoteAction(argv, literal);
   for (const i of at)

@@ -155,8 +155,8 @@ export function walkPowerShell(
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });
       }
     }
-    // A backtick escape stays in a token's text (`--e`dit`), so that text isn't what runs.
-    sub.literalWords = literalTexts(words).filter((t) => !t.includes("`"));
+    // A bareword keeps its backtick escapes (`--e`dit`) and `$name` expansions in its text, so that text isn't what runs.
+    sub.literalWords = literalTexts(words).filter((t) => !/[`$]/.test(t));
     ctx.commands.push(sub);
     const { argvs, complete } = unwrapCommand(sub.argv);
     if (!complete) ctx.fail("a wrapper's options can't all be checked");

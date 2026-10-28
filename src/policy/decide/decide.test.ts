@@ -650,6 +650,12 @@ describe("remote actions", () => {
       expect(d.reason, c).toMatch(new RegExp(`remote action: ${label.replaceAll(".", "\\.")}(?![\\w-])`));
       expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
     }
+    // find puts every path it found where `{}` is.
+    for (const c of [
+      "find core.pager ./evil.sh -maxdepth 0 -exec git config '{}' +",
+      "find . -exec git config x/'{}'.y \\;",
+    ])
+      expect(remote(c, auto("bypassPermissions", {}, { tainted: true })).behavior, c).toBe("deny");
     for (const c of [
       "$a = 'core.pager','x'; git config @a",
       "git config -zf user.x core.pager x",
@@ -657,6 +663,8 @@ describe("remote actions", () => {
       "git config --% core.pager x",
       "git config --e`dit",
       "git config -`-edit",
+      "git config core.pager$k",
+      "find core.pager ./evil.sh -maxdepth 0 -exec git config '{}' '+'",
       "git config user.name '*' *",
       "git config user.name 'x' $k",
     ])
