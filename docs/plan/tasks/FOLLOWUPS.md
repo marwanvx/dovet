@@ -137,7 +137,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
 
 ### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
-- **Severity:** minor (same class as the fixed F18, F24) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
+- **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
 - Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
 
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
@@ -211,6 +211,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F21 (F19 fix): other tests leave temp directories that `bun run test` does not check yet
 - **Severity:** minor · `src/agent/session.test.ts`, `src/cli/headless-boot.test.ts`, `src/cli/resume-target.test.ts`, `src/cli/startup.test.ts`, `src/policy/grants/grants.test.ts`, `src/policy/rules/rules.test.ts`, `src/policy/sandbox/hygiene.test.ts`, `src/policy/sandbox/service.test.ts`, `src/store/secrets/secrets.test.ts`, `src/tools/bash-sandbox.test.ts`
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
+
+### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
+- **Severity:** major (pre-existing) · run 40688693308 (`main` after #205): "(fail) daily ledger > many sessions racing for the last dollar dispatch exactly as many requests as fit [22.12ms]" and "EBUSY: resource busy or locked, rm …\dovet-testrun-…\dovet-compile-…" (unnamed test); the next `main` run and F37's Windows run passed
+- Find the cause in the raw log (a real race in the ledger, or a leftover compile process holding the directory) before touching a limit; a rerun is no fix.
 
 ## Fixed
 
