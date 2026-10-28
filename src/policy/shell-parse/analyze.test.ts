@@ -62,7 +62,8 @@ function call(a: Analysis, tool = "Bash"): RuleCall {
   return {
     tool,
     cwd: root,
-    ...(a.commands === undefined ? {} : { commands: a.commands }),
+    // As decide does: recovered commands still meet deny and ask rules.
+    ...(a.commands === undefined ? (a.recovered ? { commands: a.recovered.commands } : {}) : { commands: a.commands }),
     checkable: a.understood,
     paths: a.operands,
   };
@@ -486,6 +487,62 @@ describe("PowerShell", () => {
     );
     expect(powershellExitOneIsBenign(analyze("findstr x a.ts", "powershell").commands)).toBe(true);
     expect(powershellExitOneIsBenign(analyze("Remove-Item x", "powershell").commands)).toBe(false);
+  });
+});
+
+describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
+  const unparsed = (c: string) => analyze(c).commands === undefined;
+  // spec: AC-PERM-20
+  test("a word the grammar splits in two is unparsed (FOLLOWUPS F85)", () => {
+    for (const c of ["git pu''\\sh", "cat .e''\\nv", "cat <.e''\\nv", "a=pu''\\sh x", "printf x \\  a", 'git pu""\\sh'])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-20
+  test("a newline the grammar folds into one command is unparsed (FOLLOWUPS F87)", () => {
+    for (const c of [
+      "echo a | cat | cat\nrm f && echo y",
+      "echo a | cat | cat\nrm f || echo y",
+      "echo a | cat | cat | cat\nrm f && echo y",
+    ])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-20
+  test("a command in an assignment's subscript is unparsed (FOLLOWUPS F86)", () => {
+    for (const c of ["a[$(git push)]=1", "declare a[$(git push)]=1", "a[`git push`]=1 ls"])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-20
+  test("a substitution the grammar keeps as text is unparsed (FOLLOWUPS F82, F83)", () => {
+    for (const c of [
+      "echo ${x:-`git push`}",
+      'echo "${x:-`git push`}"',
+      "echo ${x:=`git push`}",
+      "echo ${x:+`git push`}",
+      "echo ${x:-<(git push)}",
+      "echo \"${x:-'$(git push)'}\"",
+      "echo $(( 1 #$(git push)\n))",
+      "echo $[ 1 #$(git push)\n]",
+    ])
+      expect([c, unparsed(c)]).toEqual([c, true]);
+  });
+
+  // spec: AC-PERM-21
+  test("ordinary commands still parse", () => {
+    for (const c of [
+      "git log --oneline -5 # recent",
+      "cat a.ts | wc -l\necho done && ls",
+      "echo \"$(git rev-parse HEAD)\" 'it''s' $'a\\'b' `date`",
+      "diff <(cat a.ts) <(cat b.ts) >/dev/null 2>&1",
+      'x=$((1 + 2)); echo ${x:-"$(pwd)"} ${#x}',
+      "cat <<EOF\n$(date) `whoami` '\nEOF\necho a#b",
+      'for f in *.ts; do wc -l "$f"; done',
+      "case $x in a) echo $(ls) ;; esac",
+      "echo 😀''x \\😀",
+    ])
+      expect([c, analyze(c).commands !== undefined]).toEqual([c, true]);
   });
 });
 

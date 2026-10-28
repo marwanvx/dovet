@@ -72,3 +72,11 @@
 {"language": "bash", "command": "grep $(echo x .env)", "source": "FOLLOWUPS F52 round 2: an unquoted substitution splits into a pattern and a file", "allow": ["Bash(grep *)"]}
 {"language": "bash", "command": "timeout $(echo '5 cat') .env", "source": "FOLLOWUPS F52 round 2: an unquoted substitution splits into a wrapper's value and the command it runs", "allow": ["Bash(timeout *)"]}
 {"language": "bash", "command": "find . -name $(echo 'x -delete')", "source": "FOLLOWUPS F52 round 2: a split find predicate value adds -delete"}
+{"language": "bash", "command": "git pu''\\sh origin main", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash", "allow": ["Bash(git pu *)"]}
+{"language": "bash", "command": "cat .e''\\nv", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash"}
+{"language": "bash", "command": "echo a | cat | cat\nrm f && echo y", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash"}
+{"language": "bash", "command": "a[$(git push)]=1", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash", "allow": ["Bash(a*)"]}
+{"language": "bash", "command": "echo ${x:-`git push`}", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash", "allow": ["Bash(echo *)"]}
+{"language": "bash", "command": "echo $(( 1 #$(git push)\n))", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash", "allow": ["Bash(echo *)"]}
+{"language": "bash", "command": "cat <<E\nx\nE # `git push`", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash", "allow": ["Bash(cat *)"]}
+{"language": "bash", "command": "a=\\  cat .env", "source": "FOLLOWUPS F82 F83 F85 F86 F87 (F84 differential fuzz and reviews): tree-sitter-bash reads the text differently from bash"}

@@ -147,8 +147,10 @@ const unbackslash = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\
 const unescapeQuoted = (raw: string): string => raw.replace(/\\\n/g, "").replace(/\\(["$`\\])/g, "$1");
 const opaque = (n: Node): Word => ({ text: n.text, literal: false, glob: false });
 
-export function walkBash(root: Node, walk: Walk, st: State): void {
+/** Walks the tree; returns the ids of the command and backtick nodes it read. */
+export function walkBash(root: Node, walk: Walk, st: State): Set<number> {
   const { ctx } = walk;
+  const walked = new Set<number>();
 
   function loopWord(n: Node, st: State): Word | undefined {
     const ref = n.type === "string" ? n.namedChildren : [n];
@@ -197,6 +199,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
       inner(n, st);
       return;
     }
+    walked.add(n.id);
     const body = backtickBody(n.text);
     const quoted = inQuotes(n);
     // Past the depth cap the body isn't read, so its commands would be missing: unparsed, not merely not understood.
@@ -341,6 +344,7 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
   }
 
   function command(n: Node, st: State, cond: boolean, preset: Node[]): void {
+    walked.add(n.id);
     if (misread(n)) ctx.state.misread = true;
     const sub: Subcommand = { argv: [], cwd: st.cwd };
     const args: Word[] = [];
@@ -532,4 +536,5 @@ export function walkBash(root: Node, walk: Walk, st: State): void {
   }
 
   statement(root, st, false);
+  return walked;
 }
