@@ -617,3 +617,8 @@ Needed only before the first public release (owner, 2026-10-12: not now); buildi
 - **What's missing:** no gate checked the locked packages for known vulnerabilities; on 2026-10-28 `bun audit` found 6 high advisories (node-forge, four in undici, zod).
 - **Answer:** `bun run audit` (`bun audit --audit-level=high`) runs on every PR in the Linux job and nightly. node-forge 1.4.1 and undici 7.30.1 came from `bun audit fix`; `guarded-fetch` 0.1.6 pinned undici 7.30.0 exactly, so it moves to 0.2.0 (only additions: a `blockedEncodings` option; Dovet imports `isSafeIpAddress` alone). GHSA-mrhx-c7xc-m3w5 (zod < 4.6.6 can exhaust memory on oversized constrained collections) is ignored: Dovet's own zod is 4.6.7, and the remaining zod 3.25.76 belongs to `@anthropic-ai/sandbox-runtime` (`^3.25.0`, still so in 0.0.81), which parses only its sandbox config that Dovet builds itself — no outside input reaches it. Drop the ignore when sandbox-runtime moves to zod 4. Moderate and low advisories don't block; dependabot raises their updates weekly.
 - **Spec:** testing "Test layers" (Dependency audit).
+
+### Q107 (F38): which spelling of a path the conflict check compares
+- **What's missing:** git names changed paths from its real root while `file.change` events hold the workspace as opened, so a workspace reached through a symlink (macOS `/tmp`) never matched and every Dovet write counted as a conflict.
+- **Answer:** the check re-roots any path under the workspace onto the workspace's real path before comparing, on the logged side and the candidate side. Paths outside the workspace are compared as written.
+- **Spec:** checkpoints "Conflict safety".

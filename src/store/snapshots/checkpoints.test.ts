@@ -44,6 +44,7 @@ interface Rig {
     enabled?: boolean;
     slowMs?: number;
     session?: string;
+    workspace?: string;
     blobs?: (real: BlobStore) => BlobStore;
   }) => Promise<CheckpointService>;
   envelopes: (...changes: EventEnvelope[]) => EventEnvelope[];
@@ -80,7 +81,7 @@ function rig(files: Record<string, string | Uint8Array>, inGit: boolean, age = t
     envelopes: (...changes) => [...events.map((e) => ({ type: "checkpoint", data: e }) as EventEnvelope), ...changes],
     open: (over = {}) =>
       openCheckpoints({
-        workspace: work,
+        workspace: over.workspace ?? work,
         projectDir: join(data, "projects", "p"),
         session: over.session ?? "s1",
         env: ENV,
@@ -395,6 +396,42 @@ describe("rewinding with conflict safety", () => {
       expect(await svc.conflicts(log(), "c1")).toEqual([abs(r, "a.txt")]);
     },
   );
+
+  // spec: AC-CKPT-07
+  test.each([
+    ["git", true],
+    ["blobs", false],
+  ])(
+    "%s: a workspace opened through a symlink: Dovet's own write is no conflict, a user's edit after it is",
+    async (_n, inGit) => {
+      const r = rig({ "a.txt": "one\n", "b.txt": "bee\n" }, inGit);
+      const link = join(r.work, "..", "link");
+      symlinkSync(r.work, link);
+      const svc = await r.open({ workspace: link });
+      svc.beginTurn(1);
+      if (inGit) await svc.shell?.snapshot();
+      await svc.recordWrite(join(link, "a.txt"), bytes("one\n"));
+      writeFileSync(join(link, "a.txt"), "dovet wrote\n");
+      const log = (): EventEnvelope[] =>
+        r.envelopes({
+          type: "file.change",
+          data: { path: join(link, "a.txt"), op: "modify", added: 0, removed: 0, after: sha("dovet wrote\n") },
+        } as EventEnvelope);
+      expect(await svc.conflicts(log(), "c1")).toEqual([]);
+      writeFileSync(join(link, "a.txt"), "the user typed this\n");
+      expect(await svc.conflicts(log(), "c1")).toEqual([inGit ? abs(r, "a.txt") : join(link, "a.txt")]);
+    },
+  );
+
+  // spec: AC-CKPT-07
+  test("a workspace removed since the checkpoint has no conflicts, and asking does not throw", async () => {
+    const r = rig({ "a.txt": "one\n" }, false);
+    const svc = await r.open();
+    svc.beginTurn(1);
+    await svc.recordWrite(abs(r, "a.txt"), bytes("one\n"));
+    rmSync(r.work, { recursive: true });
+    expect(await svc.conflicts(r.envelopes(changed(r, "a.txt", "x")), "c1")).toEqual([]);
+  });
 
   // spec: AC-CKPT-07
   test("a path changed only outside Dovet, with no record of Dovet's, counts as a conflict", async () => {
