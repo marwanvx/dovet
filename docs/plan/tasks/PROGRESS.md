@@ -896,3 +896,9 @@ Done: a backtick body loses the backslash of `\\`, `` \` ``, `\$` (and `\"` dire
 Review: deep, 3 rounds (reviewer ×2, security-reviewer ×3); 6 fixed, 0 dropped, 3 logged (F85, F86, F82 extended); round 3: 1 minor (fixed).
 Learned: a differential fuzz against real bash (`printf '<%s>'` over random bodies) found F85 in minutes: tree-sitter splits `pu''\sh` into two words at top level. `bun run next` prints open follow-ups, so long FOLLOWUPS entries push the M1-23c context budget over: keep them to three short lines.
 Next: F85 (blocker), then F82, F77, F78, F42.
+
+## 2026-10-28 — F85: the shell analysis is checked against bash's reading of the text
+Done: five tree-vs-text checks (permissions §4.0 item 9, `src/policy/shell-parse/agree.ts`) make a misread analysis unparsed: split words, substitutions and `${…}` spans an independent lexer finds (unquoted here-document bodies included), text between words, unwalked commands, here-document ends; a seeded differential test runs 2,000 generated texts under real bash with stub commands (nightly: 100,000). F85, F87, F82, F83, F86 fixed. PR: #202.
+Review: deep, 3 rounds (reviewer ×2, security-reviewer ×3); 6 fixed, 0 dropped, 0 logged; round 3: none.
+Learned: the differential test found four disagreements on its first runs that the planned four checks missed (here-document end lines, escaped blanks skipped between nodes, a body `$(` after a blank with no node, tabs before an end without `<<-`): grow its generator before trusting a new check. A zero-length tree range (empty here-document body) can stall an index-skipping lexer.
+Next: F77, then F78, F42 (or whatever `bun run next` prints).
