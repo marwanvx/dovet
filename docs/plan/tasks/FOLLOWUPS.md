@@ -128,10 +128,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/decide/targets.ts:6-40`
 - With a tool-wide `Bash` allow: `tar -xf x.tar -C .git/hooks`, `unzip x.zip -d .git`, `rsync a.ts .git/hooks/pre-commit`, `patch .git/config p.diff`, `perl -pi -e s/a/b/ .git/config` are allowed; `cp`, `sed -i`, `dd of=`, `tee` and redirects ask. Bash has no equivalent of the PowerShell archive-extraction rule.
 
-### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
-- **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
-- Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
-
 ### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
 - Candidates join onto git's real root while `file.change` has workspace paths, so the lookup never matches (macOS `/tmp`, Windows `subst`). Canonicalise both sides.
@@ -141,7 +137,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `r.output.trim().slice(-600)` on 400 emoji followed by `b` starts with U+DE00 (`isWellFormed()` false) and goes into the request sent to the provider. Use `tailOf(output, 600)` like the other cuts.
 
 ### F49 (M2-16 CI): a headless test hit the 5 s default on macOS again
-- **Severity:** minor (same class as the fixed F18, F24) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
+- **Severity:** major (second sighting: also run 40690106218 on F37's branch, 5008 ms, macOS; F37's diff doesn't touch this path) · `src/cli/headless-run.test.ts` "a tool-using turn writes the expected event types and fingerprint hash" (5004 ms, run 39779648078, macOS only; passed on the rerun)
 - Find what ran in the seconds before it (a parallel file, the ripgrep download test) instead of raising the limit; if it comes back, apply F24's 30 s default to macOS too.
 
 ### F30 (M2-16 kill -9 probe): a model response over 1 MB of strings that are each under 256 KB throws and ends the run
@@ -216,7 +212,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/agent/session.test.ts`, `src/cli/headless-boot.test.ts`, `src/cli/resume-target.test.ts`, `src/cli/startup.test.ts`, `src/policy/grants/grants.test.ts`, `src/policy/rules/rules.test.ts`, `src/policy/sandbox/hygiene.test.ts`, `src/policy/sandbox/service.test.ts`, `src/store/secrets/secrets.test.ts`, `src/tools/bash-sandbox.test.ts`
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
+### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
+- **Severity:** major (pre-existing) · run 40688693308 (`main` after #205): "(fail) daily ledger > many sessions racing for the last dollar dispatch exactly as many requests as fit [22.12ms]" and "EBUSY: resource busy or locked, rm …\dovet-testrun-…\dovet-compile-…" (unnamed test); the next `main` run and F37's Windows run passed
+- Find the cause in the raw log (a real race in the ledger, or a leftover compile process holding the directory) before touching a limit; a rerun is no fix.
+
 ## Fixed
+
+### F37 (M2-16 spec review): blob-mode restore writes through a parent directory turned symlink
+- **Severity:** major · `src/store/snapshots/checkpoints.ts:255-284`
+- Replace `w/sub` by a link to `../outside` after recording `w/sub/a.txt`: `restore` overwrites `outside/a.txt`. Only the leaf is `lstat`ed; run the git path's `pathBlock` on every component for writes and deletes.
+- **Fixed (#204):** blob-mode restore runs the git path's `pathBlock` on every directory above a path (from the workspace down, or from the drive root outside it), so a parent turned symlink skips the path as a link (QUESTIONS Q105).
 
 ### F36 (M2-16 spec review): a last log line without its final newline gets the next event glued on
 - **Severity:** major · `src/store/event-log/reader.ts:128`, `writer.ts:127`

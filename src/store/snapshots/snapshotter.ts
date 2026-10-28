@@ -474,7 +474,7 @@ function seedStatCache(sessionsDir: string, statPath: string): void {
  * Why `path` can't be written or deleted without going through a link or over something else, or undefined if it
  * can. With `create`, missing parent directories are made (as real directories).
  */
-function pathBlock(root: string, path: string, create: boolean): SkipReason | undefined {
+export function pathBlock(root: string, path: string, create: boolean): SkipReason | undefined {
   const parts = path.split("/");
   let dir = root;
   for (const part of parts.slice(0, -1)) {

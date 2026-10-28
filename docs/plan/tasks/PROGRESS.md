@@ -908,3 +908,10 @@ Done: on reopen the writer appends `\n` whenever the log's last byte isn't one (
 Review: standard, 1 round (reviewer ×1); 1 fixed (nit), 0 dropped, 0 logged.
 Learned: the writer decides from the file's last byte, not a reader flag, because the sidecar fast path skips the read.
 Next: F37, then F38, F42, F43, F77, F78 (the open majors `bun run next` lists), then M2-17.
+
+## 2026-10-28 — F37: blob-mode rewind no longer writes through a parent directory turned symlink
+Done: blob mode (a workspace outside git) runs the git path's `pathBlock` on every directory above a restored path (workspace down; drive root down for a path outside it), so a parent replaced by a link skips the path as `link` for writes and deletes (QUESTIONS Q105). F37 fixed. PR: #204 (merged).
+Review: standard, 1 round (reviewer ×1); 1 fixed (minor: no folders created for a path already skipped as a conflict), 0 dropped, 2 logged (F49 raised to major after a second macOS sighting; F88 new: Windows ledger-race test and EBUSY on `main`).
+Learned: `bun run check` on this Linux machine fails only the known SPIKE-5 file-fallback and sandbox-in-binary tests. A path outside the workspace under a system link (macOS `/tmp`) is now skipped and reported, by design (Q105).
+Next: F38, then F42, F43, F77, F78 (the open majors `bun run next` lists), then M2-17.
+
