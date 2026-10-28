@@ -224,12 +224,16 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `src/policy/decide/paths.ts:245` (`resolveForms`), reached from `src/policy/decide/decide.ts:155` (`pathFindings`)
 - A shell command naming a 20,000-component path makes `decide` throw an uncaught `ENAMETOOLONG` instead of returning a decision. Treat a path the OS can't resolve as not fully checkable (ask), and add a huge-input case to the path tests.
 
+### F93 (F42 round-3 security review): a brace pair holding `..` climbs past every critical-path glob base
+- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts` (`criticalTarget`: the glob base and the `elsewhere` normaliser)
+- `rm -rf ~/x/{..,y}/*`, `rm -rf ~bob/x/{..,y}/*` and `rm -rf $OLDPWD/x/{..,y}/*` are allowed in `bypassPermissions`: bash expands the braces first (`~/x/../*`, i.e. `~/*`), but the check takes the glob base before the first glob segment (`~/x`) and `posix.normalize` keeps `{..,y}` as a plain segment. Also `.?`/`..*` segments, which match `..` under bash before 5.2. Expand braces (bounded) before choosing the base, or treat a segment with `{` or a dot-leading glob, followed by more segments, as reaching the parent.
+
 ## Fixed
 
 ### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
 - **Severity:** major · `src/policy/decide/critical.ts:61-72`
 - `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s`. Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`.
-- **Fixed (#PR):** `$PWD`, `${PWD}`, `~+` resolve to the simulated working directory; bare `~user`/`~-` are critical; a remover is recursive when xargs input comes before any `--`, and `/s` counts for `rd`/`del`/`erase` (QUESTIONS Q108).
+- **Fixed (#PRNUM):** `$PWD`, `${PWD}`, `~+` resolve to the simulated working directory; bare `~user`/`~-` are critical; a remover is recursive when xargs input comes before any `--`, and `/s` counts for `rd`/`del`/`erase` (QUESTIONS Q108).
 
 ### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
