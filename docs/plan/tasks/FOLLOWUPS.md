@@ -225,28 +225,28 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F87 (differential check after F84): a newline after a 3-stage pipeline folds the next `&&` line into its last command
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command`), tree-sitter-bash 0.25.1 (the newest on npm)
 - `echo a | cat | cat⏎rm f && echo y` reads `cat rm f`, `readOnly`, `understood: true`; bash runs `rm f`. Also `||` and 4+ stages. 7 of 16,158 real agent commands have this shape (`tail -n 8⏎git stash push …`). Fail closed on a newline between the words of one command.
-- **Fixed (#PR):** a newline, comment or escaped blank between the words of one command, or a word starting with whitespace, makes the analysis unparsed (permissions §4.0 item 9, "Nothing between words").
+- **Fixed (#202):** a newline, comment or escaped blank between the words of one command, or a word starting with whitespace, makes the analysis unparsed (permissions §4.0 item 9, "Nothing between words").
 
 ### F86 (F84 security review): an array subscript left of `=` is never walked
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
 - `a[$(git push)]=1` and `declare a[$(git push)]=1` allow in bypass past a deny rule. Walk the subscript or fail closed.
-- **Fixed (#PR):** a command or backtick the walker never read (in a subscript, or anywhere else) makes the analysis unparsed ("Every command reported").
+- **Fixed (#202):** a command or backtick the walker never read (in a subscript, or anywhere else) makes the analysis unparsed ("Every command reported").
 
 ### F85 (F84 fuzz): a quote then a backslash-escape splits one word in the grammar
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`)
 - `git pu''\sh` reads `git pu sh` (bash: `git push`), past a deny rule; `cat .e''\nv` passes the `.env` check; `printf x \  a` loses `\ `. Join the split parts or fail closed.
-- **Fixed (#PR):** two word nodes with no whitespace between them make the analysis unparsed ("Adjacent words"); the escaped blank too ("Nothing between words").
+- **Fixed (#202):** two word nodes with no whitespace between them make the analysis unparsed ("Adjacent words"); the escaped blank too ("Nothing between words").
 
 ### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
 - `echo $(( 1 #$(git push)\n))` allows past a deny rule. Fail closed on a comment inside an arithmetic expansion or a backtick body.
-- **Fixed (#PR):** the text's own lexer finds every substitution bash runs; one the tree doesn't hold (behind a grammar-only comment) makes the analysis unparsed ("Substitutions conserved").
+- **Fixed (#202):** the text's own lexer finds every substitution bash runs; one the tree doesn't hold (behind a grammar-only comment) makes the analysis unparsed ("Substitutions conserved").
 
 ### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
 - **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
 - `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
 - Extended (F76 rethink 3, F84): `echo "${x:-'$(git push)'}"` and a backtick there too (single quotes are literal there).
-- **Fixed (#PR):** a backtick or `<( )` in a `${…}` operand, or a `${…}` that ends elsewhere, makes the analysis unparsed ("Substitutions conserved").
+- **Fixed (#202):** a backtick or `<( )` in a `${…}` operand, or a `${…}` that ends elsewhere, makes the analysis unparsed ("Substitutions conserved").
 
 ### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)

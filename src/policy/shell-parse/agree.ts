@@ -1,4 +1,4 @@
-// The four checks of permissions §4.0 item 9: places where tree-sitter-bash and bash read the same text differently.
+// The checks of permissions §4.0 item 9: places where tree-sitter-bash and bash read the same text differently.
 import type { Node } from "web-tree-sitter";
 
 const WORDS = new Set([

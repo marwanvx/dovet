@@ -521,6 +521,7 @@ describe("the analysis agrees with bash (permissions §4.0 item 9)", () => {
       "cat <<-E\n\t$(git push)\n\tE",
       "echo $(cat <<E\n $(git push)\nE\n)",
       "cat <<E\n\tE\n$(git push)\nE",
+      "cat <<E''\nx\nE''\nE",
     ])
       expect([c, unparsed(c)]).toEqual([c, true]);
   });
