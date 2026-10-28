@@ -31,3 +31,4 @@ jobs:
         run: bun test --check test/integration/nvidia-live.test.ts
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DOVET_LIVE: "1"
