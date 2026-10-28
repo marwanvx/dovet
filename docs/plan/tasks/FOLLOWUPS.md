@@ -246,13 +246,17 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/rules/evaluate.ts` (rule matching), `src/policy/shell-parse/bash.ts`
 - With `PowerShell(git push *)` or `Bash(rm *)` denied, untainted bypass allows `cmd /c git push` and `cmd /c rm x`: the remote check unwraps `cmd /c`, rule matching doesn't. `python3 -c 'import os;os.system("git push")'`, `perl -e`, `node -e` and `awk 'BEGIN{system(…)}'` are understood, so tainted bypass allows them (default asks, `dontAsk` denies).
 
-## Fixed
-
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
 - `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too. Extended (F77 security review): evaluators and launchers whose argument is a command line aren't read as what they run: `eval git config core.pager x`, PowerShell `Invoke-Expression 'git push'` and `Start-Process git -ArgumentList 'push'` (or `'config','core.pager','x'`) allow in tainted bypass, while `bash -c`/`cmd /c` are unwrapped; unwrap them like `bash -c` or count them as a possible push.
 - **Decided:** ask in bypass only when tainted or a deny rule exists (permissions §4.0 item 10), not for every command that is not fully understood.
-- **Fixed (PR TBD):** bypass asks for a parsed command that isn't understood while tainted or when a deny rule names the tool, Read or Edit (§4.0 item 10); evaluators and launchers (`trap`, other shells, `wsl`, `start`, PowerShell's `Invoke-Expression`, `Start-Process`, alias definitions, `Import-Module`, `New-Object`, …) are never understood, a `cmd /c` layer running a launcher or a shell (past `call`) asks, and `Invoke-Expression` holds sandbox auto-allow like `eval` (QUESTIONS Q111).
+- **In progress (PR #211, open after review round 3):** bypass asks for a parsed command that isn't understood while tainted or when a deny rule names the tool, Read or Edit (§4.0 item 10); evaluators, launchers, other shells and PowerShell name definitions are never understood (QUESTIONS Q111). Round 3 still got past it: `cmd /c call cmd /c start git push`, `cmd /c call env bash -c 'git push'` (`cmdHead` peels `call` but the cmd unwrap and wrapper expansion don't run behind it), `cmd /c call,start git push` (cmd's `,`/`=` delimiters), PowerShell ``Set-Item -Path a`lias:g -Value git; g push`` (a backtick inside a bareword) and `New-PSDrive x Alias '\'; Set-Item x:g git; g push`; unconfirmed: `Microsoft.PowerShell.Core/Alias::g`.
+
+### F102 (F78 round-3 security review): cmd's `call` hides a push from the tainted-push deny
+- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:35` (`unwrapCmd`)
+- `cmd /c git push` is denied while tainted, but `cmd /c call git push` and `cmd /c call cmd /c git push` allow in tainted `bypassPermissions`: `unwrapCmd` peels only `cmd /c` layers, never cmd's `call`, so the remote, removal and rule checks read `call` as the program. Peel `call` (and split cmd's `,`/`=` delimiters) in `unwrapCmd`; F78's rethink needs the same.
+
+## Fixed
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
