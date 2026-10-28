@@ -232,6 +232,38 @@ describe("rewinding", () => {
     },
   );
 
+  // spec: AC-CKPT-06
+  test.skipIf(process.platform === "win32")(
+    "a path whose parent directory became a symlink is skipped, never written or deleted through",
+    async () => {
+      const r = rig(
+        { "sub/a.txt": "one\n", "deep/x/b.txt": "bee\n", "out/a.txt": "outside a\n", "out/c.txt": "outside c\n" },
+        false,
+      );
+      const svc = await r.open();
+      svc.beginTurn(1);
+      await svc.recordWrite(abs(r, "sub/a.txt"), bytes("one\n"));
+      await svc.recordWrite(abs(r, "deep/x/b.txt"), bytes("bee\n"));
+      await svc.recordWrite(abs(r, "sub/c.txt"), null);
+      rmSync(join(r.work, "sub"), { recursive: true });
+      symlinkSync(join(r.work, "out"), join(r.work, "sub"));
+      rmSync(join(r.work, "deep"), { recursive: true });
+      symlinkSync(join(r.work, "out"), join(r.work, "deep"));
+      mkdirSync(join(r.work, "out", "x"));
+      writeFileSync(join(r.work, "out", "x", "b.txt"), "outside b\n");
+      const result = await svc.restore(r.envelopes(), "c1", "overwrite");
+      expect(result.skipped.map((s) => `${s.path}:${s.reason}`).sort()).toEqual([
+        `${abs(r, "deep/x/b.txt")}:link`,
+        `${abs(r, "sub/a.txt")}:link`,
+        `${abs(r, "sub/c.txt")}:link`,
+      ]);
+      expect({ written: result.written, deleted: result.deleted }).toEqual({ written: 0, deleted: 0 });
+      expect(readFileSync(join(r.work, "out", "a.txt"), "utf8")).toBe("outside a\n");
+      expect(readFileSync(join(r.work, "out", "c.txt"), "utf8")).toBe("outside c\n");
+      expect(readFileSync(join(r.work, "out", "x", "b.txt"), "utf8")).toBe("outside b\n");
+    },
+  );
+
   test("restoring turn 2 leaves turn 1's changes alone", async () => {
     const r = rig({ "a.txt": "one\n" }, false);
     const svc = await r.open();

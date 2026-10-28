@@ -607,3 +607,8 @@ Needed only before the first public release (owner, 2026-10-12: not now); buildi
 - **What's missing:** event-log "Writer rules" repairs a torn last line with `\n` and a `session.resume`, but says nothing about a last line that parses and only lacks its `\n` (an editor or a copy can strip it). The writer then glued the next event onto that line, and the session opened read-only with no events after it.
 - **Answer:** on reopen the writer reads the log's last byte and appends `\n` whenever it isn't one, whatever the sidecar says; a complete line gets no repair event, since nothing was lost and the reader already accepts it. Reading the last byte rather than trusting the reader's result also covers the sidecar fast path, which skips the read.
 - **Spec:** event-log "Writer rules" (Decided while building, torn last line).
+
+### Q105 (F37): which directories blob-mode restore checks for links
+- **What's missing:** the git path checked every directory above a restored path for a symlink, but blob mode (a workspace outside git) only `lstat`ed the leaf, so replacing `sub/` by a link to `../outside` made a rewind write or delete `outside/a.txt`. Blob paths are absolute and may lie outside the workspace, and the spec didn't say where the walk starts.
+- **Answer:** blob mode runs the git path's `pathBlock` on each path: from the workspace root down for a path inside it (the workspace's own spelling, e.g. a symlinked `/tmp`, is not judged), and from the drive root for a path outside it. A link at any level is skipped as `link`; failing closed for an outside path costs a skipped file where a system link such as macOS `/tmp` lies above it, and the skip is reported, never silent.
+- **Spec:** checkpoints "Restore never writes through links".

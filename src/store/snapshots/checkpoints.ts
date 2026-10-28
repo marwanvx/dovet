@@ -1,13 +1,14 @@
 // When a checkpoint is taken and how a rewind uses it (docs/specs/checkpoints.md): the git tree snapshot of snapshotter.ts
 // where the workspace allows it, the before-bytes of the files Dovet's own tools change where it doesn't.
 import { lstatSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, parse, relative, sep } from "node:path";
 import { hardenedGitEnv, pathKey } from "../../platform/index.ts";
 import { CheckpointData, type EventEnvelope, FileChangeData } from "../../schema/index.ts";
 import type { BlobStore } from "../blobs/index.ts";
 import { emptyDir, runGit } from "./git.ts";
 import {
   openSnapshotter,
+  pathBlock,
   type RestoreSkip,
   type SnapshotResult,
   type Snapshotter,
@@ -108,6 +109,14 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
   let checkpointed = false;
   const recorded = new Set<string>();
   let noticed = false;
+
+  /** The git path's link check on every directory above `path`: below the workspace, or from the drive root outside it. */
+  function blobPathBlock(path: string, create: boolean): RestoreSkip["reason"] | undefined {
+    const inside = relative(options.workspace, path);
+    const below = inside !== "" && inside !== ".." && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+    const base = below ? options.workspace : parse(path).root;
+    return pathBlock(base, relative(base, path).split(sep).join("/"), create);
+  }
 
   const osOf = options.platform === "win32" ? "win32" : options.platform === "darwin" ? "darwin" : "linux";
   const id = (): string => `c${turn}`;
@@ -254,10 +263,10 @@ export async function openCheckpoints(options: CheckpointOptions): Promise<Check
       const skipAbs = new Set(conflicting.map((c) => c.abs));
       for (const [path, sha] of target.wanted) {
         const st = lstatSync(path, { throwIfNoEntry: false });
-        if (st !== undefined && (st.isSymbolicLink() || (st.isFile() && st.nlink > 1))) {
-          result.skipped.push({ path, reason: "link" });
-        } else if (st !== undefined && !st.isFile()) {
-          result.skipped.push({ path, reason: "blocked" });
+        const blocked =
+          st === undefined && sha === null ? undefined : blobPathBlock(path, sha !== null && !skipAbs.has(path));
+        if (blocked !== undefined) {
+          result.skipped.push({ path, reason: blocked });
         } else if (skipAbs.has(path)) {
           result.skipped.push({ path, reason: "conflict" });
         } else if (sha === null) {
