@@ -92,10 +92,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/policy/shell-parse/analyze.ts` (`recovered`), permissions §5
 - `echo hi\n)\ngit push origin +main` is denied as a force-push in `default`, though bash stops at the `)` line; in PowerShell a parse error runs nothing, yet `git push origin +main\n)` denies. Fail-closed (spurious denies, no bypass), but §5's "from before the erroring line" and "those lines run" overclaim. Fix: keep only commands whose node ends before the first error node's row in Bash; drop `recovered` for PowerShell.
 
-### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
-- **Severity:** major · `src/policy/decide/critical.ts:61-72`
-- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s`. Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`.
-
 ### F55 (F32 security review): `pwsh -c` scripts reach no check, with or without xargs
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts` (`criticalRemoval`/`systemRemoval` read `argv[0]` only), no pwsh script analysis exists
 - `pwsh -c remove-item -recurse C:\Windows` is allowed even in `default` with a tool-wide `Bash` allow (Q91's unwrapping peels `cmd /c` only); `echo C:\ | xargs pwsh -c remove-item -recurse` inherits it. Read what `pwsh -c` runs like a script, or treat a remover inside it as typed.
@@ -212,7 +208,24 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · run 40688693308 (`main` after #205): "(fail) daily ledger > many sessions racing for the last dollar dispatch exactly as many requests as fit [22.12ms]" and "EBUSY: resource busy or locked, rm …\dovet-testrun-…\dovet-compile-…" (unnamed test); the next `main` run and F37's Windows run passed
 - Find the cause in the raw log (a real race in the ledger, or a leftover compile process holding the directory) before touching a limit; a rerun is no fix.
 
+### F89 (F42 security review): a cmd switch glued to the remover's name hides it
+- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:8` (`REMOVERS`), `systemRemoval`, `unwrapCmd`
+- `cmd /c rd/s /q C:\Windows` is allowed with no countdown in `bypassPermissions` (`argv[0]` is `rd/s`, no remover), while `cmd /c rd /s /q C:\Windows` asks; `echo C:\Windows | xargs cmd /c rd/s` too. Split a cmd builtin's glued `/x` off `argv[0]` when peeling a `cmd` layer.
+
+### F90 (F42 security review): PowerShell's other spellings of home and the working directory aren't critical
+- **Severity:** major (pre-existing) · `src/policy/decide/critical.ts` (`criticalTarget`)
+- `Remove-Item -Recurse $home`, `$env:USERPROFILE`, `(Get-Location)`, `(pwd)`, `(gl)` and `$PWD.Path` are allowed in `bypassPermissions`; bash's `rm -rf $(pwd)` is critical through the substitution rule, but PowerShell's `( … )` subexpression isn't read as one.
+
+### F91 (F42 security review): root followed by a substitution or a variable isn't critical
+- **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts:93`
+- `rm -rf /$(echo usr)` and `rm -rf /$X` are allowed: the head `/` is trimmed to `""` and skipped. Treat a root head like "a shell variable followed by a top-level directory".
+
 ## Fixed
+
+### F42 (M2-16 security review): `~user`, `~+`, `$PWD` aren't critical spellings
+- **Severity:** major · `src/policy/decide/critical.ts:61-72`
+- `test.failing`: in `bypassPermissions` `rm -rf ~+` and `rm -rf "$PWD"` run with no countdown. Extended (F32 security review): the same class when a remover's target or recursion flag comes from xargs input — `echo '-rf /' | xargs rm`, `echo C:\Windows | xargs cmd /c rd /s`. Extended (F32 rethink round): with the applet typed, `echo rm -rf / | xargs toybox rm` runs `toybox rm rm -rf /` in `bypassPermissions`.
+- **Fixed (#PR):** `$PWD`, `${PWD}`, `~+` resolve to the simulated working directory; bare `~user`/`~-` are critical; a remover is recursive when xargs input comes before any `--`, and `/s` counts for `rd`/`del`/`erase` (QUESTIONS Q108).
 
 ### F38 (M2-16 spec review): a workspace opened through a symlink makes every Dovet write a "conflict"
 - **Severity:** major · `src/store/snapshots/checkpoints.ts:179,187`
