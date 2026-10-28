@@ -3,7 +3,7 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createPlatformCore, type Os } from "../../src/platform/index.ts";
+import { createPlatformCore, type Os, type PlatformCore } from "../../src/platform/index.ts";
 import { analyzeShell } from "../../src/policy/shell-parse/analyze.ts";
 import { expandGlob, isDirectory } from "../../src/policy/shell-parse/glob.ts";
 import { loadShellParsers, type ShellParsers } from "../../src/policy/shell-parse/load.ts";
@@ -93,36 +93,73 @@ beforeAll(async () => {
 });
 afterAll(() => project.dispose());
 
-/** Runs every text in one bash, each command a stub that appends its argv to the text's own record file. */
-async function runUnderBash(bash: string, texts: string[]): Promise<string[][][]> {
-  const dir = join(project.root, "records");
-  await mkdir(dir);
+const BATCH = 100;
+const BATCH_MS = 60_000;
+
+/** Runs the texts in batches, one bash per batch, each command a stub that appends its argv to the text's own record file. */
+async function runUnderBash(core: PlatformCore, bash: string, texts: string[]): Promise<string[][][]> {
   const posix = (p: string): string => p.replaceAll("\\", "/");
-  const lines = [
-    "__rec() { local IFS=$'\\037'; builtin printf '%s\\036' \"$*\" >> \"$__out\"; }",
-    ...NAMES.map((n) => `${n}() { __rec ${n} "$@"; }`),
-    'command_not_found_handle() { __rec "$@"; }',
-    ...texts.map((t, i) => `__out=${ansiC(posix(join(dir, String(i))))}; unset -v x a; eval ${ansiC(t)}`),
-    "wait; sleep 0.2",
-  ];
-  const script = join(project.root, "cases.sh");
-  await writeFile(script, `${lines.join("\n")}\n`);
-  const child = Bun.spawn([bash, posix(script)], {
-    cwd: project.root,
-    stdin: "ignore",
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  await child.exited;
-  return Promise.all(
-    texts.map(async (_, i) => {
-      const raw = await readFile(join(dir, String(i)), "utf8").catch(() => "");
-      return raw
-        .split("\x1e")
-        .slice(0, -1)
-        .map((r) => r.split("\x1f"));
-    }),
-  );
+  const env = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined));
+  const ran: string[][][] = [];
+  for (let from = 0; from < texts.length; from += BATCH) {
+    const batch = texts.slice(from, from + BATCH);
+    const dir = join(project.root, "records", String(from));
+    await mkdir(dir, { recursive: true });
+    const progress = join(dir, "progress");
+    const lines = [
+      "__rec() { local IFS=$'\\037'; builtin printf '%s\\036' \"$*\" >> \"$__out\"; }",
+      ...NAMES.map((n) => `${n}() { __rec ${n} "$@"; }`),
+      'command_not_found_handle() { __rec "$@"; }',
+      ...batch.map(
+        (t, i) =>
+          `builtin printf '%s\\n' ${i} >> ${ansiC(posix(progress))}; __out=${ansiC(posix(join(dir, String(i))))}; unset -v x a; eval ${ansiC(t)}`,
+      ),
+      "wait; sleep 0.2",
+    ];
+    const script = join(dir, "cases.sh");
+    await writeFile(script, `${lines.join("\n")}\n`);
+    const group = `bash-differential-${from}`;
+    const abort = new AbortController();
+    const started = Date.now();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      abort.abort();
+    }, BATCH_MS);
+    const child = core.spawn({
+      argv: [bash, posix(script)],
+      cwd: project.root,
+      env,
+      stdin: "null",
+      signal: abort.signal,
+      group,
+    });
+    const [, stderr] = await Promise.all([
+      new Response(child.stdout).arrayBuffer(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ]);
+    clearTimeout(timer);
+    await core.killTree(group);
+    const last = (await readFile(progress, "utf8").catch(() => "")).trim().split("\n").pop();
+    // A bash that hangs on one text must name it, not time the whole test out.
+    if (timedOut)
+      throw new Error(
+        `bash still running after ${Date.now() - started} ms on case ${last ?? "none"} of batch ${from}: ${JSON.stringify(batch[Number(last)])}\n${stderr.slice(-500)}`,
+      );
+    ran.push(
+      ...(await Promise.all(
+        batch.map(async (_, i) => {
+          const raw = await readFile(join(dir, String(i)), "utf8").catch(() => "");
+          return raw
+            .split("\x1e")
+            .slice(0, -1)
+            .map((r) => r.split("\x1f"));
+        }),
+      )),
+    );
+  }
+  return ran;
 }
 
 // A word the analysis couldn't read as a literal keeps its text: it stands for any run of words bash ran, even none
@@ -151,7 +188,7 @@ test(`every command bash runs is in the analysis, or it is unparsed (${CASES} ca
   if (shell === undefined) return;
   const next = generator(SEED);
   const texts = Array.from({ length: CASES }, next);
-  const ran = await runUnderBash(shell.path, texts);
+  const ran = await runUnderBash(core, shell.path, texts);
   const missed: string[] = [];
   let parsed = 0;
   for (const [i, text] of texts.entries()) {
