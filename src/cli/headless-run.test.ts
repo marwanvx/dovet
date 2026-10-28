@@ -5,6 +5,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
+  tempProject as baseTempProject,
   fakePlatform,
   nvidiaAdapter,
   scriptedModel,
@@ -13,7 +14,6 @@ import {
   startFixtureServer,
   startScriptedServer,
   type TempProject,
-  tempProject,
 } from "../../test/helpers/index.ts";
 import {
   buildRequest,
@@ -39,6 +39,10 @@ import { exitCodeFor } from "./headless-output.ts";
 import { type HeadlessAdapter, headlessToolDefs, resolveHeadlessModel, runHeadless } from "./headless-run.ts";
 
 const testOs = (): Os => (process.platform === "win32" ? "win32" : process.platform === "darwin" ? "darwin" : "linux");
+
+/** Checkpoints are tested in headless-checkpoints.test.ts; here they would start two real `git` processes per run (F49). */
+const tempProject = (files: Record<string, string> = {}) =>
+  baseTempProject({ ".dovet/settings.json": JSON.stringify({ checkpoints: { enabled: false } }), ...files });
 
 function settingsFor(model = "test/model"): LoadedSettings {
   return {
