@@ -7,6 +7,7 @@
 // 5. Every task's dependencies exist, and its "Read" links resolve to real sections (scripts/next.ts).
 // 6. Every answered question names where its answer is written (a `- **Spec:**` line).
 // 7. The always-loaded instruction files and every task's `bun run next` output stay under their token ceilings.
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { updateBoxes } from "./docs-context.ts";
@@ -60,10 +61,28 @@ export function overBudget(sizes: Record<string, number>, budgets: Record<string
   });
 }
 
+function git(root: string, args: string[]): string | undefined {
+  try {
+    return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return undefined; // not a git checkout (a source archive): the file on disk is all there is
+  }
+}
+
+/** A skip-worktree file is an owner's local variant (`git ls-files -v` flag S): it counts as what git holds, so a local run
+ * measures what CI measures. Any other file counts as it is on disk. */
+export function instructionText(root: string, file: string): string {
+  if (git(root, ["ls-files", "-v", "--", file])?.startsWith("S ")) {
+    const held = git(root, ["show", `:${file}`]);
+    if (held !== undefined) return held;
+  }
+  return readFileSync(join(root, file), "utf8");
+}
+
 function contextSizes(root: string, taskIds: Iterable<string>): Record<string, number> {
   const tokens = (text: string): number => Math.round(text.length / 4);
   const sizes: Record<string, number> = {
-    "instruction files": INSTRUCTION_FILES.reduce((sum, f) => sum + tokens(readFileSync(join(root, f), "utf8")), 0),
+    "instruction files": INSTRUCTION_FILES.reduce((sum, f) => sum + tokens(instructionText(root, f)), 0),
   };
   for (const id of taskIds) sizes[`bun run next ${id}`] = tokens(report(id));
   return sizes;

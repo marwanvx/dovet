@@ -67,7 +67,8 @@ export function highRiskPaths(review: string): string[] {
 /** The review tier of the session's work: an open follow-up if `bun run next` lists one, else the next task. */
 export function tierFor(nextOutput: string, risk: readonly string[]): Tier {
   const followups = nextOutput.split("## Follow-ups to fix first")[1]?.split(/^## /m)[0] ?? "";
-  const work = followups.includes("### F") ? followups : (nextOutput.split(/^## Task /m)[1]?.split(/^## /m)[0] ?? "");
+  const first = followups.split(/^(?=### F)/m).find((block) => block.startsWith("### F"));
+  const work = first ?? nextOutput.split(/^## Task /m)[1]?.split(/^## /m)[0] ?? "";
   const paths = [...work.matchAll(/`([^`\s]+\/[^`\s]*)`/g)].map((m) => m[1] ?? "");
   if (paths.some((p) => risk.some((r) => p.startsWith(r)))) return "deep";
   if (/nothing in `src\/`/.test(work) || (paths.length > 0 && paths.every((p) => p.startsWith("docs/"))))

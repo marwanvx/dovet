@@ -128,13 +128,40 @@ export function unappliedOverrides(questions: string): string {
     .join("\n\n");
 }
 
+const SEVERITY_RANK: Record<string, number> = { blocker: 0, major: 1 };
+const rank = (block: string): number => SEVERITY_RANK[/^- \*\*Severity:\*\* (\w+)/m.exec(block)?.[1] ?? ""] ?? 2;
+const number = (block: string): number => Number(/^### F(\d+)/.exec(block)?.[1] ?? Number.MAX_SAFE_INTEGER);
+
+/** Open blockers and majors in the order step 2.4 works them: blockers first, then the oldest (lowest F number). */
 export function urgentFollowups(followups: string): string {
   const open = followups.split("## Open")[1]?.split("## Fixed")[0] ?? "";
   return open
     .split(/^(?=### )/m)
     .filter((block) => /^- \*\*Severity:\*\* (blocker|major)\b/m.test(block))
+    .sort((a, b) => rank(a) - rank(b) || number(a) - number(b))
     .map((block) => block.trim())
     .join("\n\n");
+}
+
+/** The session's follow-up in full; its `Class:` members and the others as ids, so the runner and the agent read the same one. */
+export function followupSection(urgent: string): string {
+  const [first, ...rest] = urgent
+    .split(/^(?=### )/m)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  if (first === undefined) return "";
+  const id = (block: string): string => /^### (F\d+)/.exec(block)?.[1] ?? "?";
+  const label = (block: string): string => `${id(block)} (${/\*\*Severity:\*\* (\w+)/.exec(block)?.[1] ?? "?"})`;
+  const members = new Set(/\*\*Class:\*\*[^\n]*\(([^)]*)\)/.exec(first)?.[1]?.match(/F\d+/g) ?? []);
+  const same = rest.filter((block) => members.has(id(block)));
+  const others = rest.filter((block) => !members.has(id(block)));
+  const parts = [first];
+  if (same.length > 0)
+    parts.push(
+      `Same cause, close them in this PR (their entries are in docs/plan/tasks/FOLLOWUPS.md): ${same.map(label).join(", ")}`,
+    );
+  if (others.length > 0) parts.push(`Also open, not this session's work: ${others.map(label).join(", ")}`);
+  return parts.join("\n\n");
 }
 
 export function report(want?: string): string {
@@ -151,7 +178,7 @@ export function report(want?: string): string {
   print(`## Waiting for the owner (only what no agent can do)\n${waiting || "(none)"}\n`);
   print(`## Owner overrides to apply\n${unappliedOverrides(q) || "(none)"}\n`);
   const followupsPath = join(TASKS, "FOLLOWUPS.md");
-  const followups = existsSync(followupsPath) ? urgentFollowups(read(followupsPath)) : "";
+  const followups = existsSync(followupsPath) ? followupSection(urgentFollowups(read(followupsPath))) : "";
   print(`## Follow-ups to fix first (build loop step 2.4)\n${followups || "(none)"}\n`);
   print(`## Last progress entries\n${tailEntries(read(join(TASKS, "PROGRESS.md")), 2).trim()}\n`);
 

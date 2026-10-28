@@ -1,4 +1,4 @@
-# Nightly live suites (docs/specs/testing.md "Test layers"): the free NVIDIA smoke tests.
+# Nightly suites (docs/specs/testing.md "Test layers"): the free NVIDIA smoke tests and the long bash differential.
 name: nightly
 
 on:
@@ -31,3 +31,22 @@ jobs:
         run: bun test --check test/integration/nvidia-live.test.ts
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          DOVET_LIVE: "1"
+
+  bash-differential:
+    name: shell analysis agrees with bash (100,000 cases)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      # The seed is in the test's name, so a failure reproduces with DOVET_DIFF_SEED set to it.
+      - run: bun test test/adversarial/bash-differential.test.ts
+        env:
+          DOVET_DIFF_CASES: "100000"
+          DOVET_DIFF_SEED: ${{ github.run_id }}

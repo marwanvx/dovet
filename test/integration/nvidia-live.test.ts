@@ -71,6 +71,14 @@ function skipped(reason: string): void {
   console.log(line);
 }
 
+/** Why the live smoke tests don't run here, or undefined when they should. They call the real NVIDIA API, so only
+ * nightly.yml (DOVET_LIVE=1) runs them, never a local `bun run check` that happens to have a key. */
+export function liveSkipReason(env: Record<string, string | undefined>): string | undefined {
+  if (env.DOVET_LIVE !== "1") return "DOVET_LIVE is not set (the live suite runs from nightly.yml only)";
+  if (env.NVIDIA_API_KEY === undefined || env.NVIDIA_API_KEY === "") return "NVIDIA_API_KEY is not set";
+  return undefined;
+}
+
 export const DEFAULT_PROBE_BUDGET_MS = 5 * 60_000;
 
 export async function selectModel(
@@ -117,6 +125,15 @@ describe("nightly workflow", () => {
     expect(text).not.toMatch(/\bpush\b/);
   });
 
+  test("the live suite needs DOVET_LIVE=1 as well as a key, so a key in a local shell never makes `bun run check` call the API", () => {
+    expect(liveSkipReason({ NVIDIA_API_KEY: "k" })).toContain("DOVET_LIVE is not set");
+    expect(liveSkipReason({ DOVET_LIVE: "1" })).toContain("NVIDIA_API_KEY is not set");
+    expect(liveSkipReason({ DOVET_LIVE: "1", NVIDIA_API_KEY: "" })).toContain("NVIDIA_API_KEY is not set");
+    expect(liveSkipReason({ DOVET_LIVE: "1", NVIDIA_API_KEY: "k" })).toBeUndefined();
+    const nightly = readFileSync(join(import.meta.dir, "..", "..", ".github", "workflows", "nightly.yml"), "utf8");
+    expect(nightly).toContain('DOVET_LIVE: "1"');
+  });
+
   test("a longer message list extends a shorter one, and a shorter one never extends", () => {
     const a = JSON.stringify({ tools: [], messages: [{ role: "user" }] });
     const b = JSON.stringify({ tools: [], messages: [{ role: "user" }, { role: "assistant" }] });
@@ -136,10 +153,11 @@ describe("nightly workflow", () => {
 
 describe("live nvidia smoke", () => {
   test("10-turn tool-using session with a mid-epoch instruction", async () => {
-    const key = process.env.NVIDIA_API_KEY;
-    if (key === undefined || key === "") {
-      skipped("NVIDIA_API_KEY is not set");
-      expect(skipLog.at(-1)).toMatch(/live nvidia: skipped: NVIDIA_API_KEY is not set/);
+    const why = liveSkipReason(process.env);
+    const key = process.env.NVIDIA_API_KEY ?? "";
+    if (why !== undefined) {
+      skipped(why);
+      expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
     const picked = await selectModel(key);
@@ -327,10 +345,11 @@ describe("live nvidia smoke", () => {
       order.parts.filter((p) => p.kind === "tool_result").map((p) => (p.kind === "tool_result" ? p.callId : "")),
     ).toEqual(["a", "b"]);
 
-    const key = process.env.NVIDIA_API_KEY;
-    if (key === undefined || key === "") {
-      skipped("NVIDIA_API_KEY is not set");
-      expect(skipLog.at(-1)).toMatch(/live nvidia: skipped: NVIDIA_API_KEY is not set/);
+    const why = liveSkipReason(process.env);
+    const key = process.env.NVIDIA_API_KEY ?? "";
+    if (why !== undefined) {
+      skipped(why);
+      expect(skipLog.at(-1)).toContain("live nvidia: skipped: ");
       return;
     }
     const picked = await selectModel(key);

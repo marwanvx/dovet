@@ -23,7 +23,7 @@ Standing goal: `main` green on three OSes, no flaky test, no leaks. In this orde
 1. `main` is red in CI → fix it (smallest change; a regression test if it was a real bug).
 2. Uncommitted or half-done work from a crashed session → finish it or revert it, and say which in `PROGRESS.md`.
 3. An open PR of yours with review findings or failing CI → fix it (step 6–7).
-4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the oldest one at its cause (a regression test first; a rerun or a raised limit is no fix), then move it to "Fixed" with the PR number. A `minor` logged twice is `major`.
+4. An open `blocker` or `major` in [FOLLOWUPS.md](../plan/tasks/FOLLOWUPS.md) → fix the one `bun run next` prints at its cause (a regression test first; a rerun or a raised limit is no fix); move it to "Fixed" (PR number). A `minor` logged twice is `major`.
 
 ### 3. Apply the owner's overrides
 You answer your own questions (step 6), so there is normally nothing to wait for. `bun run next` lists any answered question where the owner added an `**Override (owner, <date>):**` line. Apply each override where it belongs (a spec change goes through the spec-change rules in [dev-workflow](dev-workflow.md); a plain choice goes into the task's notes), change the code that followed the old answer, and add an `**Override applied:**` line saying what changed. Anything left under "Waiting for the owner" is something only the owner can do (an account, money, a key); don't start work that depends on it.
@@ -83,7 +83,7 @@ Without subagents: open the PR and leave the review to the next session (step 2.
 
 ### 8. Ship
 One task, one PR: the status line and the progress entry ride in the task's own PR, never in a PR of their own.
-1. Open the PR (template filled: task, spec sections, criteria, assumptions).
+1. Open the PR (fill `.github/PULL_REQUEST_TEMPLATE.md`).
 2. On the same branch, set the task's `Status:` to `done (#PR)` and append the step 9 progress entry; commit and push.
 3. If GitHub says the branch is behind `main`, run `gh pr update-branch <PR>` first. Wait for CI with **one blocking call**: `bun .claude/skills/ship-task/scripts/wait-ci.ts <PR>` in the foreground, with a 60-minute timeout. Don't poll with `sleep` or repeated `gh run view`: every poll is another model round trip. On a failure, read `gh run view <run id> --log-failed`, fix, push, and wait again.
 4. Green on all three OSes and the review passed → **merge it**, unless the task changes `docs/plan/` decisions (ADRs, the roadmap, product decisions in open questions) or has an Owner step. Those wait for the owner: set `Status:` to `waiting for owner (#PR)` instead and say so in the progress entry.

@@ -1,5 +1,6 @@
 // Command text in, what it runs out (permissions §4.0): every simple command, file operands, and whether it was fully understood.
 
+import { disagreement } from "./agree.ts";
 import { joinContinuations, type State, verbatimRanges, walkBash } from "./bash.ts";
 import { type Analysis, type AnalyzeOptions, createContext, MAX_COMMAND_CHARS } from "./context.ts";
 import type { ShellLanguage, ShellParsers } from "./load.ts";
@@ -49,7 +50,8 @@ export function analyzeShell(
           ctx.fail("parse error");
           topError = true;
         }
-        walkBash(root, { ctx, script: (t, s) => run(t, s) }, st);
+        const walked = walkBash(root, { ctx, script: (t, s) => run(t, s) }, st);
+        if (disagreement(root, text, walked) !== undefined) ctx.state.misread = true;
         return true;
       }) ?? false
     );
@@ -85,11 +87,7 @@ export function analyzeShell(
       commands: undefined,
       understood: false,
       literalNames: false,
-      reasons: [
-        topError
-          ? "the parser reported a syntax error"
-          : "the parser misread a compound command or a line continuation",
-      ],
+      reasons: [topError ? "the parser reported a syntax error" : "the parser read the text differently from bash"],
       operands: [],
       // The lines before the erroring one run (the tool executes a script file): the checks see them, the ask stands.
       recovered: { commands: ctx.commands, operands: ctx.operands },

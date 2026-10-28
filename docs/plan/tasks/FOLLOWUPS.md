@@ -1,6 +1,6 @@
 # Follow-ups
 
-Pre-existing bugs a review found in code its task didn't change ([build loop step 7](../../workflow/build-loop.md)). Open `blocker` and `major` entries are fixed first, oldest first (step 2.4); `minor` ones wait for a task that touches the same code.
+Pre-existing bugs a review found in code its task didn't change ([build loop step 7](../../workflow/build-loop.md)). Open `blocker` and `major` entries are fixed first, blockers before majors and the oldest first (step 2.4), one per session (`bun run next` prints the one to fix); `minor` ones wait for a task that touches the same code.
 
 Format:
 
@@ -8,28 +8,12 @@ Format:
 ### F<n> (<task that found it>): <short title>
 - **Severity:** blocker | major | minor · `file:line`
 - <what fails, the input that shows it, the class of bug>
+- **Class:** (optional) `<cause> (F.. F..)`: the entries named share one cause. Fix the cause once, show each one's input failing first, and close all of them in that PR. A new finding with the same cause as an open entry joins its `Class:` line instead of getting a separate fix.
 ```
 
 When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 
 ## Open
-
-### F86 (F84 security review): an array subscript left of `=` is never walked
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
-- `a[$(git push)]=1` and `declare a[$(git push)]=1` allow in bypass past a deny rule. Walk the subscript or fail closed.
-
-### F85 (F84 fuzz): a quote then a backslash-escape splits one word in the grammar
-- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`)
-- `git pu''\sh` reads `git pu sh` (bash: `git push`), past a deny rule; `cat .e''\nv` passes the `.env` check; `printf x \  a` loses `\ `. Join the split parts or fail closed.
-
-### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
-- `echo $(( 1 #$(git push)\n))` allows past a deny rule. Fail closed on a comment inside an arithmetic expansion or a backtick body.
-
-### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
-- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
-- `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
-- Extended (F76 rethink 3, F84): `echo "${x:-'$(git push)'}"` and a backtick there too (single quotes are literal there).
 
 ### F77 (F76 security review): `git config` writes configuration that runs a program, unchecked
 - **Severity:** major (pre-existing) · `src/policy/decide/remote.ts` (`gitHidden`), §4.4b
@@ -38,6 +22,7 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`
 - `eval "git push"` (bash, `understood: false`, reason `eval`) and PowerShell `$env:GIT_PAGER = 'git push'; git log` / `[Environment]::SetEnvironmentVariable('GIT_PAGER','git push'); git log` (unsupported assignment/invocation syntax, `commands` = `[git log]`) are allowed in tainted `bypassPermissions`. F51 made `commands: undefined` ask; an analysis with `understood: false` and some commands read should ask too (deny in `dontAsk`), or the PowerShell analyzer should read `$env:` assignments as assignments. Extended (F76 round-3 security review): `set -a; : "${GIT_PAGER:=git push}"; git log` allows in bash — `set -a` exports a variable a `:=` expansion sets. Extended (F76 rethink): PowerShell `sh -c "gi$()t push"` and `& "gi$()t" push` allow too.
+- **Decided:** ask in bypass only when tainted or a deny rule exists (permissions §4.0 item 10), not for every command that is not fully understood.
 
 ### F79 (F76 security review): `PATH=…` on a git command picks the programs git runs
 - **Severity:** minor · `src/policy/decide/remote.ts` (`GIT_ENV_NAMES`)
@@ -236,6 +221,32 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
 ## Fixed
+
+### F87 (differential check after F84): a newline after a 3-stage pipeline folds the next `&&` line into its last command
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command`), tree-sitter-bash 0.25.1 (the newest on npm)
+- `echo a | cat | cat⏎rm f && echo y` reads `cat rm f`, `readOnly`, `understood: true`; bash runs `rm f`. Also `||` and 4+ stages. 7 of 16,158 real agent commands have this shape (`tail -n 8⏎git stash push …`). Fail closed on a newline between the words of one command.
+- **Fixed (#202):** a newline, comment or escaped blank between the words of one command, or a word starting with whitespace, makes the analysis unparsed (permissions §4.0 item 9, "Nothing between words").
+
+### F86 (F84 security review): an array subscript left of `=` is never walked
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`assignment`)
+- `a[$(git push)]=1` and `declare a[$(git push)]=1` allow in bypass past a deny rule. Walk the subscript or fail closed.
+- **Fixed (#202):** a command or backtick the walker never read (in a subscript, or anywhere else) makes the analysis unparsed ("Every command reported").
+
+### F85 (F84 fuzz): a quote then a backslash-escape splits one word in the grammar
+- **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`word`)
+- `git pu''\sh` reads `git pu sh` (bash: `git push`), past a deny rule; `cat .e''\nv` passes the `.env` check; `printf x \  a` loses `\ `. Join the split parts or fail closed.
+- **Fixed (#202):** two word nodes with no whitespace between them make the analysis unparsed ("Adjacent words"); the escaped blank too ("Nothing between words").
+
+### F83 (F76 rethink 3 security review): `#` in `$(( ))`, `$[ ]` or backticks is a comment to the grammar only
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts`
+- `echo $(( 1 #$(git push)\n))` allows past a deny rule. Fail closed on a comment inside an arithmetic expansion or a backtick body.
+- **Fixed (#202):** the text's own lexer finds every substitution bash runs; one the tree doesn't hold (behind a grammar-only comment) makes the analysis unparsed ("Substitutions conserved").
+
+### F82 (F76 rethink round-3 security review): a backtick or `<( )` inside a `${…}` operand is never seen
+- **Severity:** major (pre-existing) · `src/policy/shell-parse/bash.ts` (`expansion` in `word`)
+- `` echo ${x:-`git push`} ``, `` echo "${x:-`git push`}" ``, `` ${x:=`git push`} ``, `` ${x:+`git push`} `` and `echo ${x:-<(git push)}` allow in bypass past a deny rule (`$( )` there is extracted): the grammar keeps the operand as text. Extract or fail closed on backticks and process substitutions in an operand.
+- Extended (F76 rethink 3, F84): `echo "${x:-'$(git push)'}"` and a backtick there too (single quotes are literal there).
+- **Fixed (#202):** a backtick or `<( )` in a `${…}` operand, or a `${…}` that ends elsewhere, makes the analysis unparsed ("Substitutions conserved").
 
 ### F84 (F76 rethink 3 security review): a backtick body isn't unescaped and reread as bash does
 - **Severity:** blocker (pre-existing) · `src/policy/shell-parse/bash.ts` (`command_substitution`)
