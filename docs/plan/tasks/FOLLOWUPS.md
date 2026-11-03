@@ -199,10 +199,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts:93`
 - `rm -rf /$(echo usr)` and `rm -rf /$X` are allowed: the head `/` is trimmed to `""` and skipped. Treat a root head like "a shell variable followed by a top-level directory".
 
-### F92 (F42 round-2 security review): a huge path throws out of `decide`
-- **Severity:** major (pre-existing) · `src/policy/decide/paths.ts:245` (`resolveForms`), reached from `src/policy/decide/decide.ts:155` (`pathFindings`)
-- A shell command naming a 20,000-component path makes `decide` throw an uncaught `ENAMETOOLONG` instead of returning a decision. Treat a path the OS can't resolve as not fully checkable (ask), and add a huge-input case to the path tests.
-
 ### F93 (F42 round-3 security review): a brace pair holding `..` climbs past every critical-path glob base
 - **Severity:** major (pre-existing) · `src/policy/decide/critical.ts` (`criticalTarget`: the glob base and the `elsewhere` normaliser)
 - `rm -rf ~/x/{..,y}/*`, `rm -rf ~bob/x/{..,y}/*` and `rm -rf $OLDPWD/x/{..,y}/*` are allowed in `bypassPermissions`: bash expands the braces first (`~/x/../*`, i.e. `~/*`), but the check takes the glob base before the first glob segment (`~/x`) and `posix.normalize` keeps `{..,y}` as a plain segment. Also `.?`/`..*` segments, which match `..` under bash before 5.2. Expand braces (bounded) before choosing the base, or treat a segment with `{` or a dot-leading glob, followed by more segments, as reaching the parent.
@@ -258,7 +254,18 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** major (pre-existing) · `test/adversarial/guarantees.test.ts:1271`, run 41660324844 (PR #214, which touches no policy code); `main` passed the same test before and after. It takes about 2 s on the owner's machine for `echo x | xargs -I{} ` + 1,200 `-a x ` pairs, so the xargs variant readings (`src/policy/**`) cost far more than the input size warrants.
 - Find where the time goes (profile the 1,200-pair command) and cut it, or lower the variant budget; don't raise the 5 s limit, and a rerun is no fix.
 
+### F107 (F92 round-2 security review): a call's decision time grows with the number of path operands, with no total budget
+- **Severity:** major (pre-existing; F92 bounds one path at 256 components) · `src/policy/decide/decide.ts` (the loops calling `pathFindings` over every shell operand and `a.paths`)
+- About 20 ms per 250-component argument: `rm -f` + 1,000 such arguments (528 KB) took 20.7 s in `decide` and an Edit with 500 such paths 9 s, freezing the event loop (Esc/Ctrl-C included). The 10,000-character command limit only marks the command "not fully checkable"; the recovered operands are still each checked. Add a budget per decision (a total of components across all targets, or a maximum number of path targets) and past it deny with an `unchecked` finding; also make the matchers cheaper (`sensitivePath` builds one `ignore()` per pattern per call).
+
+### F108 (F92 round-2 security review): `sed -i -e SCRIPT` counts the script as an edit target; `tooDeep` splits on `\` on Linux
+- **Severity:** minor (pre-existing / nit) · `src/policy/decide/targets.ts:73`, `src/platform/errno.ts` (`tooDeep`)
+- `sed -i -e 's/x/x/…(300 slashes)…/y/' a.ts` is denied in bypass (the script is read as a path with too many components); without `-e` it is allowed. `tooDeep` also splits on `\`, an ordinary filename character on Linux, so a 300-segment `a\a\…` name is refused there (fails closed). Split on `/` only on POSIX and stop reading the `-e` value as a target.
+
 ## Fixed
+
+### F92 (F42 round-2 security review): a huge path throws out of `decide`
+- **Fixed (this PR):** a path (spelling or resolved form) with more than 256 components is denied in every mode without being looked up or matched (the `ignore` matcher is quadratic and overflows the stack near 20,000 components); a path whose real-path lookup fails (ELOOP, EACCES, EIO, ENAMETOOLONG) asks, still runs the protected, sensitive, working-directory and deny-rule checks on its spelling, is never approved by an allow rule, and counts as a critical path for a recursive removal (`systemRemoval` denies it). Q112 and permissions §4 carry the rule; F107 and F108 logged.
 
 ### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
 - **Fixed (this PR):** two causes. (1) Windows answers an `open(lock, "wx")` on a lock another session has just unlinked (delete pending) with EPERM/EACCES, not EEXIST; `DailyLedger` now retries those on win32 until `waitMs` (the error carries the original as `cause`). (2) the `afterAll` EBUSY came 11 ms after it started although `rmSync` had `maxRetries: 5, retryDelay: 200`, so Bun did not retry; `test/helpers/remove-dir.ts` retries EBUSY/EPERM/ENOTEMPTY itself and replaces every `rmSync` + `maxRetries` that cleans up compiled binaries or install trees (shell-parse and sdk-replay already tolerate a leftover dir). Not reproduced on Windows: the ledger test forces `platform: "win32"` over a read-only directory.

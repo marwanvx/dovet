@@ -441,6 +441,16 @@ describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
   });
 
   // spec: permissions §0 guarantee 4
+  test("a short spelling whose real path is too deep is refused too", () => {
+    const deepTarget = (p: string): string => (p.endsWith("/link") ? `${root}/${"d/".repeat(300)}f` : p);
+    for (const mode of ["default", "bypassPermissions"] as const) {
+      const st = state(mode, {}, { env: env({ canonicalize: deepTarget }) });
+      expect(file("read", `${root}/link`, st).behavior).toBe("deny");
+      expect(sh(`cat ${root}/link`, st).behavior).toBe("deny");
+    }
+  });
+
+  // spec: permissions §0 guarantee 4
   test("a deny or allow rule can't turn a path that is too deep into anything but a refusal", () => {
     expect(file("read", huge, state("default", { allow: [`Read(/${root}/**)`] })).behavior).toBe("deny");
     expect(file("read", huge, state("bypassPermissions", { deny: [`Read(/${root}/**)`] })).behavior).toBe("deny");

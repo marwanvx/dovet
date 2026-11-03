@@ -287,6 +287,15 @@ describe("symlinks", () => {
     }
   });
 
+  // spec: permissions §0 guarantee 4
+  test("a short spelling whose real path is too deep is not judged by the rules either", () => {
+    const deep = load(
+      { deny: ["Read(/docs/**)"] },
+      { canonicalize: (p) => (p.endsWith("/link") ? `/p/docs/${"d/".repeat(300)}f` : p) },
+    );
+    expect(decide(deep, read("/p/docs/link", "read", "/p"))).toBeUndefined();
+  });
+
   // spec: AC-PERM-16
   test("a rule path is canonicalized too: Read(/etc/**) applies to /private/etc/hosts where /etc is a link", () => {
     const mac = (p: string) => (p === "/etc" ? "/private/etc" : p);

@@ -243,7 +243,10 @@ export function resolveForms(env: Env, path: string, cwd: string): Forms | undef
     if (tooDeep(requested))
       return { requested, canonical: requested, unresolved: "too many components", tooDeep: true };
     try {
-      return { requested, canonical: env.canonicalize(requested) };
+      const canonical = env.canonicalize(requested);
+      return tooDeep(canonical)
+        ? { requested, canonical, unresolved: "too many components", tooDeep: true }
+        : { requested, canonical };
     } catch (e) {
       if (e instanceof PathRefused || !isFsError(e)) throw e;
       return { requested, canonical: requested, unresolved: e.code };

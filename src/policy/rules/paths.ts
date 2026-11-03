@@ -105,7 +105,8 @@ export function pathForms(path: string, cwd: string, c: PathContext): PathForms 
     if (tooDeep(lexical)) return undefined;
     const requested = toPosix(lexical, c.os);
     try {
-      return { requested, canonical: toPosix(c.canonicalize(lexical), c.os) };
+      const canonical = c.canonicalize(lexical);
+      return tooDeep(canonical) ? undefined : { requested, canonical: toPosix(canonical, c.os) };
     } catch (e) {
       if (e instanceof PathRefused || !isFsError(e)) throw e;
       return { requested, canonical: requested, unresolved: true };
