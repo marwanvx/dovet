@@ -1,7 +1,7 @@
 // Path rule patterns: gitignore syntax anchored per permissions §3.3, matched against both spelling and canonical target.
 import ignore from "ignore";
 import type { Os } from "../../platform/index.ts";
-import { lexicalPath, PathRefused } from "../../platform/index.ts";
+import { isFsError, lexicalPath, PathRefused, tooDeep } from "../../platform/index.ts";
 
 export type PathContext = { os: Os; home: string; canonicalize(abs: string): string };
 
@@ -95,13 +95,22 @@ export function pathMatches(m: PathMatcher, path: string, cwds: string[], os: Os
   });
 }
 
-export type PathForms = { requested: string; canonical: string };
+export type PathForms = { requested: string; canonical: string; unresolved?: true };
 
-/** The spellings of a call path, or undefined when the path is refused (it can't be judged here). */
+/** The spellings of a call path, or undefined when the path is refused or too deep to match (it can't be judged
+ * here). A path the OS can't resolve (a link loop, unreadable: F92) keeps its written spelling for both and is marked `unresolved`. */
 export function pathForms(path: string, cwd: string, c: PathContext): PathForms | undefined {
   try {
     const lexical = lexicalPath(path, cwd, c.os);
-    return { requested: toPosix(lexical, c.os), canonical: toPosix(c.canonicalize(lexical), c.os) };
+    if (tooDeep(lexical)) return undefined;
+    const requested = toPosix(lexical, c.os);
+    try {
+      const canonical = c.canonicalize(lexical);
+      return tooDeep(canonical) ? undefined : { requested, canonical: toPosix(canonical, c.os) };
+    } catch (e) {
+      if (e instanceof PathRefused || !isFsError(e)) throw e;
+      return { requested, canonical: requested, unresolved: true };
+    }
   } catch (e) {
     if (e instanceof PathRefused) return undefined;
     throw e;

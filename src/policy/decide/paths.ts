@@ -1,7 +1,7 @@
 // Path facts for the built-in checks: protected paths (permissions §4.3), sensitive files (§4.7) and the working-directory boundary (§4.1).
 import ignore from "ignore";
 import type { Os } from "../../platform/index.ts";
-import { isWithin, lexicalPath, PathRefused } from "../../platform/index.ts";
+import { isFsError, isWithin, lexicalPath, PathRefused, tooDeep } from "../../platform/index.ts";
 import { toPosix } from "../rules/paths.ts";
 
 export const PROTECTED_VERSION = 1;
@@ -233,13 +233,24 @@ export function protectedDirAbove(start: string, o: Pick<Env, "os">): string | u
   return undefined;
 }
 
-export type Forms = { requested: string; canonical: string };
+export type Forms = { requested: string; canonical: string; unresolved?: string; tooDeep?: true };
 
-/** The requested and the real spelling of a path, or undefined when it is refused (UNC, device). */
+/** The requested and the real spelling of a path, or undefined when it is refused (UNC, device). A path the OS can't
+ * resolve (too long, a link loop, unreadable: F92) keeps its written spelling for both, with the reason in `unresolved`. */
 export function resolveForms(env: Env, path: string, cwd: string): Forms | undefined {
   try {
     const requested = lexicalPath(path, cwd, env.os);
-    return { requested, canonical: env.canonicalize(requested) };
+    if (tooDeep(requested))
+      return { requested, canonical: requested, unresolved: "too many components", tooDeep: true };
+    try {
+      const canonical = env.canonicalize(requested);
+      return tooDeep(canonical)
+        ? { requested, canonical, unresolved: "too many components", tooDeep: true }
+        : { requested, canonical };
+    } catch (e) {
+      if (e instanceof PathRefused || !isFsError(e)) throw e;
+      return { requested, canonical: requested, unresolved: e.code };
+    }
   } catch (e) {
     if (e instanceof PathRefused) return undefined;
     throw e;
@@ -252,7 +263,7 @@ export function insideWorkingDirs(env: Env, f: Forms): boolean {
     try {
       return [d, env.canonicalize(d)];
     } catch (e) {
-      if (e instanceof PathRefused) return [d];
+      if (e instanceof PathRefused || isFsError(e)) return [d];
       throw e;
     }
   });
