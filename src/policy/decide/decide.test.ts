@@ -420,9 +420,14 @@ describe("working directories and network paths", () => {
 });
 
 describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
-  const fwd = root.replaceAll("\\", "/");
-  const ruleRoot = process.platform === "win32" ? fwd : `/${fwd}`;
-  const huge = `${fwd}/${"a/".repeat(20_000)}f`;
+  let fwd = "";
+  let ruleRoot = "";
+  let huge = "";
+  beforeAll(() => {
+    fwd = root.replaceAll("\\", "/");
+    ruleRoot = process.platform === "win32" ? fwd : `/${fwd}`;
+    huge = `${fwd}/${"a/".repeat(20_000)}f`;
+  });
   const failing =
     (code: string, ...endings: string[]) =>
     (p: string): string => {
