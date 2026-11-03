@@ -1,5 +1,5 @@
 // One decision from rules, built-in safety checks and the mode (permissions §0b, §2, §4, §5).
-import { lexicalPath } from "../../platform/index.ts";
+import { lexicalPath, MAX_PATH_COMPONENTS } from "../../platform/index.ts";
 import type { PermissionMode } from "../../schema/index.ts";
 import {
   type Behavior,
@@ -161,6 +161,12 @@ function pathFindings(st: State, t: Target, file: boolean, sandboxedRead = false
     return [finding("network-path", `${t.path} is a network or device path`, file ? "deny" : "ask")];
   const abs = forms.requested;
   const out: Finding[] = [];
+  if (forms.tooDeep === true)
+    return [
+      finding("unchecked", `${t.path} has more than ${MAX_PATH_COMPONENTS} components, so it can't be checked`, "deny"),
+    ];
+  if (forms.unresolved !== undefined)
+    out.push(finding("unchecked", `${t.path} can't be resolved (${forms.unresolved}), so it can't be checked`, "ask"));
   const both = [forms.requested, forms.canonical];
   const lifted = pathLifted(st, t.access, abs);
   const sensitiveLifted = pathLifted(st, t.access, abs, true);

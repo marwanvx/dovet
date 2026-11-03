@@ -67,7 +67,7 @@ function resolve(call: RuleCall, ctx: RuleContext): Resolved {
   });
   const cwd = pathForms(call.cwd, call.cwd, ctx);
   return {
-    unresolved: forms.length < paths.length,
+    unresolved: forms.length < paths.length || forms.some((f) => f.unresolved === true),
     forms,
     cwds: [...new Set(cwd === undefined ? [] : [cwd.requested, cwd.canonical])],
   };

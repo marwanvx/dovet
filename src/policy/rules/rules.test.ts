@@ -252,6 +252,41 @@ describe("symlinks", () => {
     expect(decide(bySpelling, read(join(p, "docs", "real.txt"), "read", p))).toBeUndefined();
   });
 
+  // spec: permissions §0 guarantee 4
+  test("a path the OS can't resolve (F92) never matches an allow rule, still matches a deny rule by its spelling", () => {
+    const loop = (p: string) => {
+      if (p.endsWith("/loop")) throw Object.assign(new Error("ELOOP: too many symbolic links"), { code: "ELOOP" });
+      return p;
+    };
+    const allow = load({ allow: ["Read(/docs/**)"] }, { canonicalize: loop });
+    expect(decide(allow, read("/p/docs/loop", "read", "/p"))).toBeUndefined();
+    expect(decide(allow, read("/p/docs/fine", "read", "/p"))).toBe("allow:Read(/docs/**)");
+    const deny = load({ deny: ["Read(/docs/**)"] }, { canonicalize: loop });
+    expect(decide(deny, read("/p/docs/loop", "read", "/p"))).toBe("deny:Read(/docs/**)");
+    expect(() =>
+      decide(
+        load(
+          { allow: ["Read(/docs/**)"] },
+          {
+            canonicalize: () => {
+              throw new TypeError("a bug");
+            },
+          },
+        ),
+        read("/p/docs/x", "read", "/p"),
+      ),
+    ).toThrow("a bug");
+  });
+
+  // spec: permissions §0 guarantee 4
+  test("a path longer than any file's path is not judged by the rules (the matcher recurses once per component)", () => {
+    const huge = `/p/docs/${"a/".repeat(20_000)}f`;
+    for (const lists of [{ allow: ["Read(/docs/**)"] }, { deny: ["Read(/docs/**)"] }, { ask: ["Read(**)"] }]) {
+      const r = load(lists);
+      expect(decide(r, read(huge, "read", "/p"))).toBeUndefined();
+    }
+  });
+
   // spec: AC-PERM-16
   test("a rule path is canonicalized too: Read(/etc/**) applies to /private/etc/hosts where /etc is a link", () => {
     const mac = (p: string) => (p === "/etc" ? "/private/etc" : p);

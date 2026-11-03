@@ -155,6 +155,7 @@ function criticalTarget(env: Env, raw: string, cwd: string, recursive: boolean):
   }
   const forms = resolveForms(env, base, cwd);
   if (forms === undefined) return "a network or device path";
+  if (forms.unresolved !== undefined) return "a path the check can't resolve";
   return [forms.requested, forms.canonical].some((p) => listCritical(env, p, glob)) ? "a critical path" : undefined;
 }
 
@@ -197,6 +198,7 @@ export function systemRemoval(env: Env, sub: Subcommand, viaCmd: boolean): strin
     if (bare === "*" || bare === "/*" || bare === "\\*") return `${t}: a bare wildcard`;
     if (/[$`*?]/.test(bare)) continue;
     const forms = resolveForms(env, bare, sub.cwd ?? env.cwd);
+    if (forms?.unresolved !== undefined) return `${t}: a path the check can't resolve`;
     if (forms !== undefined && [forms.requested, forms.canonical].some((p) => isRootOrTop(env, p)))
       return `${t}: a system path`;
   }
