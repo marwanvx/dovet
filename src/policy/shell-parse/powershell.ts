@@ -66,6 +66,23 @@ function literal(n: Node): Word {
   return { text: t, literal: plain, glob: plain && /[*?[]/.test(t) };
 }
 
+/** A bareword as PowerShell passes it: a backtick before a plain character is dropped; `` `n ``-style escapes stay. */
+const dropEscapes = (t: string): string => t.replace(/`([^0abefnrtvu])/gs, "$1");
+
+/** Commands whose arguments become a command line this analyzer doesn't read (bash's `eval`, permissions §4.0). */
+const EVALUATORS = new Set([
+  ...["invoke-expression", "start-process", "start", "invoke-item", "wsl", "schtasks", "register-scheduledtask"],
+  ...["invoke-wmimethod", "invoke-cimmethod", "pwsh", "pwsh-preview", "powershell", "powershell_ise"],
+  // A name defined earlier in the script resolves to whatever it was set to; a module or COM object brings its own,
+  // and a new drive can map any name onto the alias: or function: provider.
+  ...["set-alias", "new-alias", "sal", "nal", "import-alias", "ipal", "import-module", "ipmo", "new-object"],
+  ...["new-psdrive", "ndr", "mount"],
+]);
+// `alias:g`, `Alias::g`, `Microsoft.PowerShell.Core\Function::g` or `…/Function::g`.
+const NAME_PROVIDER = /(^|[\\/])(alias|function):/i;
+// Only a cmdlet can write a provider path; a Get/Select/Test one only reads it.
+const ITEM_WRITER = /^(?!(get|select|test|measure|write|format)-)[a-z]+-[a-z]+$/i;
+
 /** A provider-qualified path (`env:PATH`, `HKCU:\\x`, `FileSystem::/etc`): not a file under the working directories. */
 const isProviderPath = (text: string): boolean => text.includes("::") || /^[A-Za-z][\w.]+:/.test(text);
 
@@ -111,9 +128,10 @@ export function walkPowerShell(
   function command(n: Node): void {
     const sub: Subcommand = { argv: [], cwd: st.cwd };
     const nameNode = n.childForFieldName("command_name");
-    const raw = nameNode?.text ?? "";
+    // The checks read the name PowerShell runs (``g`it`` is `git`); an escaped name still isn't literal.
+    const raw = dropEscapes(nameNode?.text ?? "");
     const canonical = canonicalCmdlet(raw);
-    if (nameNode === null || !/^[A-Za-z][\w.-]*$/.test(raw)) {
+    if (nameNode === null || raw !== nameNode.text || !/^[A-Za-z][\w.-]*$/.test(raw)) {
       ctx.state.literalNames = false;
       ctx.fail("command name is not literal");
     }
@@ -125,12 +143,12 @@ export function walkPowerShell(
     for (const c of n.childForFieldName("command_elements")?.namedChildren ?? []) {
       if (c.type === "command_argument_sep") continue;
       if (c.type === "command_parameter") {
-        sub.argv.push(c.text);
-        words.push({ text: c.text, literal: !c.text.includes(":"), glob: false });
+        const text = dropEscapes(c.text);
+        if (c.text.includes("`")) ctx.fail("a backtick escape in a parameter");
+        sub.argv.push(text);
+        words.push({ text, literal: !text.includes(":"), glob: false });
         parsed.push(
-          c.text.includes(":")
-            ? { word: { text: c.text, literal: false, glob: false } }
-            : { param: c.text.slice(1).toLowerCase() },
+          text.includes(":") ? { word: { text, literal: false, glob: false } } : { param: text.slice(1).toLowerCase() },
         );
       } else if (c.type === "redirection") {
         const file = c.namedChildren.find((x) => x.type === "redirected_file_name");
@@ -145,11 +163,16 @@ export function walkPowerShell(
           redirectsOk = false;
         }
       } else {
-        const w = literal(c);
-        if (!w.literal) {
+        const raw = literal(c);
+        if (!raw.literal) {
           ctx.fail(`${c.type} argument`);
           computed = true;
         }
+        // PowerShell drops a bareword's escape (``a`lias:g`` is `alias:g`): the checks read what runs, and the
+        // command isn't understood, since what `` `n `` and the like become isn't read.
+        const escaped = c.type === "generic_token" && raw.text.includes("`");
+        if (escaped) ctx.fail("a backtick escape in a bareword");
+        const w = escaped ? { ...raw, text: dropEscapes(raw.text) } : raw;
         sub.argv.push(w.text);
         words.push(w);
         parsed.push({ word: { ...w, text: w.text.replaceAll("\\", "/") } });
@@ -161,6 +184,9 @@ export function walkPowerShell(
     const { argvs, complete } = unwrapCommand(sub.argv);
     if (!complete) ctx.fail("a wrapper's options can't all be checked");
     for (const v of argvs) {
+      if (EVALUATORS.has(commandName(v[0]))) ctx.fail(`${v[0]} runs its arguments as a command`);
+      if (ITEM_WRITER.test(commandName(v[0])) && v.some((w) => NAME_PROVIDER.test(w)))
+        ctx.fail("a cmdlet naming the alias: or function: provider");
       if (!SHELLS.has(commandName(v[0]))) continue;
       ctx.fail("sh -c runs a nested script");
       const at = shellScriptAt(v.slice(1));

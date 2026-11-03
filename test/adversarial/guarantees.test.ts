@@ -78,6 +78,16 @@ const shell = (
 // Every mode that keeps the guarantees (bypassPermissions skips §4.1/§4.7/§4.8 by design, §2).
 const GUARDED: PermissionMode[] = ["default", "acceptEdits", "plan", "dontAsk"];
 const notAllowed = (d: Decision) => expect(d.behavior).not.toBe("allow");
+// The remote check finds nothing in it, so tainted bypass allows it, or asks when the analysis can't fully read it
+// (permissions §4.0 item 10).
+const quietWhileTainted = (command: string, language: "bash" | "powershell" = "bash"): void => {
+  const d = shell(command, state("bypassPermissions", { tainted: true }), false, { language });
+  expect(
+    d.findings.map((f) => f.kind),
+    command,
+  ).not.toContain("remote");
+  expect(d.behavior, command).toBe(d.by.includes("§4.0 item 10") ? "ask" : "allow");
+};
 
 describe("guarantee 1: project content can't change the policy", () => {
   // spec: permissions §0 guarantee 1
@@ -834,10 +844,7 @@ describe("git runs no hidden push through a command its arguments or environment
 
   // spec: permissions §0 guarantee 3
   test("a doubled quote in a PowerShell sh -c script is one quote, not the end of the string", () => {
-    const d = shell("sh -c 'echo ''; git push'''", state("bypassPermissions", { tainted: true }), false, {
-      language: "powershell",
-    });
-    expect(d.behavior).toBe("allow");
+    quietWhileTainted("sh -c 'echo ''; git push'''", "powershell");
   });
 
   // spec: permissions §0 guarantee 3
@@ -899,8 +906,8 @@ describe("git runs no hidden push through a command its arguments or environment
     "git submodule foreach ''",
     "git submodule foreach 'echo \u{1F600}'",
     "wget https://example.com",
-  ])("%s stays allowed while tainted", (command) => {
-    expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
+  ])("%s is no remote action while tainted", (command) => {
+    quietWhileTainted(command);
   });
 });
 
@@ -1138,7 +1145,7 @@ describe("what xargs reads from its input and what find reaches get the checks (
   test.each(["ls | xargs git add", "ls | xargs -I{} git add {}", "ls | xargs wc -l", "ls | xargs git log --oneline"])(
     "%s can't become a remote action",
     (command) => {
-      expect(shell(command, state("bypassPermissions", { tainted: true })).behavior).toBe("allow");
+      quietWhileTainted(command);
     },
   );
 
