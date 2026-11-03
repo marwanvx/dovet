@@ -1,13 +1,14 @@
 // Dovet's own git calls, with real git and marker files: a marker appears only if git ran what the trap configured.
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeDir } from "../../test/helpers/remove-dir.ts";
 import { GIT_HARDENING_ARGS, type GitCall, hardenedGitEnv, readGitHead, runHardenedGit } from "./git.ts";
 
 const dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true, maxRetries: 5 });
+afterEach(async () => {
+  for (const d of dirs.splice(0)) await removeDir(d);
 });
 
 function tempDir(): string {

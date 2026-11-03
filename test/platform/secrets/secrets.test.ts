@@ -1,9 +1,10 @@
 // SPIKE-5: Dovet's secret store in a compiled binary per OS; Linux also without a Secret Service and with gnome-keyring.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileDovet } from "../../../scripts/build.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 let dir = "";
@@ -15,8 +16,8 @@ beforeAll(async () => {
   await compileDovet({ entry: join(import.meta.dir, "secrets-probe.ts"), outfile: probe });
 }, 120_000);
 
-afterAll(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+afterAll(async () => {
+  if (dir) await removeDir(dir);
 });
 
 function run(argv: string[], env: Record<string, string | undefined>) {

@@ -187,10 +187,6 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor · `src/agent/session.test.ts`, `src/cli/headless-boot.test.ts`, `src/cli/resume-target.test.ts`, `src/cli/startup.test.ts`, `src/policy/grants/grants.test.ts`, `src/policy/rules/rules.test.ts`, `src/policy/sandbox/hygiene.test.ts`, `src/policy/sandbox/service.test.ts`, `src/store/secrets/secrets.test.ts`, `src/tools/bash-sandbox.test.ts`
 - Running each test file alone with `TMPDIR` set to an empty directory (2026-10-21, Linux) left `dovet-data`, `dovet`, `dovet-ephemeral`, `dovet-ro`, `dovet-trust`, `data`, `dovet-test` (9 from `secrets.test.ts`), `dovet-cwd`, `dovet-rules`, `dovet-hyg`, `dovet-late-symlink`, `dovet-union`, `dovet-m201*` directories. Some may come from the sandbox tests that fail on this machine. Give each a cleanup, then widen `leftovers()` in `scripts/test-run.ts` from `dovet-tool-` to every directory the run leaves.
 
-### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
-- **Severity:** major (pre-existing) · run 40688693308 (`main` after #205): "(fail) daily ledger > many sessions racing for the last dollar dispatch exactly as many requests as fit [22.12ms]" and "EBUSY: resource busy or locked, rm …\dovet-testrun-…\dovet-compile-…" (unnamed test); the next `main` run and F37's Windows run passed
-- Find the cause in the raw log (a real race in the ledger, or a leftover compile process holding the directory) before touching a limit; a rerun is no fix.
-
 ### F89 (F42 security review): a cmd switch glued to the remover's name hides it
 - **Severity:** major (pre-existing) · `src/policy/decide/critical.ts:8` (`REMOVERS`), `systemRemoval`, `unwrapCmd`
 - `cmd /c rd/s /q C:\Windows` is allowed with no countdown in `bypassPermissions` (`argv[0]` is `rd/s`, no remover), while `cmd /c rd /s /q C:\Windows` asks; `echo C:\Windows | xargs cmd /c rd/s` too. Split a cmd builtin's glued `/x` off `argv[0]` when peeling a `cmd` layer.
@@ -259,6 +255,9 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - `rmdir /a`, `rmdir /also`, `rmdir /x` allow in `bypassPermissions` while `rm -rf /also` asks ("a critical path"): cmd's switch syntax is applied to every `rmdir`, not only one cmd runs. No `TOP` name, `/private/*` path, drive root or `C:\Windows` can be written this way. Apply `CMD_SWITCH_RUN` only under cmd or on win32.
 
 ## Fixed
+
+### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
+- **Fixed (this PR):** two causes. (1) Windows answers an `open(lock, "wx")` on a lock another session has just unlinked (delete pending) with EPERM/EACCES, not EEXIST; `DailyLedger` now retries those on win32 until `waitMs` (the error carries the original as `cause`). (2) the `afterAll` EBUSY came 11 ms after it started although `rmSync` had `maxRetries: 5, retryDelay: 200`, so Bun did not retry; `test/helpers/remove-dir.ts` retries EBUSY/EPERM/ENOTEMPTY itself and replaces every `rmSync` + `maxRetries` that cleans up compiled binaries or install trees (shell-parse and sdk-replay already tolerate a leftover dir). Not reproduced on Windows: the ledger test forces `platform: "win32"` over a read-only directory.
 
 ### F78 (F76 security review): a command the analyzer doesn't understand still allows in tainted bypass
 - **Severity:** major (pre-existing) · `src/policy/decide/decide.ts` (the `understood` check), `src/policy/shell-parse/powershell.ts`

@@ -3,10 +3,11 @@
 // checklist. This test proves the part a machine can: the compiled `tui-demo` renders streaming markdown, the editor
 // and an overlay through pi-tui's real inline renderer, and nothing in the vendored copy loads a `.node` addon.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compileTuiDemo } from "../../../scripts/build.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 const VENDOR = join(import.meta.dir, "..", "..", "..", "src", "tui", "vendor", "pi-tui");
@@ -17,8 +18,8 @@ beforeAll(async () => {
   await compileTuiDemo({ outfile: join(dir, `tui-demo${EXE}`) });
 }, 120_000);
 
-afterAll(() => {
-  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+afterAll(async () => {
+  if (dir) await removeDir(dir);
 });
 
 describe("compiled tui-demo", () => {

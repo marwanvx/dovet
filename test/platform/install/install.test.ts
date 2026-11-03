@@ -17,6 +17,7 @@ import { basename, dirname, join } from "node:path";
 import { signRelease } from "../../../scripts/sign-release.ts";
 import { formatSha256Sums, RELEASE_PUBLIC_KEYS } from "../../../src/cli/release-signature.ts";
 import { detectMusl, hostTargetId, installRootFor, update } from "../../../src/cli/update.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const WINDOWS = process.platform === "win32";
 const OS = WINDOWS ? "win32" : process.platform === "darwin" ? "darwin" : "linux";
@@ -94,7 +95,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.stop(true);
-  rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  await removeDir(work);
 });
 
 beforeEach(() => {

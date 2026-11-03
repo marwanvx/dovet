@@ -2,11 +2,12 @@
 // built with the real release code and unpacked with the OS's own `tar`; the unpacked binary starts sandbox-runtime
 // from `libexec/srt/` and runs commands in the sandbox.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { archiveName, buildInstallArchive, hostTarget } from "../../../scripts/build-release.ts";
 import { srtHelpersFor } from "../../../src/policy/index.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const WINDOWS = process.platform === "win32";
@@ -51,8 +52,8 @@ beforeAll(async () => {
   probe = JSON.parse(r.stdout.toString());
 }, 300_000);
 
-afterAll(() => {
-  if (work) rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+afterAll(async () => {
+  if (work) await removeDir(work);
 });
 
 describe("sandbox-runtime inside the compiled binary", () => {

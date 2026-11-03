@@ -969,3 +969,9 @@ Done: reviewed PR #211's last commit (`CMD_SWITCH_RUN`: only `/a` takes attribut
 Review: deep (the commit is under `src/policy/**`), 1 round (reviewer ×1, security-reviewer ×1); 0 fixed, 0 dropped, 1 logged (F105 minor: POSIX `rmdir /also` is read as cmd switches; pre-existing). The new regex matches a subset of the old one (300,000 random strings), and the new test fails with the old regex.
 Learned: the owner's working-tree edits to `scripts/auto.ts`/`auto.test.ts` (the runner opening the app instead of `claude -p`) are theirs, not a crashed session's; they were left uncommitted and untouched.
 Next: F104, F101, F98, F95, F88, F89, F90, F92, F93, F99, F100, F103, F105, then M2-17.
+
+## 2026-11-03 — F88: ledger lock retry and test cleanup on Windows
+Done: `DailyLedger` treats EPERM/EACCES on a lock as contention on win32 (a lock another session just unlinked is delete-pending there), and `test/helpers/remove-dir.ts` retries EBUSY/EPERM/ENOTEMPTY in the temp-dir cleanup of tests that run compiled binaries or install trees (10 files). F88 moves to Fixed. PR: #PR (merged).
+Review: standard, 1 round (reviewer ×1); 1 fixed (two more `rmSync` + `maxRetries` sites in `src/cli/update.test.ts` and `src/platform/git.test.ts`), 1 dropped (stale takeover "never checks the deadline": an EPERM from the unlink is caught and falls through to the deadline check and sleep; `continue` follows only a successful unlink), 0 logged.
+Learned: the EBUSY `afterAll` failed 11 ms after starting despite `maxRetries: 5, retryDelay: 200`, so Bun's `rmSync` did not retry there; neither fix was reproduced on Windows (the CI Windows job is the check). `bun run check` here fails only the known sandbox, SPIKE-5 and ripgrep-download tests.
+Next: F104, F101, F98, F95, F89, F90, F92, F93, F99, F100, F103, F105, then M2-17.
