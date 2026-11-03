@@ -1,11 +1,12 @@
 // A normal build has no update override; a test release (pull request) installs, updates and rolls back (needs DOVET_RELEASE_DIR).
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import pkg from "../../../package.json";
 import { compileDovet } from "../../../scripts/build.ts";
 import { nextPatch, TEST_UPDATE_URL, testUpdateDefine } from "../../../scripts/build-release.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const WINDOWS = process.platform === "win32";
 const EXE = WINDOWS ? "dovet.exe" : "dovet";
@@ -24,8 +25,8 @@ describe("test release build", () => {
       define: testUpdateDefine({ publicKey: FAKE_KEY, baseUrl: TEST_UPDATE_URL }),
     });
   }, 120_000);
-  afterAll(() => {
-    if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  afterAll(async () => {
+    if (dir) await removeDir(dir);
   });
 
   const holds = (name: string, text: string) =>
@@ -118,7 +119,7 @@ describe.skipIf(!releaseDir)("the built test release", () => {
 
   afterAll(async () => {
     for (const s of servers) await s.stop(true);
-    if (work) rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    if (work) await removeDir(work);
   });
 
   test("the installed binary runs and prints its version", async () => {

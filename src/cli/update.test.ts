@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { signRelease } from "../../scripts/sign-release.ts";
+import { removeDir } from "../../test/helpers/remove-dir.ts";
 import { formatSha256Sums } from "./release-signature.ts";
 import { hostTargetId, installRootFor, rollback, update } from "./update.ts";
 
@@ -95,7 +96,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await server.stop(true);
-  rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  await removeDir(work);
 });
 
 beforeEach(() => {
@@ -104,8 +105,8 @@ beforeEach(() => {
   rmSync(releases, { recursive: true, force: true });
 });
 
-afterEach(() => {
-  rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+afterEach(async () => {
+  await removeDir(root);
 });
 
 const run = (publicKeys = [keys.publicKey]) => update({ root, baseUrl, targetId: TARGET, os: OS, publicKeys });

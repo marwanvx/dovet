@@ -23,6 +23,7 @@ import {
   RIPGREP_PLATFORMS,
   RIPGREP_VERSION,
 } from "../../../scripts/build-release.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const CACHE = join(ROOT, "dist", "cache", "ripgrep");
@@ -55,8 +56,8 @@ beforeAll(async () => {
   probe = JSON.parse(r.stdout.toString());
 }, 300_000);
 
-afterAll(() => {
-  if (work) rmSync(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+afterAll(async () => {
+  if (work) await removeDir(work);
 });
 
 describe("install-directory archive", () => {

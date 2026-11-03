@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { appendFile, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DailyLedger, dayKey } from "./ledger.ts";
@@ -62,6 +62,38 @@ describe("daily ledger", () => {
     const results = await Promise.all(sessions.map((l, i) => l.reserve(`q${i}`, 0.3, 1)));
     expect(results.filter((r) => r.ok).length).toBe(3);
   });
+
+  // Windows answers an open("wx") on a lock another session just unlinked (delete pending) with EPERM or EACCES, not EEXIST (F88).
+  // A read-only directory gives the same codes on POSIX, so it stands in for the pending delete there.
+  const canDeny = process.platform !== "win32" && process.getuid?.() !== 0;
+  test.skipIf(!canDeny)(
+    "on Windows an EPERM or EACCES on the lock is retried until it clears; elsewhere it fails at once",
+    async () => {
+      const dir = await fresh();
+      await chmod(dir, 0o500);
+      try {
+        const elsewhere = new DailyLedger({ dir, session: "S1", now: () => NOW, platform: "linux", waitMs: 2000 });
+        const started = Date.now();
+        await expect(elsewhere.reserve("r1", 1, null)).rejects.toThrow(/EACCES/);
+        expect(Date.now() - started).toBeLessThan(1000);
+
+        const windows = new DailyLedger({ dir, session: "S2", now: () => NOW, platform: "win32", waitMs: 5000 });
+        const pending = windows.reserve("r2", 1, null);
+        await new Promise((r) => setTimeout(r, 150));
+        await chmod(dir, 0o700);
+        expect((await pending).ok).toBe(true);
+
+        await chmod(dir, 0o500);
+        const stuck = new DailyLedger({ dir, session: "S3", now: () => NOW, platform: "win32", waitMs: 100 });
+        const failure = await stuck.reserve("r3", 1, null).catch((err: unknown) => err);
+        expect(failure).toBeInstanceOf(Error);
+        expect((failure as Error).message).toContain("the budget ledger is locked");
+        expect(((failure as Error).cause as NodeJS.ErrnoException).code).toBe("EACCES");
+      } finally {
+        await chmod(dir, 0o700);
+      }
+    },
+  );
 
   // spec: AC-RCPT-05
   test("a crashed session's outstanding reservation is counted until it is reconciled", async () => {

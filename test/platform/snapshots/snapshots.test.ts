@@ -7,13 +7,13 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { compileDovet } from "../../../scripts/build.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 const slash = (p: string): string => p.replaceAll("\\", "/");
@@ -146,10 +146,10 @@ beforeAll(async () => {
   await Bun.sleep(500);
 }, 180_000);
 
-afterAll(() => {
+afterAll(async () => {
   stopServer();
   // Windows may still hold the just-run executable open for a moment.
-  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  if (dir) await removeDir(dir);
 });
 
 describe("compiled binary takes and restores a filter-safe snapshot", () => {

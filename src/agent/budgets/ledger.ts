@@ -1,5 +1,6 @@
 // The per-day reservation ledger (receipts-budgets "Behavior" 5): append-only lines under a short-held exclusive lock file.
 import { appendFile, mkdir, open, readFile, stat, unlink } from "node:fs/promises";
+import { platform as osPlatform } from "node:os";
 
 const LOCK_STALE_MS = 2000;
 const LOCK_WAIT_MS = 10_000;
@@ -13,9 +14,16 @@ export type LedgerOptions = {
   staleMs?: number;
   /** How long a reservation waits for the lock before it fails. */
   waitMs?: number;
+  /** Defaults to the running OS. */
+  platform?: NodeJS.Platform;
 };
 
-const missing = (err: unknown): boolean => (err as NodeJS.ErrnoException).code === "ENOENT";
+const codeOf = (err: unknown): string | undefined => (err as NodeJS.ErrnoException).code;
+const missing = (err: unknown): boolean => codeOf(err) === "ENOENT";
+
+/** Windows answers a lock that another session just unlinked (delete pending) with EPERM or EACCES, not EEXIST (F88). */
+const lockContended = (err: unknown, platform: NodeJS.Platform): boolean =>
+  codeOf(err) === "EEXIST" || (platform === "win32" && (codeOf(err) === "EPERM" || codeOf(err) === "EACCES"));
 
 async function statOrNull(path: string): Promise<{ mtimeMs: number } | null> {
   return stat(path).catch((err: unknown) => {
@@ -69,21 +77,26 @@ export class DailyLedger {
     const lock = `${this.file(day)}.lock`;
     const stale = this.o.staleMs ?? LOCK_STALE_MS;
     const deadline = Date.now() + (this.o.waitMs ?? LOCK_WAIT_MS);
+    const platform = this.o.platform ?? osPlatform();
     for (;;) {
       try {
         const h = await open(lock, "wx", 0o600);
         await h.close();
         break;
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-        const seen = await statOrNull(lock);
-        if (seen !== null && Date.now() - seen.mtimeMs > stale) {
-          const again = await statOrNull(lock);
-          if (again !== null && again.mtimeMs === seen.mtimeMs) await unlinkIfThere(lock);
-          continue;
+        if (!lockContended(err, platform)) throw err;
+        try {
+          const seen = await statOrNull(lock);
+          if (seen !== null && Date.now() - seen.mtimeMs > stale) {
+            const again = await statOrNull(lock);
+            if (again !== null && again.mtimeMs === seen.mtimeMs) await unlinkIfThere(lock);
+            continue;
+          }
+        } catch (inner) {
+          if (!lockContended(inner, platform)) throw inner;
         }
         if (Date.now() > deadline)
-          throw new Error(`the budget ledger is locked (${lock}); remove it if no Dovet is running`);
+          throw new Error(`the budget ledger is locked (${lock}); remove it if no Dovet is running`, { cause: err });
         await new Promise((r) => setTimeout(r, 5 + Math.random() * 20));
       }
     }

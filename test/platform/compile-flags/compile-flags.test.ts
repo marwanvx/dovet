@@ -2,11 +2,12 @@
 // Both binaries are built with Dovet's real compile options. `dovet` can't start child processes yet, so the probe
 // (same options, different entry) shows what reaches a child's environment.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pkg from "../../../package.json";
 import { compileDovet } from "../../../scripts/build.ts";
+import { removeDir } from "../../helpers/remove-dir.ts";
 
 const EXE = process.platform === "win32" ? ".exe" : "";
 let dir = "";
@@ -26,9 +27,9 @@ beforeAll(async () => {
   writeFileSync(join(planted, "bunfig.toml"), 'preload = ["./preload.js"]\n');
 }, 120_000);
 
-afterAll(() => {
+afterAll(async () => {
   // Windows may still hold the just-run executables open for a moment.
-  if (dir) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  if (dir) await removeDir(dir);
 });
 
 function run(exe: string, ...args: string[]): string {
