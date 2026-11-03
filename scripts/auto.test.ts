@@ -1,89 +1,127 @@
 import { describe, expect, test } from "bun:test";
 import {
+  appEnv,
   claudeArgs,
   decide,
-  describeEvent,
-  type Feed,
+  type Ending,
   highRiskPaths,
+  hookSettings,
   lastEntry,
-  limitsLine,
   mergeCheck,
   modelFor,
-  newFeed,
   openRuns,
   parseArgs,
-  parseRun,
-  type RunResult,
+  sessionEnding,
   tierFor,
 } from "./auto.ts";
 
-const ok: RunResult = { isError: false, subtype: "success", result: "Shipped M1-12.", costUsd: 4.2, sessionId: "s1" };
+const ok: Ending = { kind: "done", message: "Shipped M1-12." };
 
 describe("parseArgs", () => {
-  test("defaults: 3 tasks, the model picked per task, a $10 cap per run", () => {
-    expect(parseArgs([])).toEqual({ tasks: 3, budgetUsd: 10 });
+  test("defaults: 3 tasks, the model picked per task", () => {
+    expect(parseArgs([])).toEqual({ tasks: 3 });
   });
 
-  test("reads the task count, --model and --budget", () => {
-    expect(parseArgs(["5", "--model", "opus", "--budget", "8"])).toEqual({ tasks: 5, model: "opus", budgetUsd: 8 });
+  test("reads the task count and --model", () => {
+    expect(parseArgs(["5", "--model", "opus"])).toEqual({ tasks: 5, model: "opus" });
   });
 
-  test("refuses nonsense", () => {
+  test("refuses nonsense, and says why --budget is gone", () => {
     expect(() => parseArgs(["0"])).toThrow(/task count/);
-    expect(() => parseArgs(["--budget", "x"])).toThrow(/budget/);
+    expect(() => parseArgs(["--budget", "8"])).toThrow(/only works with claude -p/);
     expect(() => parseArgs(["--wat"])).toThrow(/--wat/);
   });
 });
 
 describe("claudeArgs", () => {
-  test("uses the flags the Claude Code docs recommend for unattended runs", () => {
-    const args = claudeArgs({ tasks: 1, budgetUsd: 20 }, { model: "sonnet", effort: "medium" });
-    expect(args.slice(0, 2)).toEqual(["claude", "-p"]);
-    expect(args[2]).toContain("Continue building Dovet.");
-    expect(args[2]).toContain("unattended");
-    expect(args[2]).toContain("reviewer agent");
-    expect(args[2]).toContain("Context7");
-    expect(args[2]).toContain("at most three rounds");
-    expect(args[2]).toContain("Never set git config");
-    expect(args).toEqual(
-      expect.arrayContaining([
-        "--permission-mode",
-        "auto",
-        "--permission-prompts",
-        "none",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-      ]),
+  test("opens the interactive app with the task prompt, a session id, a name and the hooks", () => {
+    const args = claudeArgs(
+      { model: "sonnet", effort: "medium" },
+      { sessionId: "s-1", name: "task 1", settings: "{}" },
     );
-    expect(args.join(" ")).toContain("--model sonnet");
-    expect(args.join(" ")).toContain("--effort medium");
-    expect(args.join(" ")).toContain("--max-budget-usd 20");
+    expect(args[0]).toBe("claude");
+    expect(args).not.toContain("-p");
+    expect(args).not.toContain("--max-budget-usd");
+    expect(args[1]).toContain("Continue building Dovet.");
+    expect(args[1]).toContain("unattended");
+    expect(args[1]).toContain("reviewer agent");
+    expect(args[1]).toContain("Context7");
+    expect(args[1]).toContain("at most three rounds");
+    expect(args[1]).toContain("Never set git config");
+    const flags = args.slice(2).join(" ");
+    expect(flags).toContain("--permission-mode auto");
+    expect(flags).toContain("--model sonnet");
+    expect(flags).toContain("--effort medium");
+    expect(flags).toContain("--session-id s-1");
+    expect(flags).toContain("--name task 1");
+    expect(flags).toContain("--settings {}");
   });
 });
 
-describe("parseRun", () => {
-  test("reads the JSON result of claude -p", () => {
-    const stdout = JSON.stringify({
-      type: "result",
-      subtype: "success",
-      is_error: false,
-      result: "OK",
-      total_cost_usd: 0.0018,
-      session_id: "73bf",
-      num_turns: 1,
+describe("hookSettings", () => {
+  test("Stop and StopFailure both append their input to the marker file through this script", () => {
+    const settings = JSON.parse(hookSettings("/usr/bin/bun", "/repo dir/scripts/auto.ts", "/tmp/m.jsonl"));
+    const command = '"/usr/bin/bun" "/repo dir/scripts/auto.ts" --hook "/tmp/m.jsonl"';
+    for (const event of ["Stop", "StopFailure"]) {
+      expect(settings.hooks[event]).toEqual([{ hooks: [{ type: "command", command }] }]);
+    }
+  });
+});
+
+describe("appEnv", () => {
+  test("drops the variables a parent Claude Code session leaves behind, keeps the rest and adds the identity", () => {
+    const env = appEnv(
+      {
+        PATH: "/bin",
+        CLAUDE_CODE_ENTRYPOINT: "sdk-cli",
+        CLAUDE_CODE_SESSION_ID: "x",
+        CLAUDE_CODE_CHILD_SESSION: "1",
+        CLAUDE_CODE_MESSAGING_SOCKET: "/s",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "9",
+      },
+      { GIT_AUTHOR_NAME: "Marwan" },
+    );
+    expect(env).toEqual({ PATH: "/bin", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "9", GIT_AUTHOR_NAME: "Marwan" });
+  });
+});
+
+describe("sessionEnding", () => {
+  const line = (o: Record<string, unknown>) => `${JSON.stringify(o)}\n`;
+
+  test("nothing yet, or a stop while background work is still running, means the session is still working", () => {
+    expect(sessionEnding("")).toBeUndefined();
+    const waiting = line({
+      hook_event_name: "Stop",
+      last_assistant_message: "waiting",
+      background_tasks: [{ id: "a", status: "running" }],
+      session_crons: [],
     });
-    expect(parseRun(stdout)).toEqual({
-      isError: false,
-      subtype: "success",
-      result: "OK",
-      costUsd: 0.0018,
-      sessionId: "73bf",
-    });
+    expect(sessionEnding(waiting)).toBeUndefined();
   });
 
-  test("output that isn't a result is reported, not guessed", () => {
-    expect(parseRun("Error: not logged in")).toEqual({ unreadable: "Error: not logged in" });
+  test("the newest stop with nothing in flight ends the session with Claude's last message", () => {
+    const text =
+      line({ hook_event_name: "Stop", last_assistant_message: "waiting", background_tasks: [{ status: "running" }] }) +
+      line({
+        hook_event_name: "Stop",
+        last_assistant_message: "Shipped M2-07.",
+        background_tasks: [],
+        session_crons: [],
+      });
+    expect(sessionEnding(text)).toEqual({ kind: "done", message: "Shipped M2-07." });
+  });
+
+  test("a turn that ends on an API error is a failure with its error type", () => {
+    const text = line({
+      hook_event_name: "StopFailure",
+      error: "rate_limit",
+      last_assistant_message: "You've hit your limit",
+    });
+    expect(sessionEnding(text)).toEqual({ kind: "failed", error: "rate_limit", message: "You've hit your limit" });
+  });
+
+  test("a line that isn't a hook event is skipped, not guessed at", () => {
+    expect(sessionEnding("not json\n")).toBeUndefined();
   });
 });
 
@@ -110,137 +148,52 @@ describe("decide", () => {
   const entry = (next: string) => ({ count: 11, text: `## 2026-10-14 — M1-12 T\nDone: x.\nNext: ${next}` });
 
   test("a shipped task with a new progress entry goes on to the next", () => {
-    expect(decide({ exitCode: 0, run: ok, before: 10, after: entry("M1-13.") })).toEqual({ action: "next" });
+    expect(decide({ ending: ok, before: 10, after: entry("M1-13.") })).toEqual({ action: "next" });
   });
 
   test("a session limit waits for the reset and retries; a weekly limit stops", () => {
-    const limited = { ...ok, isError: true, result: "You've hit your session limit · resets 4pm" };
-    expect(decide({ exitCode: 1, run: limited, before: 10, after: { count: 10, text: "" } }).action).toBe("wait");
-    const weekly = { ...ok, isError: true, result: "You've hit your weekly limit · resets Mon" };
-    expect(decide({ exitCode: 1, run: weekly, before: 10, after: { count: 10, text: "" } }).action).toBe("stop");
+    const limited: Ending = {
+      kind: "failed",
+      error: "rate_limit",
+      message: "You've hit your session limit · resets 4pm",
+    };
+    expect(decide({ ending: limited, before: 10, after: { count: 10, text: "" } }).action).toBe("wait");
+    const weekly: Ending = {
+      kind: "failed",
+      error: "rate_limit",
+      message: "You've hit your weekly limit · resets Mon",
+    };
+    expect(decide({ ending: weekly, before: 10, after: { count: 10, text: "" } }).action).toBe("stop");
   });
 
-  test("a failed run, a run that hit its budget, or one with no progress entry stops", () => {
+  test("an API error, a closed app, or a session with no progress entry stops", () => {
     const failed = decide({
-      exitCode: 1,
-      run: { ...ok, isError: true, subtype: "error_during_execution" },
+      ending: { kind: "failed", error: "server_error", message: "API Error: 500" },
       before: 10,
       after: entry("M1-13."),
     });
-    expect(failed.action).toBe("stop");
-    const budget = decide({
-      exitCode: 0,
-      run: { ...ok, subtype: "error_max_budget_usd" },
-      before: 10,
-      after: entry("M1-13."),
+    expect(failed).toEqual({
+      action: "stop",
+      reason: "the session ended on an API error (server_error): API Error: 500",
     });
-    expect(budget).toEqual({ action: "stop", reason: expect.stringMatching(/budget/) });
-    const silent = decide({ exitCode: 0, run: ok, before: 10, after: { count: 10, text: "" } });
+    const closed = decide({ ending: { kind: "closed" }, before: 10, after: entry("M1-13.") });
+    expect(closed).toEqual({ action: "stop", reason: expect.stringMatching(/app was closed/) });
+    const silent = decide({ ending: ok, before: 10, after: { count: 10, text: "" } });
     expect(silent).toEqual({ action: "stop", reason: expect.stringMatching(/progress entry/) });
-    expect(decide({ exitCode: 0, run: { unreadable: "boom" }, before: 10, after: entry("M1-13.") }).action).toBe(
-      "stop",
-    );
   });
 
   test("a task left with its PR open after review goes on, so the next session can rethink it", () => {
     const open = { count: 11, text: "## 2026-10-20 — M2-05b T\nDone: x. PR: #164 (open, not merged).\nNext: rethink." };
-    expect(decide({ exitCode: 0, run: ok, before: 10, after: open, openRuns: 1 })).toEqual({ action: "next" });
-    expect(decide({ exitCode: 0, run: ok, before: 10, after: open, openRuns: 3 })).toEqual({
+    expect(decide({ ending: ok, before: 10, after: open, openRuns: 1 })).toEqual({ action: "next" });
+    expect(decide({ ending: ok, before: 10, after: open, openRuns: 3 })).toEqual({
       action: "stop",
       reason: "M2-05b is still not merged after 3 sessions",
     });
   });
 
   test("a task that waits for the owner or is blocked stops the run", () => {
-    expect(decide({ exitCode: 0, run: ok, before: 10, after: entry("blocked on the release key.") }).action).toBe(
-      "stop",
-    );
-    expect(decide({ exitCode: 0, run: ok, before: 10, after: entry("M2-01 (waiting for owner).") }).action).toBe(
-      "stop",
-    );
-  });
-});
-
-describe("live feed", () => {
-  const ROOT = "/home/u/dovet";
-  const tool = (name: string, input: Record<string, unknown>, parent: string | null = null) => ({
-    type: "assistant",
-    parent_tool_use_id: parent,
-    message: { content: [{ type: "tool_use", id: `id-${name}`, name, input }] },
-  });
-  const lines = (feed: Feed, ev: unknown) => describeEvent(ev, feed, ROOT);
-
-  test("tool calls read as plain actions, with paths relative to the project", () => {
-    const feed = newFeed();
-    expect(lines(feed, tool("Read", { file_path: `${ROOT}/src/a.ts` }))).toEqual(["read   src/a.ts"]);
-    expect(lines(feed, tool("Edit", { file_path: `${ROOT}/src/a.ts` }))).toEqual(["edit   src/a.ts"]);
-    expect(lines(feed, tool("Bash", { command: "bun test src/agent\necho done" }))).toEqual([
-      "run    bun test src/agent",
-    ]);
-    expect(lines(feed, tool("mcp__claude_ai_Context7__query-docs", { query: "zod" }))).toEqual([
-      "docs   Context7 query-docs",
-    ]);
-    expect(lines(feed, tool("Grep", { pattern: "isWithin" }))).toEqual(['search "isWithin"']);
-  });
-
-  test("helper agents are named, and their own steps are marked with that name", () => {
-    const feed = newFeed();
-    expect(lines(feed, tool("Agent", { subagent_type: "reviewer", description: "Review M1-12" }))).toEqual([
-      "agent  reviewer: Review M1-12",
-    ]);
-    expect(lines(feed, tool("Read", { file_path: `${ROOT}/x.ts` }, "id-Agent"))).toEqual(["  [reviewer] read   x.ts"]);
-  });
-
-  test("what Claude says is shown as one line; thinking is not", () => {
-    const feed = newFeed();
-    const say = {
-      type: "assistant",
-      parent_tool_use_id: null,
-      message: {
-        content: [
-          { type: "thinking", thinking: "" },
-          { type: "text", text: "Tests pass.\nShipping." },
-        ],
-      },
-    };
-    expect(lines(feed, say)).toEqual(["says   Tests pass."]);
-  });
-
-  test("a failed tool result is shown", () => {
-    const feed = newFeed();
-    lines(feed, tool("Bash", { command: "bun test" }));
-    const result = {
-      type: "user",
-      parent_tool_use_id: null,
-      message: {
-        content: [
-          { type: "tool_result", tool_use_id: "id-Bash", is_error: true, content: "error: 2 tests failed\nmore" },
-        ],
-      },
-    };
-    expect(lines(feed, result)).toEqual(["  ✗ Bash failed: error: 2 tests failed"]);
-  });
-
-  test("usage limits are kept and shown as percentages", () => {
-    const feed = newFeed();
-    const ev = {
-      type: "rate_limit_event",
-      rate_limit_info: {
-        status: "allowed_warning",
-        unifiedWindows: {
-          five_hour: { utilization: 0.24, resetsAt: 1791945600 },
-          seven_day: { utilization: 0.68, resetsAt: 1792400400 },
-        },
-      },
-    };
-    expect(lines(feed, ev)).toEqual([]);
-    expect(limitsLine(feed)).toMatch(/^plan usage: 5-hour 24% \(resets .+\) · week 68% \(resets .+\)$/);
-    expect(feed.fiveHourResetMs).toBe(1791945600 * 1000);
-  });
-
-  test("unknown events are ignored, not guessed at", () => {
-    expect(lines(newFeed(), { type: "something_new" })).toEqual([]);
-    expect(lines(newFeed(), "not an object")).toEqual([]);
+    expect(decide({ ending: ok, before: 10, after: entry("blocked on the release key.") }).action).toBe("stop");
+    expect(decide({ ending: ok, before: 10, after: entry("M2-01 (waiting for owner).") }).action).toBe("stop");
   });
 });
 

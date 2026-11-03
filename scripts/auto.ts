@@ -1,20 +1,24 @@
-// Build Dovet unattended: one fresh `claude -p` session per task, as the Claude Code docs recommend.
+// Build Dovet unattended: one fresh Claude Code session per task, each opened as the normal app in this terminal.
 //
-//     bun run auto                    # 3 tasks, model and effort picked per task from its risk tier, $10 cap per run
-//     bun run auto 5 --model opus --budget 15
+//     bun run auto                    # 3 tasks, model and effort picked per task from its risk tier
+//     bun run auto 5 --model opus
 //
-// The terminal shows each step as it happens (files read and edited, commands, helper agents, plan usage).
-// Ctrl+C once: stop after the current task. Twice: stop now.
-// It stops when a run fails, records no progress entry, leaves a task waiting for the owner, or leaves one task's
-// PR open three sessions in a row (a PR left open after review goes on: the next session rethinks it). A 5-hour usage
-// limit waits for the reset and retries; a weekly limit stops. Each run is logged to auto-runs.log.
-import { appendFileSync } from "node:fs";
-import { join, relative } from "node:path";
+// `claude -p` is metered ~2x faster against the 5-hour limit than the app (anthropics/claude-code#97074), so each
+// task opens the app with its prompt already typed; you can watch it or step in. A Stop hook tells this script when
+// the session is done; it then closes the app and opens a fresh one for the next task. Closing the app yourself
+// stops the run (the next run finishes the half-done task).
+// It stops when a session ends on an error, records no progress entry, leaves a task waiting for the owner, or leaves
+// one task's PR open three sessions in a row (a PR left open after review goes on: the next session rethinks it). A
+// 5-hour usage limit waits and retries; a weekly limit stops. Each run is logged to auto-runs.log.
+import { appendFileSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { z } from "zod";
 
 const ROOT = join(import.meta.dir, "..");
 const LOG = join(ROOT, "auto-runs.log");
 const LIMIT_WAIT_MS = 30 * 60 * 1000;
+const STUCK_MS = 30 * 60 * 1000;
 // Commits must never carry the owner's personal email: the repository is public.
 const IDENTITY = {
   GIT_AUTHOR_NAME: "Marwan",
@@ -24,21 +28,22 @@ const IDENTITY = {
 };
 const MAX_LIMIT_WAITS = 12;
 
-export type Options = { tasks: number; model?: string; budgetUsd: number };
+export type Options = { tasks: number; model?: string };
 export type Tier = "quick" | "standard" | "deep";
 export type Pick = { model: string; effort: string };
-export type RunResult = { isError: boolean; subtype: string; result: string; costUsd: number; sessionId: string };
+export type Ending =
+  | { kind: "done"; message: string }
+  | { kind: "failed"; error: string; message: string }
+  | { kind: "closed" };
 export type Decision = { action: "next" } | { action: "wait" | "stop"; reason: string };
 
 export function parseArgs(argv: readonly string[]): Options {
-  const opts: Options = { tasks: 3, budgetUsd: 10 };
+  const opts: Options = { tasks: 3 };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--model") opts.model = argv[++i] ?? "";
-    else if (arg === "--budget") {
-      opts.budgetUsd = Number(argv[++i]);
-      if (!(opts.budgetUsd > 0)) throw new Error("--budget needs a dollar amount above 0");
-    } else if (/^\d+$/.test(arg) && Number(arg) > 0) opts.tasks = Number(arg);
+    else if (arg === "--budget") throw new Error("--budget is gone: a dollar cap only works with claude -p");
+    else if (/^\d+$/.test(arg) && Number(arg) > 0) opts.tasks = Number(arg);
     else if (/^\d+$/.test(arg)) throw new Error("the task count must be at least 1");
     else throw new Error(`unknown argument ${arg}`);
   }
@@ -96,54 +101,79 @@ export function mergeCheck(entry: string, prState: (pr: number) => string): Deci
     : { action: "stop", reason: `the progress entry says PR #${pr} merged, but GitHub says it is ${state}` };
 }
 
-export function claudeArgs(opts: Options, pick: Pick): string[] {
+export function claudeArgs(pick: Pick, session: { sessionId: string; name: string; settings: string }): string[] {
   return [
     "claude",
-    "-p",
     PROMPT,
     "--permission-mode",
     "auto",
-    "--permission-prompts",
-    "none",
     "--model",
     pick.model,
     "--effort",
     pick.effort,
-    "--max-budget-usd",
-    String(opts.budgetUsd),
-    "--output-format",
-    "stream-json",
-    "--verbose",
+    "--session-id",
+    session.sessionId,
+    "--name",
+    session.name,
+    "--settings",
+    session.settings,
   ];
 }
 
-const Result = z.object({
-  type: z.literal("result"),
-  subtype: z.string(),
-  is_error: z.boolean(),
-  result: z.string().default(""),
-  total_cost_usd: z.number().default(0),
-  session_id: z.string(),
+/** `--settings` JSON whose Stop and StopFailure hooks append their input to `marker` (via `auto.ts --hook`). */
+export function hookSettings(bun: string, script: string, marker: string): string {
+  const command = `${JSON.stringify(bun)} ${JSON.stringify(script)} --hook ${JSON.stringify(marker)}`;
+  const hook = [{ hooks: [{ type: "command", command }] }];
+  return JSON.stringify({ hooks: { Stop: hook, StopFailure: hook } });
+}
+
+// A parent Claude Code session's own variables would make the app inherit its label and session.
+const PARENT_SESSION = /^CLAUDE_CODE_(ENTRYPOINT|SESSION_ID|CHILD_SESSION|SESSION_ATTENDED|MESSAGING_.*|EXECPATH)$/;
+
+export function appEnv(
+  env: Record<string, string | undefined>,
+  identity: Record<string, string>,
+): Record<string, string | undefined> {
+  return { ...Object.fromEntries(Object.entries(env).filter(([k]) => !PARENT_SESSION.test(k))), ...identity };
+}
+
+const HookEvent = z.looseObject({
+  hook_event_name: z.string(),
+  last_assistant_message: z.string().optional(),
+  error: z.string().optional(),
+  transcript_path: z.string().optional(),
+  background_tasks: z.array(z.looseObject({ status: z.string().optional() })).optional(),
+  session_crons: z.array(z.unknown()).optional(),
 });
 
-export function parseRun(stdout: string): RunResult | { unreadable: string } {
-  let json: unknown;
-  try {
-    json = JSON.parse(stdout);
-  } catch (e) {
-    if (!(e instanceof SyntaxError)) throw e;
-    return { unreadable: stdout.trim().slice(0, 500) };
+function hookEvents(marker: string): z.infer<typeof HookEvent>[] {
+  const events: z.infer<typeof HookEvent>[] = [];
+  for (const line of marker.split("\n")) {
+    if (line.trim() === "") continue;
+    let json: unknown;
+    try {
+      json = JSON.parse(line);
+    } catch (e) {
+      if (!(e instanceof SyntaxError)) throw e;
+      continue;
+    }
+    const event = HookEvent.safeParse(json);
+    if (event.success) events.push(event.data);
   }
-  const r = Result.safeParse(json);
-  if (!r.success) return { unreadable: stdout.trim().slice(0, 500) };
-  const d = r.data;
-  return {
-    isError: d.is_error,
-    subtype: d.subtype,
-    result: d.result,
-    costUsd: d.total_cost_usd,
-    sessionId: d.session_id,
-  };
+  return events;
+}
+
+/** How the session ended, from its hook events; undefined while it is still working. */
+export function sessionEnding(marker: string): Ending | undefined {
+  const last = hookEvents(marker).at(-1);
+  if (last === undefined) return undefined;
+  const message = last.last_assistant_message ?? "";
+  if (last.hook_event_name === "StopFailure") return { kind: "failed", error: last.error ?? "unknown", message };
+  if (last.hook_event_name !== "Stop") return undefined;
+  // A stop with background work in flight is a pause: Claude Code wakes the session again when the work finishes.
+  const busy = (last.background_tasks ?? []).some((t) => t.status === undefined || /running|pending/.test(t.status));
+  if (busy || (last.session_crons ?? []).length > 0) return undefined;
+  return { kind: "done", message };
 }
 
 export function lastEntry(progress: string): { count: number; text: string } {
@@ -167,19 +197,19 @@ export function openRuns(progress: string): number {
 }
 
 export function decide(input: {
-  exitCode: number;
-  run: RunResult | { unreadable: string };
+  ending: Ending;
   before: number;
   after: { count: number; text: string };
   openRuns?: number;
 }): Decision {
-  const { run, after } = input;
-  if ("unreadable" in run) return { action: "stop", reason: `couldn't read the run's result: ${run.unreadable}` };
-  if (/hit your weekly limit/i.test(run.result)) return { action: "stop", reason: run.result };
-  if (/hit your .*limit/i.test(run.result)) return { action: "wait", reason: run.result };
-  if (run.subtype === "error_max_budget_usd") return { action: "stop", reason: "the run reached its budget cap" };
-  if (run.isError || input.exitCode !== 0)
-    return { action: "stop", reason: `the run failed (${run.subtype}): ${run.result}` };
+  const { ending, after } = input;
+  if (ending.kind === "closed") return { action: "stop", reason: "the app was closed before the session finished" };
+  if (ending.kind === "failed") {
+    if (/weekly limit/i.test(ending.message)) return { action: "stop", reason: ending.message };
+    if (ending.error === "rate_limit" || /hit your .*limit/i.test(ending.message))
+      return { action: "wait", reason: ending.message || ending.error };
+    return { action: "stop", reason: `the session ended on an API error (${ending.error}): ${ending.message}` };
+  }
   if (after.count <= input.before)
     return { action: "stop", reason: "the session finished without a new progress entry" };
   const next = /^Next:(.*)$/m.exec(after.text)?.[1] ?? "";
@@ -191,158 +221,72 @@ export function decide(input: {
   return { action: "next" };
 }
 
-const Content = z.array(z.looseObject({ type: z.string() }));
-const Message = z.looseObject({
-  type: z.enum(["assistant", "user"]),
-  parent_tool_use_id: z.string().nullable().optional(),
-  message: z.looseObject({ content: z.union([Content, z.string()]) }),
-});
-const Window = z.object({ utilization: z.number(), resetsAt: z.number() }).optional();
-const RateLimit = z.looseObject({
-  type: z.literal("rate_limit_event"),
-  rate_limit_info: z.looseObject({
-    status: z.string(),
-    unifiedWindows: z.looseObject({ five_hour: Window, seven_day: Window }).optional(),
-  }),
-});
-
-export type Feed = {
-  tools: Map<string, string>;
-  agents: Map<string, string>;
-  fiveHour?: number;
-  week?: number;
-  fiveHourResetMs?: number;
-  weekResetMs?: number;
-};
-
-export const newFeed = (): Feed => ({ tools: new Map(), agents: new Map() });
-
-const oneLine = (text: unknown, max = 110): string => {
-  const line = (typeof text === "string" ? text : "").trim().split("\n")[0] ?? "";
-  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
-};
-
-function describeTool(name: string, input: Record<string, unknown>, root: string): string {
-  const path = (key: string): string => {
-    const p = typeof input[key] === "string" ? input[key] : "";
-    return (p.startsWith(root) ? relative(root, p) : p).replaceAll("\\", "/");
-  };
-  if (name === "Read") return `read   ${path("file_path")}`;
-  if (name === "Edit" || name === "MultiEdit") return `edit   ${path("file_path")}`;
-  if (name === "Write") return `write  ${path("file_path")}`;
-  if (name === "Bash") return `run    ${oneLine(input.command)}`;
-  if (name === "Grep") return `search "${oneLine(input.pattern, 60)}"`;
-  if (name === "Glob") return `find   ${oneLine(input.pattern, 60)}`;
-  if (name === "WebFetch") return `fetch  ${oneLine(input.url)}`;
-  if (name === "WebSearch") return `web    "${oneLine(input.query, 80)}"`;
-  if (name === "TodoWrite") return "tasks  updated the to-do list";
-  if (name === "Skill") return `skill  ${oneLine(input.skill, 60)}`;
-  const mcp = /^mcp__(?:claude_ai_)?([^_]+(?:_[^_]+)*)__(.+)$/.exec(name);
-  if (mcp !== null) return `docs   ${mcp[1]} ${mcp[2]}`;
-  return `tool   ${name}`;
-}
-
-/** The terminal lines for one stream-json event; it also keeps tool names, agent names and plan usage in `feed`. */
-export function describeEvent(event: unknown, feed: Feed, root: string): string[] {
-  const limit = RateLimit.safeParse(event);
-  if (limit.success) {
-    const w = limit.data.rate_limit_info.unifiedWindows;
-    if (w?.five_hour !== undefined) {
-      feed.fiveHour = w.five_hour.utilization;
-      feed.fiveHourResetMs = w.five_hour.resetsAt * 1000;
-    }
-    if (w?.seven_day !== undefined) {
-      feed.week = w.seven_day.utilization;
-      feed.weekResetMs = w.seven_day.resetsAt * 1000;
-    }
-    return [];
-  }
-  const msg = Message.safeParse(event);
-  if (!msg.success || typeof msg.data.message.content === "string") return [];
-  const parent = msg.data.parent_tool_use_id ?? null;
-  const prefix = parent === null ? "" : `  [${feed.agents.get(parent) ?? "agent"}] `;
-  const out: string[] = [];
-  for (const part of msg.data.message.content) {
-    if (part.type === "text" && msg.data.type === "assistant") {
-      const text = oneLine(part.text, 140);
-      if (text !== "") out.push(`${prefix}says   ${text}`);
-    } else if (part.type === "tool_use" && typeof part.name === "string" && typeof part.id === "string") {
-      const input = (typeof part.input === "object" && part.input !== null ? part.input : {}) as Record<
-        string,
-        unknown
-      >;
-      feed.tools.set(part.id, part.name);
-      if (part.name === "Agent" || part.name === "Task") {
-        const type = oneLine(input.subagent_type, 40) || "helper";
-        feed.agents.set(part.id, type);
-        out.push(`${prefix}agent  ${type}: ${oneLine(input.description, 80)}`);
-      } else out.push(`${prefix}${describeTool(part.name, input, root)}`);
-    } else if (part.type === "tool_result" && part.is_error === true && typeof part.tool_use_id === "string") {
-      const content = Array.isArray(part.content) ? JSON.stringify(part.content) : part.content;
-      out.push(
-        `  ✗ ${prefix.trim() === "" ? "" : `${prefix.trim()} `}${feed.tools.get(part.tool_use_id) ?? "tool"} failed: ${oneLine(content, 100)}`,
-      );
-    }
-  }
-  return out;
-}
-
-const clock = (ms: number): string =>
-  new Date(ms).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
-
-export function limitsLine(feed: Feed): string {
-  const pct = (n: number): string => `${Math.round(n * 100)}%`;
-  const parts: string[] = [];
-  if (feed.fiveHour !== undefined)
-    parts.push(`5-hour ${pct(feed.fiveHour)} (resets ${clock(feed.fiveHourResetMs ?? 0)})`);
-  if (feed.week !== undefined) parts.push(`week ${pct(feed.week)} (resets ${clock(feed.weekResetMs ?? 0)})`);
-  return parts.length === 0 ? "plan usage: not reported yet" : `plan usage: ${parts.join(" · ")}`;
-}
-
 const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 const time = (): string => new Date().toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
-type Control = { stopAfterTask: boolean; child?: Bun.Subprocess | undefined };
+type Control = { child?: Bun.Subprocess | undefined };
 
-/** Runs one session, printing its steps live; returns the final result line. */
-async function session(argv: string[], feed: Feed, control: Control): Promise<{ code: number; resultLine: string }> {
-  // A separate process group: Ctrl+C reaches only this script, which decides what to do with the session.
-  const child = Bun.spawn(argv, {
+/** The newest change to the session's transcript or its helper agents' transcripts; undefined until it exists. */
+function lastActivity(sessionId: string): number | undefined {
+  const projects = join(
+    process.env.CLAUDE_CONFIG_DIR ?? join(process.env.HOME ?? process.env.USERPROFILE ?? "", ".claude"),
+    "projects",
+  );
+  if (!existsSync(projects)) return undefined;
+  for (const dir of readdirSync(projects)) {
+    const transcript = join(projects, dir, `${sessionId}.jsonl`);
+    const stat = statSync(transcript, { throwIfNoEntry: false });
+    if (stat === undefined) continue;
+    let newest = stat.mtimeMs;
+    const helpers = join(dirname(transcript), sessionId);
+    if (existsSync(helpers))
+      for (const f of readdirSync(helpers, { recursive: true }))
+        newest = Math.max(newest, statSync(join(helpers, String(f)), { throwIfNoEntry: false })?.mtimeMs ?? 0);
+    return newest;
+  }
+  return undefined;
+}
+
+/** Opens the app in this terminal for one task and closes it once its Stop hook says it is done. */
+async function session(pick: Pick, name: string, control: Control): Promise<Ending> {
+  const sessionId = crypto.randomUUID();
+  const marker = join(tmpdir(), `dovet-auto-${sessionId}.jsonl`);
+  const settings = hookSettings(process.execPath, join(import.meta.dir, "auto.ts"), marker);
+  // Same process group as this script: the app needs the terminal's foreground to read keys.
+  const child = Bun.spawn(claudeArgs(pick, { sessionId, name, settings }), {
     cwd: ROOT,
-    env: { ...process.env, ...IDENTITY },
-    stdout: "pipe",
-    stderr: "inherit",
-    stdin: "ignore",
-    detached: true,
+    env: appEnv(process.env, IDENTITY),
+    stdio: ["inherit", "inherit", "inherit"],
   });
   control.child = child;
-  let resultLine = "";
-  let buffer = "";
-  const decoder = new TextDecoder();
-  for await (const chunk of child.stdout) {
-    buffer += decoder.decode(chunk, { stream: true });
-    let nl = buffer.indexOf("\n");
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl);
-      buffer = buffer.slice(nl + 1);
-      nl = buffer.indexOf("\n");
-      let event: unknown;
-      try {
-        event = JSON.parse(line);
-      } catch (e) {
-        if (!(e instanceof SyntaxError)) throw e;
-        if (line.trim() !== "") console.log(`${DIM}${time()}${RESET}  ${line}`);
-        continue;
-      }
-      if (typeof event === "object" && event !== null && "type" in event && event.type === "result") resultLine = line;
-      for (const text of describeEvent(event, feed, ROOT)) console.log(`${DIM}${time()}${RESET}  ${text}`);
+  const started = Date.now();
+  let warned = false;
+  let ending: Ending | undefined;
+  for (;;) {
+    const exited = await Promise.race([child.exited.then(() => true), Bun.sleep(2000).then(() => false)]);
+    const file = Bun.file(marker);
+    ending = sessionEnding((await file.exists()) ? await file.text() : "");
+    if (ending !== undefined) break;
+    if (exited) {
+      ending = { kind: "closed" };
+      break;
+    }
+    if (!warned && Date.now() - (lastActivity(sessionId) ?? started) > STUCK_MS) {
+      warned = true;
+      await notify("Dovet auto: the session has been quiet for 30 minutes; it may be waiting for you");
     }
   }
-  const code = await child.exited;
+  if (child.exitCode === null) {
+    // Let the app finish writing the transcript after the Stop hook before closing it.
+    await Bun.sleep(3000);
+    child.kill("SIGTERM");
+    await child.exited;
+  }
   control.child = undefined;
-  return { code, resultLine };
+  rmSync(marker, { force: true });
+  return ending;
 }
 
 async function run(argv: string[]): Promise<{ code: number; stdout: string }> {
@@ -377,16 +321,18 @@ function log(line: Record<string, unknown>): void {
 }
 
 async function main(): Promise<void> {
-  const opts = parseArgs(Bun.argv.slice(2));
-  const control: Control = { stopAfterTask: false };
+  const argv = Bun.argv.slice(2);
+  // The Stop/StopFailure hook: Claude Code pipes the event's JSON in; one line per event.
+  if (argv[0] === "--hook" && argv[1] !== undefined) {
+    appendFileSync(argv[1], `${(await Bun.stdin.text()).replaceAll("\n", " ").trim()}\n`);
+    return;
+  }
+  const opts = parseArgs(argv);
+  const control: Control = {};
+  // While the app is open, Ctrl+C belongs to it (twice closes it, which stops the run); between tasks it stops now.
   process.on("SIGINT", () => {
-    if (!control.stopAfterTask) {
-      control.stopAfterTask = true;
-      console.log(`\n${BOLD}[auto] stopping after this task.${RESET} Press Ctrl+C again to stop now.`);
-      return;
-    }
-    console.log(`\n${BOLD}[auto] stopping now.${RESET} The next session will finish or undo the half-done task.`);
-    control.child?.kill("SIGINT");
+    if (control.child !== undefined) return;
+    console.log(`\n${BOLD}[auto] stopped.${RESET}`);
     process.exit(130);
   });
   for (const signal of ["SIGHUP", "SIGTERM"] as const) {
@@ -395,8 +341,6 @@ async function main(): Promise<void> {
       process.exit(143);
     });
   }
-  const feed = newFeed();
-  let total = 0;
   for (let task = 1, waits = 0; task <= opts.tasks; ) {
     const before = lastEntry(await progress()).count;
     const started = Date.now();
@@ -406,32 +350,27 @@ async function main(): Promise<void> {
     );
     const pick = modelFor(tier, opts.model);
     console.log(
-      `\n${BOLD}[auto] task ${task} of ${opts.tasks}${RESET} · fresh session · ${tier} tier: ${pick.model} at ${pick.effort} effort`,
+      `\n${BOLD}[auto] task ${task} of ${opts.tasks}${RESET} · opening the app · ${tier} tier: ${pick.model} at ${pick.effort} effort`,
     );
-    console.log(`${DIM}       Ctrl+C: stop after this task · twice: stop now${RESET}`);
-    const { code, resultLine } = await session(claudeArgs(opts, pick), feed, control);
-    const result = parseRun(resultLine === "" ? "(no result)" : resultLine);
+    console.log(`${DIM}       It closes by itself when the task is done. Closing it yourself stops the run.${RESET}`);
+    await Bun.sleep(2000);
+    const ending = await session(pick, `dovet auto ${time()} task ${task}`, control);
     const text = await progress();
     const after = lastEntry(text);
-    const decided = decide({ exitCode: code, run: result, before, after, openRuns: openRuns(text) });
+    const decided = decide({ ending, before, after, openRuns: openRuns(text) });
     const decision = decided.action === "next" ? (mergeCheck(after.text, (pr) => prStateOf(pr)) ?? decided) : decided;
-    const cost = "unreadable" in result ? 0 : result.costUsd;
-    total += cost;
     const minutes = Math.round((Date.now() - started) / 60000);
     log({
       task,
       tier,
       model: pick.model,
       effort: pick.effort,
-      exitCode: code,
       minutes,
-      costUsd: cost,
+      ending: ending.kind === "failed" ? `failed: ${ending.error}` : ending.kind,
       decision,
       entry: after.text.split("\n")[0] ?? "",
     });
-    console.log(
-      `${BOLD}[auto]${RESET} ${minutes} min · estimated $${cost.toFixed(2)} (this run $${total.toFixed(2)}) · ${limitsLine(feed)}`,
-    );
+    console.log(`\n${BOLD}[auto]${RESET} task ${task} took ${minutes} min`);
     if (decision.action === "stop") {
       console.log(`${BOLD}[auto] stopped:${RESET} ${decision.reason}`);
       await notify(`Dovet auto stopped: ${decision.reason}`);
@@ -440,14 +379,12 @@ async function main(): Promise<void> {
     if (decision.action === "wait") {
       if (++waits > MAX_LIMIT_WAITS) {
         console.log(`${BOLD}[auto] stopped:${RESET} the usage limit didn't reset in time`);
+        await notify("Dovet auto stopped: the usage limit didn't reset in time");
         return;
       }
-      const until =
-        feed.fiveHourResetMs !== undefined && feed.fiveHourResetMs > Date.now()
-          ? feed.fiveHourResetMs + 60_000
-          : Date.now() + LIMIT_WAIT_MS;
+      const until = Date.now() + LIMIT_WAIT_MS;
       console.log(
-        `${BOLD}[auto]${RESET} usage limit reached; waiting until ${new Date(until).toLocaleTimeString()} (${decision.reason})`,
+        `${BOLD}[auto]${RESET} usage limit reached; trying again at ${new Date(until).toLocaleTimeString()} (${decision.reason})`,
       );
       await Bun.sleep(until - Date.now());
       continue;
@@ -455,14 +392,8 @@ async function main(): Promise<void> {
     console.log(`${BOLD}[auto] done:${RESET} ${after.text.split("\n")[0]?.replace(/^## /, "") ?? ""}`);
     waits = 0;
     task++;
-    if (control.stopAfterTask && task <= opts.tasks) {
-      console.log(`${BOLD}[auto] stopped after the task, as asked.${RESET}`);
-      return;
-    }
   }
-  console.log(
-    `\n${BOLD}[auto] finished ${opts.tasks} task(s)${RESET}; estimated total $${total.toFixed(2)}. Log: auto-runs.log`,
-  );
+  console.log(`\n${BOLD}[auto] finished ${opts.tasks} task(s).${RESET} Log: auto-runs.log`);
   await notify(`Dovet auto finished ${opts.tasks} task(s)`);
 }
 
