@@ -254,6 +254,10 @@ When fixed, move the entry to "Fixed" and add `- **Fixed:** #<PR>`.
 - **Severity:** minor (pre-existing) · `src/policy/decide/critical.ts:15` (`CMD_SWITCH_RUN`), `:19-22` (`targets`)
 - `rmdir /a`, `rmdir /also`, `rmdir /x` allow in `bypassPermissions` while `rm -rf /also` asks ("a critical path"): cmd's switch syntax is applied to every `rmdir`, not only one cmd runs. No `TOP` name, `/private/*` path, drive root or `C:\Windows` can be written this way. Apply `CMD_SWITCH_RUN` only under cmd or on win32.
 
+### F106 (F88 CI): `F32 over unusual inputs > an xargs with more readings than the budget asks` took 5.3 s on macos-latest (limit 5 s)
+- **Severity:** major (pre-existing) · `test/adversarial/guarantees.test.ts:1271`, run 41660324844 (PR #214, which touches no policy code); `main` passed the same test before and after. It takes about 2 s on the owner's machine for `echo x | xargs -I{} ` + 1,200 `-a x ` pairs, so the xargs variant readings (`src/policy/**`) cost far more than the input size warrants.
+- Find where the time goes (profile the 1,200-pair command) and cut it, or lower the variant budget; don't raise the 5 s limit, and a rerun is no fix.
+
 ## Fixed
 
 ### F88 (F37 CI): `daily ledger > many sessions racing for the last dollar` failed on windows-latest, then EBUSY removing a compile temp dir
