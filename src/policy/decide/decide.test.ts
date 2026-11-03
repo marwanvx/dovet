@@ -420,11 +420,15 @@ describe("working directories and network paths", () => {
 });
 
 describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
-  const huge = `${root}/${"a/".repeat(20_000)}f`;
+  const fwd = root.replaceAll("\\", "/");
+  const ruleRoot = process.platform === "win32" ? fwd : `/${fwd}`;
+  const huge = `${fwd}/${"a/".repeat(20_000)}f`;
   const failing =
     (code: string, ...endings: string[]) =>
     (p: string): string => {
-      if (endings.some((e) => p.endsWith(e))) throw Object.assign(new Error(`${code}: cannot resolve`), { code });
+      const q = p.replaceAll("\\", "/");
+      if (endings.some((e) => q.endsWith(e === root ? fwd : e)))
+        throw Object.assign(new Error(`${code}: cannot resolve`), { code });
       return p;
     };
 
@@ -442,30 +446,31 @@ describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
 
   // spec: permissions §0 guarantee 4
   test("a short spelling whose real path is too deep is refused too", () => {
-    const deepTarget = (p: string): string => (p.endsWith("/link") ? `${root}/${"d/".repeat(300)}f` : p);
+    const deepTarget = (p: string): string =>
+      p.replaceAll("\\", "/").endsWith("/link") ? `${fwd}/${"d/".repeat(300)}f` : p;
     for (const mode of ["default", "bypassPermissions"] as const) {
       const st = state(mode, {}, { env: env({ canonicalize: deepTarget }) });
-      expect(file("read", `${root}/link`, st).behavior).toBe("deny");
-      expect(sh(`cat ${root}/link`, st).behavior).toBe("deny");
+      expect(file("read", `${fwd}/link`, st).behavior).toBe("deny");
+      expect(sh(`cat ${fwd}/link`, st).behavior).toBe("deny");
     }
   });
 
   // spec: permissions §0 guarantee 4
   test("a deny or allow rule can't turn a path that is too deep into anything but a refusal", () => {
-    expect(file("read", huge, state("default", { allow: [`Read(/${root}/**)`] })).behavior).toBe("deny");
-    expect(file("read", huge, state("bypassPermissions", { deny: [`Read(/${root}/**)`] })).behavior).toBe("deny");
+    expect(file("read", huge, state("default", { allow: [`Read(${ruleRoot}/**)`] })).behavior).toBe("deny");
+    expect(file("read", huge, state("bypassPermissions", { deny: [`Read(${ruleRoot}/**)`] })).behavior).toBe("deny");
   });
 
   // spec: permissions §0 guarantee 4
   test("ELOOP, EACCES, EIO and ENAMETOOLONG from the lookup ask, and the built-in checks still read the spelling", () => {
     for (const code of ["ELOOP", "EACCES", "EIO", "ENAMETOOLONG"]) {
       const st = state("bypassPermissions", {}, { env: env({ canonicalize: failing(code, "/boom", "/.env") }) });
-      const plain = file("read", `${root}/boom`, st);
+      const plain = file("read", `${fwd}/boom`, st);
       expect(plain.behavior).toBe("ask");
       expect(plain.findings.map((f) => f.kind)).toContain("unchecked");
-      const secret = file("read", `${root}/.env`, st);
+      const secret = file("read", `${fwd}/.env`, st);
       expect(secret.findings.map((f) => f.kind)).toEqual(expect.arrayContaining(["unchecked", "sensitive"]));
-      const own = file("edit", `${root}/.git/config/boom`, st);
+      const own = file("edit", `${fwd}/.git/config/boom`, st);
       expect(own.findings.map((f) => f.kind)).toEqual(expect.arrayContaining(["unchecked", "protected"]));
       const blocked = state(
         "bypassPermissions",
@@ -473,14 +478,14 @@ describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
         { env: env({ canonicalize: failing(code, "/boom") }), blockReadsOutsideWorkingDirectories: true },
       );
       expect(file("read", join(root, "..", "x", "boom"), blocked).behavior).toBe("deny");
-      expect(sh(`cat ${root}/boom`, st).behavior).toBe("ask");
+      expect(sh(`cat ${fwd}/boom`, st).behavior).toBe("ask");
     }
   });
 
   // spec: permissions §4.4
   test("a recursive removal through a directory the lookup can't read keeps its critical-path countdown", () => {
     const st = state("bypassPermissions", {}, { env: env({ canonicalize: failing("EACCES", "/locked/h") }) });
-    const d = sh(`rm -rf ${root}/locked/h/*`, st);
+    const d = sh(`rm -rf ${fwd}/locked/h/*`, st);
     expect(d.behavior).toBe("ask");
     expect(d.findings.map((f) => f.kind)).toContain("critical");
     expect(d.countdown).toBe(true);
@@ -489,7 +494,7 @@ describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
   // spec: permissions §4.4
   test("PowerShell Remove-Item of a path the lookup can't resolve is denied like a system path", () => {
     const st = state("bypassPermissions", {}, { env: env({ canonicalize: failing("EACCES", "/locked/h") }) });
-    const d = sh(`Remove-Item -Recurse ${root}/locked/h`, st, { language: "powershell" });
+    const d = sh(`Remove-Item -Recurse ${fwd}/locked/h`, st, { language: "powershell" });
     expect(d.behavior).toBe("deny");
     expect(d.reason).toContain("can't resolve");
   });
@@ -498,23 +503,23 @@ describe("a path the OS can't resolve (FOLLOWUPS F92)", () => {
   test("an allow rule never approves a path that can't be resolved", () => {
     const allowed = state(
       "default",
-      { allow: [`Read(/${root}/**)`] },
+      { allow: [`Read(${ruleRoot}/**)`] },
       { env: env({ canonicalize: failing("ELOOP", "/boom") }) },
     );
-    expect(file("read", `${root}/boom`, allowed).behavior).toBe("ask");
-    expect(file("read", `${root}/a.ts`, allowed).behavior).toBe("allow");
+    expect(file("read", `${fwd}/boom`, allowed).behavior).toBe("ask");
+    expect(file("read", `${fwd}/a.ts`, allowed).behavior).toBe("allow");
   });
 
   // spec: permissions §0 guarantee 4
   test("a working directory whose lookup fails still gets a decision, and a programming error is still thrown", () => {
     const cwdLoop = state("bypassPermissions", {}, { env: env({ canonicalize: failing("ELOOP", root) }) });
-    expect(file("read", `${root}/a.ts`, cwdLoop).behavior).toBe("allow");
+    expect(file("read", `${fwd}/a.ts`, cwdLoop).behavior).toBe("allow");
     const bug = (p: string): string => {
-      if (p.endsWith("/a.ts")) throw new TypeError("a bug");
+      if (p.replaceAll("\\", "/").endsWith("/a.ts")) throw new TypeError("a bug");
       return p;
     };
     expect(() =>
-      file("read", `${root}/a.ts`, state("bypassPermissions", {}, { env: env({ canonicalize: bug }) })),
+      file("read", `${fwd}/a.ts`, state("bypassPermissions", {}, { env: env({ canonicalize: bug }) })),
     ).toThrow("a bug");
   });
 
